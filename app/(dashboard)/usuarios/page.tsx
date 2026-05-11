@@ -14,12 +14,11 @@ interface FormData {
   cargo: string
   perfil: 'admin' | 'usuario'
   status: 'ativo' | 'inativo'
-  senha: string
 }
 
 const FORM_INICIAL: FormData = {
   nome: '', email: '', telefone: '', cargo: '',
-  perfil: 'usuario', status: 'ativo', senha: '',
+  perfil: 'usuario', status: 'ativo',
 }
 
 export default function UsuariosPage() {
@@ -59,7 +58,6 @@ export default function UsuariosPage() {
       cargo: u.cargo ?? '',
       perfil: u.perfil,
       status: u.status,
-      senha: '',
     })
     setMensagem(null)
     setMostrarForm(true)
@@ -104,12 +102,11 @@ export default function UsuariosPage() {
             cargo: form.cargo || null,
             perfil: form.perfil,
             status: form.status,
-            senha: form.senha,
           }),
         })
         const resultado = await resp.json()
         if (!resp.ok) throw new Error(resultado.erro ?? 'Erro ao criar usuário.')
-        setMensagem({ tipo: 'sucesso', texto: 'Usuário cadastrado! O acesso já está disponível com a senha informada.' })
+        setMensagem({ tipo: 'sucesso', texto: 'Convite enviado! O usuário receberá um e-mail com o link de acesso.' })
         setForm(FORM_INICIAL)
       }
       await carregarUsuarios()
@@ -253,19 +250,14 @@ export default function UsuariosPage() {
 
                 {!editando && (
                   <div className="form-field full">
-                    <label className="form-label">Senha Temporária *</label>
-                    <input
-                      className="fam-input"
-                      type="password"
-                      placeholder="Mínimo 6 caracteres — o usuário deverá alterá-la no primeiro acesso"
-                      value={form.senha}
-                      onChange={(e) => setForm({ ...form, senha: e.target.value })}
-                      required={!editando}
-                      minLength={6}
-                    />
-                    <span style={{ fontSize: 11, color: '#6080a0', marginTop: 3 }}>
-                      Comunique esta senha ao usuário. Ele será obrigado a criar uma nova senha ao fazer login pela primeira vez.
-                    </span>
+                    <div style={{
+                      background: '#f0f6ff', border: '1px solid #c5d5e8',
+                      borderRadius: 8, padding: '10px 14px',
+                      fontSize: 13, color: '#3060a0', lineHeight: 1.5,
+                    }}>
+                      📧 Um e-mail de convite será enviado automaticamente para o endereço informado.
+                      O usuário clicará no link e criará sua própria senha no primeiro acesso.
+                    </div>
                   </div>
                 )}
 

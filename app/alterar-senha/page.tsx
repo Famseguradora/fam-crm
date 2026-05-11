@@ -30,18 +30,18 @@ export default function AlterarSenhaPage() {
     setCarregando(true)
     try {
       const supabase = createClient()
-      const { error: authError } = await supabase.auth.updateUser({ password: novaSenha })
-      if (authError) { setErro('Não foi possível alterar a senha. Tente novamente.'); return }
 
-      // Marca primeiro_acesso como false
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        await supabase
-          .from('usuarios')
-          .update({ primeiro_acesso: false })
-          .eq('auth_id', user.id)
+      // 1. Atualiza a senha no Supabase Auth
+      const { error: authError } = await supabase.auth.updateUser({ password: novaSenha })
+      if (authError) {
+        setErro('Não foi possível definir a senha. Tente novamente.')
+        return
       }
 
+      // 2. Marca primeiro_acesso como false via API admin (contorna RLS)
+      await fetch('/api/primeiro-acesso', { method: 'POST' })
+
+      // 3. Navega para o sistema
       router.push('/')
       router.refresh()
     } finally {
@@ -80,10 +80,10 @@ export default function AlterarSenhaPage() {
         <div style={{ padding: 28 }}>
           <div style={{ marginBottom: 24 }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: '#102040', marginBottom: 4 }}>
-              Crie sua senha
+              Crie sua senha de acesso
             </div>
             <div style={{ fontSize: 13, color: '#6080a0' }}>
-              Este é seu primeiro acesso. Por segurança, defina uma senha pessoal para continuar.
+              Defina uma senha pessoal para acessar o sistema. Você usará ela em todos os próximos logins.
             </div>
           </div>
 
@@ -102,7 +102,7 @@ export default function AlterarSenhaPage() {
               />
             </div>
             <div className="form-field">
-              <label className="form-label">Confirmar nova senha</label>
+              <label className="form-label">Confirmar senha</label>
               <input
                 type="password"
                 className="fam-input"
