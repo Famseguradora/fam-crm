@@ -1,5 +1,18 @@
 export type Perfil = 'admin' | 'usuario'
 export type StatusUsuario = 'ativo' | 'inativo'
+export type Temperatura = 'Quente' | 'Morno' | 'Frio'
+export type Porte = 'Small' | 'Middle' | 'Corporate' | 'Large'
+export type Prioridade = 'Fluxo Normal' | 'Prioridade' | 'Urgente'
+
+export interface StatusFluxo {
+  id: string
+  nome: string
+  cor: string
+  base: boolean
+  ordem: number
+  ativo: boolean
+  created_at: string
+}
 
 export interface Usuario {
   id: string
@@ -18,7 +31,10 @@ export interface Usuario {
 export interface Produto {
   id: string
   nome: string
-  descricao: string | null
+  modalidade: string | null
+  cobertura_associada: string | null
+  codigo_interno: string | null
+  observacao: string | null
   status: 'ativo' | 'inativo'
   created_at: string
   updated_at: string
@@ -27,60 +43,53 @@ export interface Produto {
 export interface Corretora {
   id: string
   razao_social: string
+  nome_fantasia: string | null
   cnpj: string
-  telefone: string | null
+  codigo_susep: string | null
   email: string | null
+  telefone: string | null
+  celular: string | null
+  cep: string | null
+  endereco: string | null
+  numero: string | null
+  complemento: string | null
+  bairro: string | null
   cidade: string | null
   estado: string | null
+  responsavel: string | null
+  observacao: string | null
   status: 'ativo' | 'inativo'
   created_at: string
   updated_at: string
 }
 
-export type StatusTomador =
-  | 'Aguardando Análise'
-  | 'Análise Criada'
-  | 'Análise Recusada'
-  | 'Não Cadastrada'
-  | 'Ativo - Cadastrado'
-  | 'Documento Crédito - Criado'
-  | 'Contrato de Contragarantia - Gerado'
-  | 'Contrato de Contragarantia - Formalizada'
-  | 'Contrato de Contragarantia - Formalizada Eletronicamente'
-  | 'Contrato de Contragarantia - Não Formalizada'
-  | 'Envelope de Assinatura - Assinado Manualmente'
-
 export interface Tomador {
   id: string
   razao_social: string
+  nome_fantasia: string | null
   cnpj: string
   corretora_id: string | null
   corretora?: Corretora
+  email: string | null
+  telefone: string | null
+  celular: string | null
+  cep: string | null
+  endereco: string | null
+  numero: string | null
+  complemento: string | null
+  bairro: string | null
   cidade: string | null
   estado: string | null
+  responsavel: string | null
+  porte: Porte | null
+  prioridade: string | null
   limite_aprovado: number | null
-  status: StatusTomador
+  observacao: string | null
+  status: string
   ativo: boolean
   created_at: string
   updated_at: string
 }
-
-export type StatusOperacao =
-  | 'Em Análise'
-  | 'Para Analisar'
-  | 'Aprovada Com Comitê'
-  | 'Aprovada Aguardando Comitê'
-  | 'Aguardando Subscrição'
-  | 'Em Subscrição'
-  | 'Aprovado'
-  | 'Aprovado Com Ressalvas'
-  | 'Reprovado'
-  | 'Negado'
-  | 'Standby'
-  | 'Fechado'
-  | 'Perdido'
-
-export type Temperatura = 'Quente' | 'Frio'
 
 export interface Operacao {
   id: string
@@ -91,14 +100,16 @@ export interface Operacao {
   corretor: string | null
   produto_id: string | null
   produto?: Produto
-  modalidade: string
+  modalidade: string | null
   estado: string | null
   temperatura: Temperatura | null
-  lmg: number
-  taxa: number
-  vigencia_anos: number
-  premio_previsto: number
-  status: StatusOperacao
+  prioridade: Prioridade | null
+  lmg: number | null
+  taxa: number | null
+  vigencia_anos: number | null
+  premio_previsto: number | null
+  observacao: string | null
+  status: string
   ativo: boolean
   created_at: string
   updated_at: string

@@ -1,25 +1,675 @@
-export default function HomePage() {
-  return (
-    <div>
-      <div style={{ fontSize: 20, fontWeight: 700, color: '#102040', marginBottom: 4 }}>
-        Painel Executivo
-      </div>
-      <div style={{ fontSize: 13, color: '#6080a0', marginBottom: 24 }}>
-        Dashboard em desenvolvimento — próxima etapa
-      </div>
+'use client'
+
+import { useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from 'recharts'
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+function fmtBRL(v: number): string {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency', currency: 'BRL', maximumFractionDigits: 0,
+  }).format(v)
+}
+
+function fmtNum(v: number): string {
+  return new Intl.NumberFormat('pt-BR').format(v)
+}
+
+function fmtDataExtenso(): string {
+  return new Date().toLocaleDateString('pt-BR', {
+    day: '2-digit', month: 'long', year: 'numeric',
+  })
+}
+
+// ── types ─────────────────────────────────────────────────────────────────────
+
+interface RawTomador {
+  id: string
+  status: string | null
+  corretora_id: string | null
+  corretora: { id: string; razao_social: string } | null
+  limite_aprovado: number | null
+}
+
+interface RawOperacao {
+  id: string
+  corretor: string | null
+  modalidade: string | null
+  premio_previsto: number | null
+  lmg: number | null
+  status: string | null
+}
+
+interface StatusFluxo {
+  id: string
+  nome: string
+  cor: string
+  base: boolean
+  ordem: number
+  ativo: boolean
+}
+
+interface DashDados {
+  tomadores: RawTomador[]
+  operacoes: RawOperacao[]
+  totalCorretoras: number
+  statusTomador: StatusFluxo[]
+  statusOperacao: StatusFluxo[]
+}
+
+// ── color palettes ────────────────────────────────────────────────────────────
+
+const AZUIS = ['#1e4080', '#2255a4', '#3070c8', '#4a90d8', '#6ab0e8', '#8acaf8', '#aadaff', '#c0e8ff']
+const VERDES = ['#065f46', '#047857', '#15803d', '#16a34a', '#22c55e', '#4ade80', '#86efac', '#bbf7d0', '#166534', '#6ee7b7']
+
+// ── card visibility config ────────────────────────────────────────────────────
+
+const CARDS_CONFIG = [
+  { id: 'destaque',       label: '🏆 Operações Fechadas — Destaque' },
+  { id: 'kpisTomadores',  label: '👥 Tomadores — KPIs' },
+  { id: 'kpisOperacoes',  label: '📋 Operações — KPIs' },
+  { id: 'barCorretoras',  label: '📊 Top Corretoras por Limite Aprovado' },
+  { id: 'donutTomadores', label: '🔵 Distribuição por Status (Tomadores)' },
+  { id: 'barCorretores',  label: '📊 Top Corretores por Prêmio Previsto' },
+  { id: 'donutOperacoes', label: '🟢 Status das Operações' },
+  { id: 'barModalidades', label: '📊 Prêmio Previsto por Modalidade' },
+] as const
+
+type CardId = typeof CARDS_CONFIG[number]['id']
+type CartoesState = Record<CardId, boolean>
+
+const STORAGE_KEY = 'fam-dashboard-cartoes'
+const CARDS_DEFAULT: CartoesState = Object.fromEntries(
+  CARDS_CONFIG.map(c => [c.id, true])
+) as CartoesState
+
+// ── component ─────────────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const supabase = createClient()
+  const [loading, setLoading] = useState(true)
+  const [dados, setDados] = useState<DashDados | null>(null)
+  const [mounted, setMounted] = useState(false)
+  const [cartoes, setCartoes] = useState<CartoesState>(CARDS_DEFAULT)
+  const [modalCartoes, setModalCartoes] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) setCartoes({ ...CARDS_DEFAULT, ...JSON.parse(saved) })
+    } catch { /* ignore */ }
+  }, [])
+
+  function toggleCard(id: CardId) {
+    setCartoes(prev => {
+      const next = { ...prev, [id]: !prev[id] }
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
+
+  useEffect(() => {
+    async function carregar() {
+      setLoading(true)
+      const [
+        { data: tomadores },
+        { data: operacoes },
+        { count: totalCorretoras },
+        { data: statusTomador },
+        { data: statusOperacao },
+      ] = await Promise.all([
+        supabase
+          .from('tomadores')
+          .select('id, status, corretora_id, corretora:corretoras(id,razao_social), limite_aprovado'),
+        supabase
+          .from('operacoes')
+          .select('id, corretor, modalidade, premio_previsto, lmg, status'),
+        supabase.from('corretoras').select('*', { count: 'exact', head: true }),
+        supabase.from('status_fluxo_tomador').select('*').order('ordem'),
+        supabase.from('status_fluxo_operacao').select('*').order('ordem'),
+      ])
+
+      setDados({
+        tomadores: (tomadores ?? []) as unknown as RawTomador[],
+        operacoes: (operacoes ?? []) as unknown as RawOperacao[],
+        totalCorretoras: totalCorretoras ?? 0,
+        statusTomador: (statusTomador ?? []) as StatusFluxo[],
+        statusOperacao: (statusOperacao ?? []) as StatusFluxo[],
+      })
+      setLoading(false)
+    }
+    carregar()
+  }, [])
+
+  // ── loading ───────────────────────────────────────────────────────────────
+
+  if (loading || !dados) {
+    return (
       <div style={{
-        background: 'white', borderRadius: 12, padding: '40px 24px',
-        border: '2px dashed #a0c0e8', textAlign: 'center',
-        boxShadow: '0 2px 12px rgba(30,64,128,.08)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        height: 320, color: '#6080a0', fontSize: 16, gap: 12,
       }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
-        <div style={{ fontSize: 18, fontWeight: 700, color: '#1a3560', marginBottom: 8 }}>
-          Dashboard
+        <span style={{ fontSize: 24 }}>📊</span> Carregando dashboard…
+      </div>
+    )
+  }
+
+  const { tomadores, operacoes, totalCorretoras, statusTomador, statusOperacao } = dados
+
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+
+  const opsFechadas = operacoes.filter(o => o.status === 'Emitido')
+  const premioFechado = opsFechadas.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
+  const lmgFechado = opsFechadas.reduce((s, o) => s + (o.lmg ?? 0), 0)
+
+  const corretorasComTomadores = new Set(tomadores.map(t => t.corretora_id).filter(Boolean)).size
+  const tomadoresCadastrados = tomadores.filter(t => t.status === 'Ativo - Cadastrado').length
+  const limiteAprovadoTotal = tomadores.reduce((s, t) => s + (t.limite_aprovado ?? 0), 0)
+
+  const corretoresUnicos = new Set(operacoes.map(o => o.corretor).filter(Boolean)).size
+  const lmgTotal = operacoes.reduce((s, o) => s + (o.lmg ?? 0), 0)
+  const lmgLiquido = operacoes
+    .filter(o => !['Recusado', 'Perdido'].includes(o.status ?? ''))
+    .reduce((s, o) => s + (o.lmg ?? 0), 0)
+  const premioTotal = operacoes.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
+
+  // ── chart data ────────────────────────────────────────────────────────────
+
+  const corretoraPorLimite: Record<string, number> = {}
+  for (const t of tomadores) {
+    const nome = (t.corretora as { razao_social: string } | null)?.razao_social ?? 'Sem Corretora'
+    corretoraPorLimite[nome] = (corretoraPorLimite[nome] ?? 0) + (t.limite_aprovado ?? 0)
+  }
+  const topCorretoras = Object.entries(corretoraPorLimite)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 8)
+    .map(([nome, valor]) => ({ nome: nome.length > 24 ? nome.slice(0, 22) + '…' : nome, valor }))
+    .reverse()
+
+  const tmPorStatus: Record<string, number> = {}
+  for (const t of tomadores) {
+    const s = t.status ?? 'Sem Status'
+    tmPorStatus[s] = (tmPorStatus[s] ?? 0) + 1
+  }
+  const statusTomadorChart = Object.entries(tmPorStatus).map(([name, value]) => ({
+    name, value,
+    cor: statusTomador.find(s => s.nome === name)?.cor ?? '#6080a0',
+  }))
+
+  const corretorPorPremio: Record<string, number> = {}
+  for (const o of operacoes) {
+    const nome = o.corretor ?? 'Sem Corretor'
+    corretorPorPremio[nome] = (corretorPorPremio[nome] ?? 0) + (o.premio_previsto ?? 0)
+  }
+  const topCorretores = Object.entries(corretorPorPremio)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 10)
+    .map(([nome, valor]) => ({ nome: nome.length > 20 ? nome.slice(0, 18) + '…' : nome, valor }))
+    .reverse()
+
+  const opPorStatus: Record<string, number> = {}
+  for (const o of operacoes) {
+    const s = o.status ?? 'Sem Status'
+    opPorStatus[s] = (opPorStatus[s] ?? 0) + 1
+  }
+  const statusOperacaoChart = Object.entries(opPorStatus).map(([name, value]) => ({
+    name, value,
+    cor: statusOperacao.find(s => s.nome === name)?.cor ?? '#6080a0',
+  }))
+
+  const premioPorMod: Record<string, number> = {}
+  for (const o of operacoes) {
+    const m = o.modalidade ?? 'Sem Modalidade'
+    premioPorMod[m] = (premioPorMod[m] ?? 0) + (o.premio_previsto ?? 0)
+  }
+  const topModalidades = Object.entries(premioPorMod)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 6)
+    .map(([nome, valor]) => ({ nome, valor }))
+
+  // ── handlers ──────────────────────────────────────────────────────────────
+
+  async function handleExportarPDF() {
+    const { default: jsPDF } = await import('jspdf')
+    const { default: autoTable } = await import('jspdf-autotable')
+    const doc = new jsPDF()
+
+    doc.setFontSize(18)
+    doc.text('FAM Seguradora — Painel Executivo', 14, 20)
+    doc.setFontSize(11)
+    doc.setTextColor(100)
+    doc.text(fmtDataExtenso(), 14, 28)
+
+    doc.setFontSize(13)
+    doc.setTextColor(0)
+    doc.text('Operações Fechadas', 14, 42)
+    autoTable(doc, {
+      startY: 46,
+      head: [['QTD. Fechadas', 'Prêmio Total Fechado', 'LMG Total Fechado']],
+      body: [[String(opsFechadas.length), fmtBRL(premioFechado), fmtBRL(lmgFechado)]],
+    })
+
+    let y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
+    doc.text('Tomadores — Resumo', 14, y)
+    autoTable(doc, {
+      startY: y + 4,
+      head: [['Corretoras', 'Corr. c/ Tomadores', 'Tom. Recebidos', 'Tom. Cadastrados', 'Limite Aprovado Total']],
+      body: [[String(totalCorretoras), String(corretorasComTomadores), String(tomadores.length), String(tomadoresCadastrados), fmtBRL(limiteAprovadoTotal)]],
+    })
+
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
+    doc.text('Operações — Resumo', 14, y)
+    autoTable(doc, {
+      startY: y + 4,
+      head: [['Corretores', 'Total Operações', 'LMG Total', 'LMG Líquido', 'Prêmio Previsto Total']],
+      body: [[String(corretoresUnicos), String(operacoes.length), fmtBRL(lmgTotal), fmtBRL(lmgLiquido), fmtBRL(premioTotal)]],
+    })
+
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
+    doc.text('Top Corretoras por Limite Aprovado', 14, y)
+    autoTable(doc, {
+      startY: y + 4,
+      head: [['Corretora', 'Limite Aprovado']],
+      body: [...topCorretoras].reverse().map(r => [r.nome, fmtBRL(r.valor)]),
+    })
+
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
+    if (y > 240) { doc.addPage(); y = 20 }
+    doc.text('Top Corretores por Prêmio Previsto', 14, y)
+    autoTable(doc, {
+      startY: y + 4,
+      head: [['Corretor', 'Prêmio Previsto']],
+      body: [...topCorretores].reverse().map(r => [r.nome, fmtBRL(r.valor)]),
+    })
+
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
+    if (y > 240) { doc.addPage(); y = 20 }
+    doc.text('Prêmio Previsto por Modalidade (Top 6)', 14, y)
+    autoTable(doc, {
+      startY: y + 4,
+      head: [['Modalidade', 'Prêmio Previsto']],
+      body: topModalidades.map(r => [r.nome, fmtBRL(r.valor)]),
+    })
+
+    doc.save(`FAM-Dashboard-${new Date().toISOString().slice(0, 10)}.pdf`)
+  }
+
+  // ── style helpers ─────────────────────────────────────────────────────────
+
+  const cardBase: React.CSSProperties = {
+    background: 'white',
+    borderRadius: 12,
+    padding: '18px 20px',
+    boxShadow: '0 2px 12px rgba(30,64,128,.08)',
+    border: '1px solid #dde8f4',
+  }
+
+  const kpiLabel: React.CSSProperties = {
+    fontSize: 10, fontWeight: 700, color: '#6080a0',
+    textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6,
+  }
+
+  const kpiSub: React.CSSProperties = { fontSize: 11, color: '#a0b8d0', marginTop: 6 }
+
+  const dot = (color: string): React.CSSProperties => ({
+    width: 8, height: 8, borderRadius: '50%', background: color,
+    display: 'inline-block', flexShrink: 0,
+  })
+
+  const showLeftCol  = cartoes.barCorretoras || cartoes.donutTomadores
+  const showRightCol = cartoes.barCorretores  || cartoes.donutOperacoes
+  const showChartsGrid = showLeftCol || showRightCol
+
+  // ── render ────────────────────────────────────────────────────────────────
+
+  return (
+    <div style={{ fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#102040' }}>Painel Executivo</div>
+          <div style={{ fontSize: 12, color: '#6080a0', marginTop: 3 }}>
+            Visão consolidada — {fmtDataExtenso()}
+          </div>
         </div>
-        <div style={{ fontSize: 14, color: '#6080a0' }}>
-          Será construído na próxima etapa, após Login e Cadastros.
+        <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+          <button
+            onClick={() => setModalCartoes(true)}
+            style={{ background: '#f0f6ff', border: '1px solid #c0d4e8', color: '#2255a4', borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            ✏ Personalizar
+          </button>
+          <button
+            onClick={handleExportarPDF}
+            style={{ background: 'white', border: '1px solid #c0d4e8', color: '#1e4080', borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            ↓ Exportar PDF
+          </button>
         </div>
       </div>
+
+      {/* ── Destaque ── */}
+      {cartoes.destaque && (
+        <div style={{
+          background: 'linear-gradient(135deg,#0a1628 0%,#1a3560 70%,#2255a4 100%)',
+          borderRadius: 14, padding: '20px 28px', marginBottom: 24,
+          boxShadow: '0 4px 20px rgba(10,22,40,.3)',
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#e8b84b', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 18 }}>
+            🏆 Operações Fechadas — Destaque
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr', gap: 32, alignItems: 'start' }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>QTD. Fechadas</div>
+              <div style={{ fontSize: 40, fontWeight: 900, color: 'white', lineHeight: 1 }}>{opsFechadas.length}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>Prêmio Total Fechado</div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: '#e8b84b', lineHeight: 1 }}>{fmtBRL(premioFechado)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>LMG Total Fechado</div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: '#6ab0e8', lineHeight: 1 }}>{fmtBRL(lmgFechado)}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tomadores KPIs ── */}
+      {cartoes.kpisTomadores && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 700, color: '#102040', marginBottom: 10 }}>
+            <span style={dot('#2255a4')} />
+            Tomadores — Resumo
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
+            {[
+              { label: 'Corretoras', value: fmtNum(totalCorretoras), sub: 'Total recebidas', accent: '#2255a4', gold: false },
+              { label: 'Corretoras com Tomadores Cadastrados', value: fmtNum(corretorasComTomadores), sub: 'Cadastradas únicas', accent: '#2255a4', gold: false },
+              { label: 'Tomadores Recebidos', value: fmtNum(tomadores.length), sub: 'Total recebidos', accent: '#2255a4', gold: false },
+              { label: 'Tomadores Cadastrados', value: fmtNum(tomadoresCadastrados), sub: 'Total cadastrados', accent: '#2255a4', gold: false },
+              { label: 'Limite Aprovado Total', value: fmtBRL(limiteAprovadoTotal), sub: 'Soma dos limites ativos', accent: '#e8b84b', gold: true },
+            ].map((k, i) => (
+              <div key={i} style={{ ...cardBase, borderTop: `3px solid ${k.accent}` }}>
+                <div style={kpiLabel}>{k.label}</div>
+                <div style={{ fontSize: k.gold ? 16 : 22, fontWeight: 800, color: k.gold ? '#b87a00' : '#102040', lineHeight: 1.1 }}>
+                  {k.value}
+                </div>
+                <div style={kpiSub}>{k.sub}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── Operações KPIs ── */}
+      {cartoes.kpisOperacoes && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 700, color: '#102040', marginBottom: 10 }}>
+            <span style={dot('#16a34a')} />
+            Operações — Resumo
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 28 }}>
+            {[
+              { label: 'Corretores', value: fmtNum(corretoresUnicos), sub: 'Únicos em operações', dark: false },
+              { label: 'Total de Operações', value: fmtNum(operacoes.length), sub: 'Todas as operações', dark: false },
+              { label: 'LMG Total', value: fmtBRL(lmgTotal), sub: 'Soma total LMG', dark: false },
+              { label: 'LMG Total em Potencial', value: fmtBRL(lmgLiquido), sub: 'LMG Total – Negados/Perdidos', dark: true },
+              { label: 'Prêmio Previsto Total', value: fmtBRL(premioTotal), sub: 'Soma prêmios previstos', dark: false },
+            ].map((k, i) => (
+              <div key={i} style={{
+                ...cardBase,
+                borderTop: '3px solid #16a34a',
+                ...(k.dark ? {
+                  background: 'linear-gradient(135deg,#0a1628,#1a3560)',
+                  border: '1px solid #2255a4',
+                  borderTop: '3px solid #e8b84b',
+                } : {}),
+              }}>
+                <div style={{ ...kpiLabel, color: k.dark ? '#a0c0e8' : '#6080a0' }}>{k.label}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.1, color: k.dark ? '#e8b84b' : '#102040' }}>
+                  {k.value}
+                </div>
+                <div style={{ ...kpiSub, color: k.dark ? '#6080a0' : '#a0b8d0' }}>{k.sub}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── Charts 2-col ── */}
+      {showChartsGrid && (
+        <div style={{ display: 'grid', gridTemplateColumns: showLeftCol && showRightCol ? '1fr 1fr' : '1fr', gap: 20, marginBottom: 20 }}>
+
+          {/* LEFT: TOMADORES */}
+          {showLeftCol && (
+            <div style={{ ...cardBase, display: 'flex', flexDirection: 'column', gap: 28 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#2255a4', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+                ● TOMADORES
+              </div>
+
+              {cartoes.barCorretoras && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#102040', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ ...dot('#2255a4'), display: 'inline-block' }} />
+                    Top Corretoras por Limite Aprovado
+                  </div>
+                  {!mounted || topCorretoras.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#a0b8d0', padding: '24px 0', fontSize: 13 }}>Sem dados</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={Math.max(topCorretoras.length * 38, 80)}>
+                      <BarChart data={topCorretoras} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+                        <XAxis type="number" hide />
+                        <YAxis type="category" dataKey="nome" width={155} tick={{ fontSize: 11, fill: '#304060' }} />
+                        <Tooltip formatter={(v) => [fmtBRL(Number(v ?? 0)), 'Limite']} />
+                        <Bar dataKey="valor" radius={[0, 4, 4, 0]}>
+                          {topCorretoras.map((_, idx) => (
+                            <Cell key={idx} fill={AZUIS[idx % AZUIS.length]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              )}
+
+              {cartoes.donutTomadores && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#102040', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ ...dot('#2255a4'), display: 'inline-block' }} />
+                    Distribuição por Status
+                  </div>
+                  {!mounted || statusTomadorChart.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#a0b8d0', padding: '24px 0', fontSize: 13 }}>Sem dados</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={230}>
+                      <PieChart>
+                        <Pie data={statusTomadorChart} cx="50%" cy="46%" innerRadius={58} outerRadius={88} dataKey="value" nameKey="name">
+                          {statusTomadorChart.map((entry, idx) => (
+                            <Cell key={idx} fill={entry.cor} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(v, name) => [Number(v ?? 0), String(name)]} />
+                        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* RIGHT: OPERAÇÕES */}
+          {showRightCol && (
+            <div style={{ ...cardBase, display: 'flex', flexDirection: 'column', gap: 28 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#16a34a', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+                ● OPERAÇÕES / SUBSCRIÇÃO
+              </div>
+
+              {cartoes.barCorretores && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#102040', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ ...dot('#16a34a'), display: 'inline-block' }} />
+                    Top Corretores por Prêmio Previsto
+                  </div>
+                  {!mounted || topCorretores.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#a0b8d0', padding: '24px 0', fontSize: 13 }}>Sem dados</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={Math.max(topCorretores.length * 38, 80)}>
+                      <BarChart data={topCorretores} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+                        <XAxis type="number" hide />
+                        <YAxis type="category" dataKey="nome" width={135} tick={{ fontSize: 11, fill: '#304060' }} />
+                        <Tooltip formatter={(v) => [fmtBRL(Number(v ?? 0)), 'Prêmio']} />
+                        <Bar dataKey="valor" radius={[0, 4, 4, 0]}>
+                          {topCorretores.map((_, idx) => (
+                            <Cell key={idx} fill={VERDES[idx % VERDES.length]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              )}
+
+              {cartoes.donutOperacoes && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#102040', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ ...dot('#16a34a'), display: 'inline-block' }} />
+                    Status das Operações
+                  </div>
+                  {!mounted || statusOperacaoChart.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#a0b8d0', padding: '24px 0', fontSize: 13 }}>Sem dados</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={230}>
+                      <PieChart>
+                        <Pie data={statusOperacaoChart} cx="50%" cy="46%" innerRadius={58} outerRadius={88} dataKey="value" nameKey="name">
+                          {statusOperacaoChart.map((entry, idx) => (
+                            <Cell key={idx} fill={entry.cor} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(v, name) => [Number(v ?? 0), String(name)]} />
+                        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Prêmio por Modalidade ── */}
+      {cartoes.barModalidades && (
+        <div style={cardBase}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#102040', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ ...dot('#2255a4'), display: 'inline-block' }} />
+            Prêmio Previsto por Modalidade (Top 6)
+          </div>
+          {!mounted || topModalidades.length === 0 ? (
+            <div style={{ textAlign: 'center', color: '#a0b8d0', padding: '48px 0', fontSize: 13 }}>Sem dados</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={topModalidades} margin={{ bottom: 48, left: 20, right: 20, top: 8 }}>
+                <XAxis dataKey="nome" tick={{ fontSize: 11, fill: '#304060' }} angle={-18} textAnchor="end" interval={0} height={60} />
+                <YAxis tickFormatter={(v) => `R$ ${(v / 1_000_000).toFixed(1)}M`} tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(v) => [fmtBRL(Number(v ?? 0)), 'Prêmio Previsto']} />
+                <Bar dataKey="valor" radius={[4, 4, 0, 0]}>
+                  {topModalidades.map((_, idx) => (
+                    <Cell key={idx} fill={AZUIS[idx % AZUIS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      )}
+
+      {/* ── Modal: Personalizar cartões ── */}
+      {modalCartoes && (
+        <div className="modal-overlay" onClick={() => setModalCartoes(false)}>
+          <div
+            style={{ background: 'white', borderRadius: 16, padding: 28, maxWidth: 420, width: '92%', boxShadow: '0 20px 60px rgba(0,0,0,.25)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: '#102040' }}>✏ Personalizar Dashboard</div>
+              <button
+                onClick={() => setModalCartoes(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#6080a0', cursor: 'pointer', lineHeight: 1 }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ fontSize: 12, color: '#6080a0', marginBottom: 16 }}>
+              Ative ou desative os cartões que deseja exibir no dashboard. A configuração é salva automaticamente.
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {CARDS_CONFIG.map((card) => {
+                const ativo = cartoes[card.id]
+                return (
+                  <label
+                    key={card.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                      background: ativo ? '#f0f6ff' : '#f8faff',
+                      border: `1px solid ${ativo ? '#bfdbfe' : '#e8eef8'}`,
+                      transition: 'all .15s',
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 600, color: ativo ? '#1e4080' : '#a0b8d0' }}>
+                      {card.label}
+                    </span>
+                    <div
+                      onClick={() => toggleCard(card.id)}
+                      style={{
+                        width: 40, height: 22, borderRadius: 11, flexShrink: 0,
+                        background: ativo ? '#2255a4' : '#c0d4e8',
+                        position: 'relative', transition: 'background .2s', cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{
+                        position: 'absolute', top: 3, left: ativo ? 21 : 3,
+                        width: 16, height: 16, borderRadius: '50%',
+                        background: 'white', boxShadow: '0 1px 4px rgba(0,0,0,.2)',
+                        transition: 'left .2s',
+                      }} />
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+
+            <div style={{ marginTop: 20, display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <button
+                onClick={() => {
+                  const all = Object.fromEntries(CARDS_CONFIG.map(c => [c.id, true])) as CartoesState
+                  setCartoes(all)
+                  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(all)) } catch { /* ignore */ }
+                }}
+                style={{ fontSize: 12, color: '#6080a0', background: '#f0f4f8', border: '1px solid #dde8f4', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', fontWeight: 600 }}
+              >
+                Mostrar todos
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => setModalCartoes(false)}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
