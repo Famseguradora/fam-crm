@@ -10,6 +10,7 @@ import type { Usuario } from '@/types'
 interface FormData {
   nome: string
   email: string
+  senha: string
   telefone: string
   cargo: string
   perfil: 'admin' | 'usuario'
@@ -17,7 +18,7 @@ interface FormData {
 }
 
 const FORM_INICIAL: FormData = {
-  nome: '', email: '', telefone: '', cargo: '',
+  nome: '', email: '', senha: '', telefone: '', cargo: '',
   perfil: 'usuario', status: 'ativo',
 }
 
@@ -98,6 +99,7 @@ export default function UsuariosPage() {
           body: JSON.stringify({
             nome: titleCase(form.nome),
             email: form.email.toLowerCase(),
+            senha: form.senha,
             telefone: form.telefone || null,
             cargo: form.cargo || null,
             perfil: form.perfil,
@@ -106,7 +108,7 @@ export default function UsuariosPage() {
         })
         const resultado = await resp.json()
         if (!resp.ok) throw new Error(resultado.erro ?? 'Erro ao criar usuário.')
-        setMensagem({ tipo: 'sucesso', texto: 'Convite enviado! O usuário receberá um e-mail com o link de acesso.' })
+        setMensagem({ tipo: 'sucesso', texto: 'Usuário criado com sucesso! No primeiro acesso ele será solicitado a criar uma senha definitiva.' })
         setForm(FORM_INICIAL)
       }
       await carregarUsuarios()
@@ -222,6 +224,21 @@ export default function UsuariosPage() {
                   />
                 </div>
 
+                {!editando && (
+                  <div className="form-field">
+                    <label className="form-label">Senha Temporária *</label>
+                    <input
+                      className="fam-input"
+                      type="text"
+                      placeholder="Mínimo 8 caracteres"
+                      value={form.senha}
+                      onChange={(e) => setForm({ ...form, senha: e.target.value })}
+                      required={!editando}
+                      minLength={8}
+                    />
+                  </div>
+                )}
+
                 <div className="form-field">
                   <label className="form-label">Perfil *</label>
                   <select
@@ -255,8 +272,7 @@ export default function UsuariosPage() {
                       borderRadius: 8, padding: '10px 14px',
                       fontSize: 13, color: '#3060a0', lineHeight: 1.5,
                     }}>
-                      📧 Um e-mail de convite será enviado automaticamente para o endereço informado.
-                      O usuário clicará no link e criará sua própria senha no primeiro acesso.
+                      🔑 Informe ao usuário a senha temporária. No primeiro login ele será obrigado a criar uma senha definitiva.
                     </div>
                   </div>
                 )}

@@ -31,6 +31,10 @@ const SUBSCRICAO_ITEMS = [
   { label: 'Análise de Subscrição', href: '/subscricao/analise-subscricao', icon: '📋' },
 ]
 
+const PERFORMANCE_ITEMS = [
+  { label: 'Performance', href: '/performance', icon: '📊' },
+]
+
 export default function DashboardShell({ nomeUsuario, perfilUsuario, children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
@@ -287,6 +291,23 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, children }:
               </div>
             )}
             {SUBSCRICAO_ITEMS.map((item) => (
+              <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} />
+            ))}
+          </div>
+
+          {/* Performance */}
+          <div style={{ paddingTop: 8 }}>
+            {sidebarOpen && (
+              <div style={{
+                fontSize: 10, fontWeight: 700, color: '#4a7ab5',
+                letterSpacing: '1.5px', textTransform: 'uppercase',
+                padding: '0 16px 8px',
+                whiteSpace: 'nowrap',
+              }}>
+                Performance
+              </div>
+            )}
+            {PERFORMANCE_ITEMS.map((item) => (
               <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} />
             ))}
           </div>

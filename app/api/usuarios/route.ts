@@ -4,10 +4,13 @@ import { createClient } from '@supabase/supabase-js'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { nome, email, telefone, cargo, perfil, status } = body
+    const { nome, email, senha, telefone, cargo, perfil, status } = body
 
-    if (!nome || !email) {
-      return NextResponse.json({ erro: 'Nome e e-mail são obrigatórios.' }, { status: 400 })
+    if (!nome || !email || !senha) {
+      return NextResponse.json({ erro: 'Nome, e-mail e senha são obrigatórios.' }, { status: 400 })
+    }
+    if (senha.length < 8) {
+      return NextResponse.json({ erro: 'A senha deve ter no mínimo 8 caracteres.' }, { status: 400 })
     }
 
     const supabaseAdmin = createClient(
@@ -16,24 +19,23 @@ export async function POST(request: NextRequest) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
-
-    // Envia convite por e-mail — Supabase dispara o e-mail automaticamente
-    const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
+    // Cria o usuário no Auth com senha temporária — sem envio de e-mail
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
-      { redirectTo: `${appUrl}/alterar-senha` }
-    )
+      password: senha,
+      email_confirm: true,
+    })
 
-    if (inviteError) {
-      if (inviteError.message.toLowerCase().includes('already')) {
+    if (authError) {
+      if (authError.message.toLowerCase().includes('already')) {
         return NextResponse.json({ erro: 'Este e-mail já está cadastrado no sistema.' }, { status: 409 })
       }
-      return NextResponse.json({ erro: inviteError.message }, { status: 400 })
+      return NextResponse.json({ erro: authError.message }, { status: 400 })
     }
 
     // Insere na tabela pública de usuários
     const { error: dbError } = await supabaseAdmin.from('usuarios').insert({
-      auth_id: inviteData.user.id,
+      auth_id: authData.user.id,
       nome,
       email,
       telefone: telefone || null,
@@ -45,7 +47,7 @@ export async function POST(request: NextRequest) {
 
     if (dbError) {
       // Rollback: remove o usuário do auth se falhou no banco
-      await supabaseAdmin.auth.admin.deleteUser(inviteData.user.id)
+      await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
       return NextResponse.json({ erro: 'Erro ao salvar dados do usuário: ' + dbError.message }, { status: 500 })
     }
 
