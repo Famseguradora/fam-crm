@@ -55,6 +55,7 @@ export default function UsuariosPage() {
     setForm({
       nome: u.nome,
       email: u.email,
+      senha: '',
       telefone: u.telefone ?? '',
       cargo: u.cargo ?? '',
       perfil: u.perfil,
