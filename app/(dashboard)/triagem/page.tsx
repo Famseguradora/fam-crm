@@ -9,6 +9,13 @@ import type { Corretora, Produto, Tomador, Operacao } from '@/types'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+interface ModalidadeBasica {
+  id: string
+  nome: string
+  codigo_cobertura: string | null
+  produto_id: string | null
+}
+
 interface FormTriagem {
   // Tomador
   cnpj: string
@@ -19,7 +26,9 @@ interface FormTriagem {
   estado: string
   // Operação
   produto_id: string
+  modalidade_id: string
   modalidade: string
+  codigo_cobertura: string
   corretor: string
   lmg: string
   taxa: string
@@ -31,7 +40,8 @@ interface FormTriagem {
 
 const FORM_INICIAL: FormTriagem = {
   cnpj: '', razao_social: '', nome_fantasia: '', corretora_id: '', cidade: '', estado: '',
-  produto_id: '', modalidade: '', corretor: '', lmg: '', taxa: '', vigencia_anos: '',
+  produto_id: '', modalidade_id: '', modalidade: '', codigo_cobertura: '',
+  corretor: '', lmg: '', taxa: '', vigencia_anos: '',
   temperatura: 'Frio', prioridade: 'Fluxo Normal', observacao: '',
 }
 
@@ -46,7 +56,7 @@ export default function TriagemPage() {
   const [triagens, setTriagens] = useState<Operacao[]>([])
   const [corretoras, setCorretoras] = useState<Corretora[]>([])
   const [produtos, setProdutos] = useState<Produto[]>([])
-  const [modalidades, setModalidades] = useState<{ id: string; nome: string }[]>([])
+  const [modalidades, setModalidades] = useState<ModalidadeBasica[]>([])
   const [carregando, setCarregando] = useState(true)
 
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -78,12 +88,12 @@ export default function TriagemPage() {
     const supabase = createClient()
     const [{ data: cor }, { data: prod }, { data: mod }] = await Promise.all([
       supabase.from('corretoras').select('id,razao_social,cnpj').eq('status', 'ativo').order('razao_social'),
-      supabase.from('produtos').select('id,nome,modalidade').eq('status', 'ativo').order('nome'),
-      supabase.from('modalidades').select('id,nome').eq('status', 'ativo').order('nome'),
+      supabase.from('produtos').select('id,nome,codigo').eq('status', 'ativo').order('codigo'),
+      supabase.from('modalidades').select('id,nome,codigo_cobertura,produto_id').eq('status', 'ativo').order('codigo_cobertura'),
     ])
     setCorretoras((cor as Corretora[]) ?? [])
-    setProdutos((prod as Produto[]) ?? [])
-    setModalidades(mod ?? [])
+    setProdutos((prod as unknown as Produto[]) ?? [])
+    setModalidades((mod as ModalidadeBasica[]) ?? [])
   }, [])
 
   useEffect(() => {
@@ -130,14 +140,19 @@ export default function TriagemPage() {
     setErroCnpj('')
   }
 
-  // ─── Produto → Modalidade auto-fill ────────────────────────────────────────
+  // ─── Setor → Modalidade ─────────────────────────────────────────────────────
 
-  function handleProdutoChange(prodId: string) {
-    const prod = produtos.find((p) => p.id === prodId)
+  function handleSetorChange(prodId: string) {
+    setForm((f) => ({ ...f, produto_id: prodId, modalidade_id: '', modalidade: '', codigo_cobertura: '' }))
+  }
+
+  function handleModalidadeChange(modalidadeId: string) {
+    const mod = modalidades.find((m) => m.id === modalidadeId)
     setForm((f) => ({
       ...f,
-      produto_id: prodId,
-      modalidade: prod?.modalidade ?? f.modalidade,
+      modalidade_id: modalidadeId,
+      modalidade: mod?.nome ?? '',
+      codigo_cobertura: mod?.codigo_cobertura ?? '',
     }))
   }
 
@@ -193,6 +208,7 @@ export default function TriagemPage() {
         corretora_id: form.corretora_id || null,
         produto_id: form.produto_id,
         modalidade: form.modalidade || null,
+        codigo_cobertura: form.codigo_cobertura || null,
         corretor: form.corretor || null,
         lmg: lmgNum,
         taxa: taxaNum,
@@ -437,21 +453,59 @@ export default function TriagemPage() {
                     <span className="dot" style={{ background: '#e8b84b' }} />Operação
                   </div>
                   <div className="form-grid" style={{ marginBottom: 20 }}>
-                    <div className="form-field">
-                      <label className="form-label">Produto *</label>
-                      <select className="fam-input" value={form.produto_id}
-                        onChange={(e) => handleProdutoChange(e.target.value)} required>
-                        <option value="">— Selecione —</option>
-                        {produtos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                    {/* Setor */}
+                    <div className="form-field full">
+                      <label className="form-label">Setor *</label>
+                      <div style={{ display: 'flex', gap: 10 }}>
+                        {produtos.map((p) => {
+                          const isPublico = p.codigo === '75'
+                          const selecionado = form.produto_id === p.id
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => handleSetorChange(p.id)}
+                              style={{
+                                flex: 1, padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+                                fontFamily: "'Calibri','Segoe UI',sans-serif", fontSize: 13, fontWeight: 700,
+                                border: selecionado ? `2px solid ${isPublico ? '#1a5fa0' : '#7b3fa0'}` : '2px solid #d0e4f5',
+                                background: selecionado ? (isPublico ? '#dbeafe' : '#ede9fe') : '#f8fafc',
+                                color: selecionado ? (isPublico ? '#1a5fa0' : '#7b3fa0') : '#6080a0',
+                                transition: 'all 0.15s',
+                              }}
+                            >
+                              {isPublico ? '🏛️' : '🏢'} {p.nome}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    {/* Modalidade filtrada */}
+                    <div className="form-field" style={{ flex: '2 1 200px' }}>
+                      <label className="form-label">Modalidade</label>
+                      <select
+                        className="fam-input"
+                        value={form.modalidade_id}
+                        onChange={(e) => handleModalidadeChange(e.target.value)}
+                        disabled={!form.produto_id}
+                      >
+                        <option value="">— {form.produto_id ? 'Selecione a modalidade' : 'Selecione o setor primeiro'} —</option>
+                        {modalidades.filter((m) => m.produto_id === form.produto_id).map((m) => (
+                          <option key={m.id} value={m.id}>{m.nome}</option>
+                        ))}
                       </select>
                     </div>
-                    <div className="form-field">
-                      <label className="form-label">Modalidade</label>
-                      <select className="fam-input" value={form.modalidade}
-                        onChange={(e) => setForm({ ...form, modalidade: e.target.value })}>
-                        <option value="">— Selecione ou deixe em branco —</option>
-                        {modalidades.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
-                      </select>
+                    {/* Código cobertura read-only */}
+                    <div className="form-field" style={{ flex: '1 1 120px' }}>
+                      <label className="form-label">Código Cobertura</label>
+                      <input
+                        className="fam-input"
+                        type="text"
+                        value={form.codigo_cobertura}
+                        readOnly
+                        placeholder="Preenchido automaticamente"
+                        style={{ background: '#f0f4f8', color: '#4a6080', cursor: 'default' }}
+                      />
                     </div>
                     <div className="form-field">
                       <label className="form-label">LMG (R$) *</label>

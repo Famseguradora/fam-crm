@@ -31,9 +31,20 @@ export interface Usuario {
 export interface Produto {
   id: string
   nome: string
-  modalidade: string | null
-  cobertura_associada: string | null
-  codigo_interno: string | null
+  codigo: string | null
+  descricao: string | null
+  status: 'ativo' | 'inativo'
+  created_at: string
+  updated_at: string
+}
+
+export interface Modalidade {
+  id: string
+  nome: string
+  codigo_cobertura: string | null
+  produto_id: string | null
+  produto?: Produto
+  grupo: string | null
   observacao: string | null
   status: 'ativo' | 'inativo'
   created_at: string
@@ -101,6 +112,7 @@ export interface Operacao {
   produto_id: string | null
   produto?: Produto
   modalidade: string | null
+  codigo_cobertura: string | null
   estado: string | null
   temperatura: Temperatura | null
   prioridade: Prioridade | null

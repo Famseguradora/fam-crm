@@ -7,13 +7,22 @@ import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, fmtMoeda, fmtData, fmtPercent } from '@/lib/utils'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo } from '@/types'
 
+interface ModalidadeBasica {
+  id: string
+  nome: string
+  codigo_cobertura: string | null
+  produto_id: string | null
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface FormOperacao {
   tomador_id: string
   corretora_id: string
   produto_id: string
+  modalidade_id: string
   modalidade: string
+  codigo_cobertura: string
   corretor: string
   lmg: string
   taxa: string
@@ -35,10 +44,10 @@ interface FormStatus {
 }
 
 const FORM_OP_INICIAL: FormOperacao = {
-  tomador_id: '', corretora_id: '', produto_id: '', modalidade: '',
-  corretor: '', lmg: '', taxa: '', vigencia_anos: '', premio_previsto: '',
-  temperatura: 'Frio', prioridade: 'Fluxo Normal', estado: '',
-  observacao: '', status: 'Triagem', ativo: true,
+  tomador_id: '', corretora_id: '', produto_id: '', modalidade_id: '',
+  modalidade: '', codigo_cobertura: '', corretor: '', lmg: '', taxa: '',
+  vigencia_anos: '', premio_previsto: '', temperatura: 'Frio',
+  prioridade: 'Fluxo Normal', estado: '', observacao: '', status: 'Triagem', ativo: true,
 }
 
 const FORM_STATUS_INICIAL: FormStatus = { nome: '', cor: '#6080a0', ordem: '99', ativo: true }
@@ -67,7 +76,7 @@ export default function OperacoesPage() {
   const [tomadores, setTomadores] = useState<Tomador[]>([])
   const [corretoras, setCorretoras] = useState<Corretora[]>([])
   const [produtos, setProdutos] = useState<Produto[]>([])
-  const [modalidades, setModalidades] = useState<{ id: string; nome: string }[]>([])
+  const [modalidades, setModalidades] = useState<ModalidadeBasica[]>([])
   const [statusOpcoes, setStatusOpcoes] = useState<StatusFluxo[]>([])
   const [carregando, setCarregando] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -121,13 +130,13 @@ export default function OperacoesPage() {
     const [{ data: tom }, { data: cor }, { data: prod }, { data: mod }] = await Promise.all([
       supabase.from('tomadores').select('id,razao_social,cnpj').eq('ativo', true).order('razao_social'),
       supabase.from('corretoras').select('id,razao_social').eq('status', 'ativo').order('razao_social'),
-      supabase.from('produtos').select('id,nome,modalidade').eq('status', 'ativo').order('nome'),
-      supabase.from('modalidades').select('id,nome').eq('status', 'ativo').order('nome'),
+      supabase.from('produtos').select('id,nome,codigo').eq('status', 'ativo').order('codigo'),
+      supabase.from('modalidades').select('id,nome,codigo_cobertura,produto_id').eq('status', 'ativo').order('codigo_cobertura'),
     ])
     setTomadores((tom as Tomador[]) ?? [])
     setCorretoras((cor as Corretora[]) ?? [])
-    setProdutos((prod as Produto[]) ?? [])
-    setModalidades(mod ?? [])
+    setProdutos((prod as unknown as Produto[]) ?? [])
+    setModalidades((mod as ModalidadeBasica[]) ?? [])
   }, [])
 
   useEffect(() => {
@@ -147,11 +156,16 @@ export default function OperacoesPage() {
 
   function abrirEditar(op: Operacao) {
     setEditando(op)
+    const modMatch = modalidades.find(
+      (m) => m.nome === op.modalidade && m.produto_id === op.produto_id
+    )
     setForm({
       tomador_id: op.tomador_id ?? '',
       corretora_id: op.corretora_id ?? '',
       produto_id: op.produto_id ?? '',
+      modalidade_id: modMatch?.id ?? '',
       modalidade: op.modalidade ?? '',
+      codigo_cobertura: op.codigo_cobertura ?? '',
       corretor: op.corretor ?? '',
       lmg: op.lmg != null ? String(op.lmg) : '',
       taxa: op.taxa != null ? String(op.taxa) : '',
@@ -175,17 +189,18 @@ export default function OperacoesPage() {
     setMensagem(null)
   }
 
-  function handleProdutoChange(prodId: string) {
-    const prod = produtos.find((p) => p.id === prodId)
-    setForm((f) => ({ ...f, produto_id: prodId, modalidade: prod?.modalidade ?? f.modalidade }))
+  function handleSetorChange(prodId: string) {
+    setForm((f) => ({ ...f, produto_id: prodId, modalidade_id: '', modalidade: '', codigo_cobertura: '' }))
   }
 
-  function handleModalidadeChange(modalidadeNome: string) {
-    setForm((f) => {
-      const produtoAtual = produtos.find((p) => p.id === f.produto_id)
-      const produtoValido = !modalidadeNome || produtoAtual?.modalidade === modalidadeNome
-      return { ...f, modalidade: modalidadeNome, produto_id: produtoValido ? f.produto_id : '' }
-    })
+  function handleModalidadeChange(modalidadeId: string) {
+    const mod = modalidades.find((m) => m.id === modalidadeId)
+    setForm((f) => ({
+      ...f,
+      modalidade_id: modalidadeId,
+      modalidade: mod?.nome ?? '',
+      codigo_cobertura: mod?.codigo_cobertura ?? '',
+    }))
   }
 
   function calcPremio(lmg: string, taxa: string) {
@@ -208,6 +223,7 @@ export default function OperacoesPage() {
       corretora_id: form.corretora_id || null,
       produto_id: form.produto_id || null,
       modalidade: form.modalidade || null,
+      codigo_cobertura: form.codigo_cobertura || null,
       corretor: form.corretor || null,
       lmg: lmgNum,
       taxa: taxaNum,
@@ -395,9 +411,9 @@ export default function OperacoesPage() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
-  const coberturasFiltradas = form.modalidade
-    ? produtos.filter((p) => p.modalidade === form.modalidade)
-    : produtos
+  const modalidadesDoSetor = form.produto_id
+    ? modalidades.filter((m) => m.produto_id === form.produto_id)
+    : []
 
   return (
     <>
@@ -513,19 +529,61 @@ export default function OperacoesPage() {
                     <span className="dot" style={{ background: '#e8b84b' }} />Cobertura
                   </div>
                   <div className="form-grid" style={{ marginBottom: 20 }}>
-                    <div className="form-field">
+                    {/* Seletor de setor */}
+                    <div className="form-field full">
+                      <label className="form-label">Setor *</label>
+                      <div style={{ display: 'flex', gap: 10 }}>
+                        {produtos.map((p) => {
+                          const isPublico = p.codigo === '75'
+                          const selecionado = form.produto_id === p.id
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => handleSetorChange(p.id)}
+                              style={{
+                                flex: 1, padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+                                fontFamily: "'Calibri','Segoe UI',sans-serif", fontSize: 13, fontWeight: 700,
+                                border: selecionado ? `2px solid ${isPublico ? '#1a5fa0' : '#7b3fa0'}` : '2px solid #d0e4f5',
+                                background: selecionado ? (isPublico ? '#dbeafe' : '#ede9fe') : '#f8fafc',
+                                color: selecionado ? (isPublico ? '#1a5fa0' : '#7b3fa0') : '#6080a0',
+                                transition: 'all 0.15s',
+                              }}
+                            >
+                              {isPublico ? '🏛️' : '🏢'} {p.nome}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Modalidade filtrada pelo setor */}
+                    <div className="form-field" style={{ flex: '2 1 200px' }}>
                       <label className="form-label">Modalidade</label>
-                      <select className="fam-input" value={form.modalidade} onChange={(e) => handleModalidadeChange(e.target.value)}>
-                        <option value="">— Selecione —</option>
-                        {modalidades.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
+                      <select
+                        className="fam-input"
+                        value={form.modalidade_id}
+                        onChange={(e) => handleModalidadeChange(e.target.value)}
+                        disabled={!form.produto_id}
+                      >
+                        <option value="">— {form.produto_id ? 'Selecione a modalidade' : 'Selecione o setor primeiro'} —</option>
+                        {modalidadesDoSetor.map((m) => (
+                          <option key={m.id} value={m.id}>{m.nome}</option>
+                        ))}
                       </select>
                     </div>
-                    <div className="form-field">
-                      <label className="form-label">Cobertura</label>
-                      <select className="fam-input" value={form.produto_id} onChange={(e) => handleProdutoChange(e.target.value)}>
-                        <option value="">— Selecione —</option>
-                        {coberturasFiltradas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                      </select>
+
+                    {/* Código cobertura (read-only) */}
+                    <div className="form-field" style={{ flex: '1 1 120px' }}>
+                      <label className="form-label">Código Cobertura</label>
+                      <input
+                        className="fam-input"
+                        type="text"
+                        value={form.codigo_cobertura}
+                        readOnly
+                        placeholder="Preenchido automaticamente"
+                        style={{ background: '#f0f4f8', color: '#4a6080', cursor: 'default' }}
+                      />
                     </div>
                   </div>
 
