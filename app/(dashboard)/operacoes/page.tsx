@@ -706,7 +706,7 @@ export default function OperacoesPage() {
                       <label className="form-label">Tomador</label>
                       <select className="fam-input" value={form.tomador_id} onChange={(e) => setForm({ ...form, tomador_id: e.target.value })}>
                         <option value="">— Selecione o tomador —</option>
-                        {tomadores.map((t) => <option key={t.id} value={t.id}>{t.razao_social} — {maskCNPJ(t.cnpj)}</option>)}
+                        {tomadores.map((t) => <option key={t.id} value={t.id}>{t.razao_social}{t.cnpj ? ` — ${maskCNPJ(t.cnpj)}` : ''}</option>)}
                       </select>
                     </div>
                     <div className="form-field full">

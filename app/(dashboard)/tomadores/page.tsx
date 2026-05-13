@@ -154,7 +154,7 @@ export default function TomadoresPage() {
     setForm({
       razao_social: t.razao_social,
       nome_fantasia: t.nome_fantasia ?? '',
-      cnpj: maskCNPJ(t.cnpj),
+      cnpj: maskCNPJ(t.cnpj ?? ''),
       corretora_id: t.corretora_id ?? '',
       email: t.email ?? '',
       telefone: maskTelefone(t.telefone ?? ''),
@@ -190,7 +190,7 @@ export default function TomadoresPage() {
   async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault()
     const cnpjDigits = form.cnpj.replace(/\D/g, '')
-    if (!validarCNPJ(cnpjDigits)) {
+    if (cnpjDigits && !validarCNPJ(cnpjDigits)) {
       setErroCnpj('CNPJ inválido.')
       return
     }
@@ -199,7 +199,7 @@ export default function TomadoresPage() {
     const payload = {
       razao_social: titleCase(form.razao_social),
       nome_fantasia: form.nome_fantasia || null,
-      cnpj: cnpjDigits,
+      cnpj: cnpjDigits || null,
       corretora_id: form.corretora_id || null,
       email: form.email.toLowerCase() || null,
       telefone: form.telefone || null,
@@ -311,7 +311,7 @@ export default function TomadoresPage() {
     const textMatch = !busca ||
       t.razao_social.toLowerCase().includes(buscaLow) ||
       (t.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
-      t.cnpj.includes(busca.replace(/\D/g, '')) ||
+      (t.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
       (t.responsavel ?? '').toLowerCase().includes(buscaLow)
     const statusMatch = !filtroStatus || t.status === filtroStatus
     const estadoMatch = !filtroEstado || t.estado === filtroEstado
@@ -414,12 +414,9 @@ export default function TomadoresPage() {
 
       if (!razao_social) continue
 
-      if (cnpjRaw.length !== 14) {
-        erros.push({ linha, razao_social, motivo: 'CNPJ inválido ou ausente' })
-        continue
-      }
-
-      if (cnpjsExistentes.has(cnpjRaw)) {
+      // CNPJ com 14 dígitos: dedup. Sem CNPJ: insere sem trava.
+      const cnpjValido = cnpjRaw.length === 14
+      if (cnpjValido && cnpjsExistentes.has(cnpjRaw)) {
         existentesCount++
         continue
       }
@@ -435,7 +432,7 @@ export default function TomadoresPage() {
       const payload: Record<string, unknown> = {
         razao_social: razao_social.trim(),
         nome_fantasia: col(row, 'nome_fantasia') || null,
-        cnpj: cnpjRaw,
+        cnpj: cnpjValido ? cnpjRaw : null,
         email: col(row, 'email') || null,
         telefone: col(row, 'telefone').replace(/\D/g, '') || null,
         celular: col(row, 'celular').replace(/\D/g, '') || null,
@@ -463,7 +460,7 @@ export default function TomadoresPage() {
         erros.push({ linha, razao_social, motivo })
       } else {
         inseridos++
-        cnpjsExistentes.add(cnpjRaw)
+        if (cnpjValido) cnpjsExistentes.add(cnpjRaw)
       }
     }
 
@@ -482,7 +479,7 @@ export default function TomadoresPage() {
       '#': i + 1,
       'Razão Social': t.razao_social,
       'Nome Fantasia': t.nome_fantasia ?? '—',
-      'CNPJ': maskCNPJ(t.cnpj),
+      'CNPJ': t.cnpj ? maskCNPJ(t.cnpj) : '—',
       'Corretora': (t.corretora as Corretora | undefined)?.razao_social ?? '—',
       'Cidade': t.cidade ?? '—',
       'UF': t.estado ?? '—',
@@ -896,7 +893,7 @@ export default function TomadoresPage() {
                       <div style={{ fontWeight: 600 }}>{t.razao_social}</div>
                       {t.nome_fantasia && <div style={{ fontSize: 11, color: '#6080a0' }}>{t.nome_fantasia}</div>}
                     </td>
-                    <td style={{ fontSize: 13, fontFamily: 'monospace' }}>{maskCNPJ(t.cnpj)}</td>
+                    <td style={{ fontSize: 13, fontFamily: 'monospace' }}>{t.cnpj ? maskCNPJ(t.cnpj) : <span style={{ color: '#aaa' }}>—</span>}</td>
                     <td style={{ fontSize: 13, color: '#6080a0' }}>{(t.corretora as Corretora | undefined)?.razao_social ?? '—'}</td>
                     <td style={{ fontSize: 13, color: '#6080a0' }}>
                       {t.cidade ? `${t.cidade}${t.estado ? `/${t.estado}` : ''}` : t.estado ?? '—'}

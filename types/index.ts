@@ -78,7 +78,7 @@ export interface Tomador {
   id: string
   razao_social: string
   nome_fantasia: string | null
-  cnpj: string
+  cnpj: string | null
   corretora_id: string | null
   corretora?: Corretora
   email: string | null
