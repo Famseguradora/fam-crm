@@ -308,11 +308,14 @@ export default function TomadoresPage() {
 
   const tomadoresFiltrados = useMemo(() => tomadores.filter((t) => {
     const buscaLow = busca.toLowerCase()
+    const buscaDigitos = busca.replace(/\D/g, '')
+    const corrNome = (t.corretora as Corretora | undefined)?.razao_social?.toLowerCase() ?? ''
     const textMatch = !busca ||
       t.razao_social.toLowerCase().includes(buscaLow) ||
       (t.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
-      (t.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
-      (t.responsavel ?? '').toLowerCase().includes(buscaLow)
+      (buscaDigitos.length > 0 && (t.cnpj ?? '').includes(buscaDigitos)) ||
+      (t.responsavel ?? '').toLowerCase().includes(buscaLow) ||
+      corrNome.includes(buscaLow)
     const statusMatch = !filtroStatus || t.status === filtroStatus
     const estadoMatch = !filtroEstado || t.estado === filtroEstado
     const ativoMatch = !filtroAtivo || String(t.ativo) === filtroAtivo
@@ -425,9 +428,14 @@ export default function TomadoresPage() {
       const corretora_id = corretoraNome ? (mapaCorretoras.get(_normalizarImport(corretoraNome)) ?? null) : null
       const porteRaw = col(row, 'porte')
       const porte = portesValidos.includes(porteRaw) ? porteRaw : null
-      const limiteRaw = col(row, 'limite_aprovado').replace(/\./g, '').replace(',', '.')
+      const limiteRaw = col(row, 'limite_aprovado').replace(/R\$\s*/g, '').replace(/\./g, '').replace(',', '.').trim()
       const limite_aprovado = limiteRaw && !isNaN(parseFloat(limiteRaw)) ? parseFloat(limiteRaw) : null
       const created_at = _parsearDataImport(col(row, 'data_cadastro')) ?? undefined
+
+      const csvStatus = col(row, 'status')
+      const statusCsv = csvStatus
+        ? (statusOpcoes.find((s) => s.nome === csvStatus) ?? statusOpcoes.find((s) => _normalizarImport(s.nome) === _normalizarImport(csvStatus)))
+        : null
 
       const payload: Record<string, unknown> = {
         razao_social: razao_social.trim(),
@@ -448,7 +456,7 @@ export default function TomadoresPage() {
         limite_aprovado,
         observacao: col(row, 'observacao') || null,
         corretora_id,
-        status: 'Aguardando Análise',
+        status: statusCsv?.nome ?? 'Triagem',
         ativo: true,
         ...(created_at ? { created_at, updated_at: created_at } : {}),
       }
@@ -660,11 +668,11 @@ export default function TomadoresPage() {
                         onChange={(e) => setForm({ ...form, nome_fantasia: e.target.value })} />
                     </div>
                     <div className="form-field">
-                      <label className="form-label">CNPJ *</label>
+                      <label className="form-label">CNPJ</label>
                       <input className={`fam-input${erroCnpj ? ' invalid' : ''}`} type="text" placeholder="00.000.000/0000-00"
                         value={form.cnpj}
                         onChange={(e) => { setErroCnpj(''); setForm({ ...form, cnpj: maskCNPJ(e.target.value) }) }}
-                        maxLength={18} required />
+                        maxLength={18} />
                       {erroCnpj && <span className="field-error">{erroCnpj}</span>}
                     </div>
                     <div className="form-field">
