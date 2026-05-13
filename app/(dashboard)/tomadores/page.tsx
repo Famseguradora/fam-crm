@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskTelefone, maskCEP, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
@@ -84,6 +84,13 @@ export default function TomadoresPage() {
   const [filtroCorretora, setFiltroCorretora] = useState('')
   const [erroCnpj, setErroCnpj] = useState('')
   const [exportando, setExportando] = useState(false)
+  const [importando, setImportando] = useState(false)
+  const [resultadoImport, setResultadoImport] = useState<{
+    inseridos: number
+    existentes: number
+    erros: { linha: number; razao_social: string; motivo: string }[]
+  } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ── Status ──
   const [statusLista, setStatusLista] = useState<StatusFluxo[]>([])
@@ -324,6 +331,148 @@ export default function TomadoresPage() {
     [...new Set(tomadores.map((t) => t.estado).filter(Boolean))].sort() as string[],
     [tomadores])
 
+  // ─── Import CSV ─────────────────────────────────────────────────────────────
+
+  function _parseCsvImport(conteudo: string): string[][] {
+    const linhas = conteudo.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+    const primeira = linhas.find((l) => l.trim()) ?? ''
+    const sep = primeira.includes(';') ? ';' : ','
+    return linhas.filter((l) => l.trim()).map((linha) => {
+      const campos: string[] = []
+      let campo = ''
+      let dentro = false
+      for (const c of linha) {
+        if (c === '"') { dentro = !dentro }
+        else if (c === sep && !dentro) { campos.push(campo.trim()); campo = '' }
+        else { campo += c }
+      }
+      campos.push(campo.trim())
+      return campos
+    })
+  }
+
+  function _normalizarImport(str: string) {
+    return (str ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
+  }
+
+  function _parsearDataImport(valor: string): string | null {
+    if (!valor) return null
+    const br = valor.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+    if (br) {
+      const dt = new Date(`${br[3]}-${br[2]}-${br[1]}T00:00:00.000Z`)
+      return isNaN(dt.getTime()) ? null : dt.toISOString()
+    }
+    const iso = valor.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (iso) {
+      const dt = new Date(`${iso[0]}T00:00:00.000Z`)
+      return isNaN(dt.getTime()) ? null : dt.toISOString()
+    }
+    return null
+  }
+
+  async function importarCSV(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImportando(true)
+    setResultadoImport(null)
+
+    const conteudo = await file.text()
+    const linhas = _parseCsvImport(conteudo.replace(/^﻿/, ''))
+    if (linhas.length < 2) { setImportando(false); return }
+
+    const cabecalho = linhas[0].map((h) => h.toLowerCase().trim().replace(/\s+/g, '_'))
+    const col = (row: string[], nome: string) => {
+      const idx = cabecalho.indexOf(nome)
+      return idx !== -1 ? (row[idx] ?? '').trim() : ''
+    }
+    const dados = linhas.slice(1)
+
+    const supabase = createClient()
+
+    // CNPJs já existentes no banco
+    const { data: existentesDB } = await supabase.from('tomadores').select('cnpj')
+    const cnpjsExistentes = new Set((existentesDB ?? []).map((t: { cnpj: string }) => t.cnpj))
+
+    // Mapa corretoras: nome normalizado → id
+    const { data: corretorasDB } = await supabase.from('corretoras').select('id,razao_social,nome_fantasia')
+    const mapaCorretoras = new Map<string, string>()
+    for (const c of (corretorasDB ?? []) as { id: string; razao_social: string; nome_fantasia: string | null }[]) {
+      if (c.razao_social) mapaCorretoras.set(_normalizarImport(c.razao_social), c.id)
+      if (c.nome_fantasia) mapaCorretoras.set(_normalizarImport(c.nome_fantasia), c.id)
+    }
+
+    const portesValidos = ['Small', 'Middle', 'Corporate', 'Large']
+    let inseridos = 0
+    let existentesCount = 0
+    const erros: { linha: number; razao_social: string; motivo: string }[] = []
+
+    for (let i = 0; i < dados.length; i++) {
+      const row = dados[i]
+      const linha = i + 2
+      const razao_social = col(row, 'razao_social')
+      const cnpjRaw = col(row, 'cnpj').replace(/\D/g, '')
+
+      if (!razao_social) continue
+
+      if (cnpjRaw.length !== 14) {
+        erros.push({ linha, razao_social, motivo: 'CNPJ inválido ou ausente' })
+        continue
+      }
+
+      if (cnpjsExistentes.has(cnpjRaw)) {
+        existentesCount++
+        continue
+      }
+
+      const corretoraNome = col(row, 'corretora_nome')
+      const corretora_id = corretoraNome ? (mapaCorretoras.get(_normalizarImport(corretoraNome)) ?? null) : null
+      const porteRaw = col(row, 'porte')
+      const porte = portesValidos.includes(porteRaw) ? porteRaw : null
+      const limiteRaw = col(row, 'limite_aprovado').replace(/\./g, '').replace(',', '.')
+      const limite_aprovado = limiteRaw && !isNaN(parseFloat(limiteRaw)) ? parseFloat(limiteRaw) : null
+      const created_at = _parsearDataImport(col(row, 'data_cadastro')) ?? undefined
+
+      const payload: Record<string, unknown> = {
+        razao_social: razao_social.trim(),
+        nome_fantasia: col(row, 'nome_fantasia') || null,
+        cnpj: cnpjRaw,
+        email: col(row, 'email') || null,
+        telefone: col(row, 'telefone').replace(/\D/g, '') || null,
+        celular: col(row, 'celular').replace(/\D/g, '') || null,
+        responsavel: col(row, 'responsavel') || null,
+        cep: col(row, 'cep').replace(/\D/g, '') || null,
+        endereco: col(row, 'endereco') || null,
+        numero: col(row, 'numero') || null,
+        complemento: col(row, 'complemento') || null,
+        bairro: col(row, 'bairro') || null,
+        cidade: col(row, 'cidade') || null,
+        estado: col(row, 'estado').toUpperCase().slice(0, 2) || null,
+        porte,
+        limite_aprovado,
+        observacao: col(row, 'observacao') || null,
+        corretora_id,
+        status: 'Aguardando Análise',
+        ativo: true,
+        ...(created_at ? { created_at, updated_at: created_at } : {}),
+      }
+
+      const { error } = await supabase.from('tomadores').insert(payload)
+      if (error) {
+        const motivo = error.message.includes('duplicate') || error.message.includes('unique')
+          ? 'CNPJ já cadastrado' : error.message
+        erros.push({ linha, razao_social, motivo })
+      } else {
+        inseridos++
+        cnpjsExistentes.add(cnpjRaw)
+      }
+    }
+
+    setResultadoImport({ inseridos, existentes: existentesCount, erros })
+    setImportando(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    if (inseridos > 0) carregarTomadores()
+  }
+
   // ─── Exports ────────────────────────────────────────────────────────────────
 
   async function exportarExcel() {
@@ -383,7 +532,11 @@ export default function TomadoresPage() {
         </div>
         {aba === 'tomadores' ? (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importarCSV} />
             <button className="btn-export" onClick={exportarExcel} disabled={exportando || tomadoresFiltrados.length === 0}>⬇ Excel</button>
+            <button className="btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={importando}>
+              {importando ? 'Importando...' : '⬆ Importar Planilha'}
+            </button>
             <button className="btn-primary" onClick={abrirNovo}>+ Novo Tomador</button>
           </div>
         ) : (
@@ -408,6 +561,49 @@ export default function TomadoresPage() {
           </button>
         ))}
       </div>
+
+      {/* Modal resultado importação */}
+      {resultadoImport && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setResultadoImport(null)}>
+          <div className="modal-box" style={{ maxWidth: 480 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div className="modal-title">Resultado da Importação</div>
+              <button onClick={() => setResultadoImport(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div className="kpi-card" style={{ flex: 1, textAlign: 'center', padding: '12px 8px' }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#27a96c' }}>{resultadoImport.inseridos}</div>
+                  <div style={{ fontSize: 12, color: '#6080a0' }}>Inseridos</div>
+                </div>
+                <div className="kpi-card" style={{ flex: 1, textAlign: 'center', padding: '12px 8px' }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#3070c8' }}>{resultadoImport.existentes}</div>
+                  <div style={{ fontSize: 12, color: '#6080a0' }}>Já existiam</div>
+                </div>
+                <div className="kpi-card" style={{ flex: 1, textAlign: 'center', padding: '12px 8px' }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#d64545' }}>{resultadoImport.erros.length}</div>
+                  <div style={{ fontSize: 12, color: '#6080a0' }}>Erros</div>
+                </div>
+              </div>
+              {resultadoImport.erros.length > 0 && (
+                <div style={{ maxHeight: 200, overflowY: 'auto', background: '#f8f0f0', borderRadius: 8, padding: 12, fontSize: 12 }}>
+                  {resultadoImport.erros.map((e, i) => (
+                    <div key={i} style={{ marginBottom: 4 }}>
+                      <strong>Linha {e.linha}</strong> — {e.razao_social}: <span style={{ color: '#d64545' }}>{e.motivo}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ fontSize: 12, color: '#6080a0', marginTop: 4 }}>
+                Tomadores com CNPJ já cadastrado foram pulados (importação incremental).
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn-primary" onClick={() => setResultadoImport(null)}>Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══════════ ABA TOMADORES ══════════ */}
       {aba === 'tomadores' && (

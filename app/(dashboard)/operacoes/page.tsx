@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, fmtMoeda, fmtData, fmtPercent } from '@/lib/utils'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo } from '@/types'
@@ -91,6 +91,12 @@ export default function OperacoesPage() {
   const [filtroCorretora, setFiltroCorretora] = useState('')
   const [filtroProduto, setFiltroProduto] = useState('')
   const [exportando, setExportando] = useState(false)
+  const [importando, setImportando] = useState(false)
+  const [resultadoImport, setResultadoImport] = useState<{
+    inseridos: number
+    erros: { linha: number; tomador: string; motivo: string }[]
+  } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ── Status ──
   const [statusLista, setStatusLista] = useState<StatusFluxo[]>([])
@@ -363,6 +369,156 @@ export default function OperacoesPage() {
     }
   }, [operacoes])
 
+  // ─── Import CSV ─────────────────────────────────────────────────────────────
+
+  function _parseCsvOp(conteudo: string): string[][] {
+    const linhas = conteudo.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+    const primeira = linhas.find((l) => l.trim()) ?? ''
+    const sep = primeira.includes(';') ? ';' : ','
+    return linhas.filter((l) => l.trim()).map((linha) => {
+      const campos: string[] = []
+      let campo = '', dentro = false
+      for (const c of linha) {
+        if (c === '"') { dentro = !dentro }
+        else if (c === sep && !dentro) { campos.push(campo.trim()); campo = '' }
+        else { campo += c }
+      }
+      campos.push(campo.trim())
+      return campos
+    })
+  }
+
+  function _normOp(str: string) {
+    return (str ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
+  }
+
+  function _parseDateOp(valor: string): string | null {
+    if (!valor) return null
+    const br = valor.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+    if (br) {
+      const dt = new Date(`${br[3]}-${br[2]}-${br[1]}T00:00:00.000Z`)
+      return isNaN(dt.getTime()) ? null : dt.toISOString()
+    }
+    const iso = valor.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (iso) {
+      const dt = new Date(`${iso[0]}T00:00:00.000Z`)
+      return isNaN(dt.getTime()) ? null : dt.toISOString()
+    }
+    return null
+  }
+
+  async function importarCSV(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImportando(true)
+    setResultadoImport(null)
+
+    const conteudo = await file.text()
+    const linhas = _parseCsvOp(conteudo.replace(/^﻿/, ''))
+    if (linhas.length < 2) { setImportando(false); return }
+
+    const cabecalho = linhas[0].map((h) => h.toLowerCase().trim().replace(/\s+/g, '_'))
+    const col = (row: string[], nome: string) => {
+      const idx = cabecalho.indexOf(nome)
+      return idx !== -1 ? (row[idx] ?? '').trim() : ''
+    }
+    const dados = linhas.slice(1)
+
+    const supabase = createClient()
+
+    // Lookup tables
+    const { data: tomadoresDB } = await supabase.from('tomadores').select('id,cnpj,corretora_id')
+    const mapaTomadores = new Map<string, { id: string; corretora_id: string | null }>()
+    for (const t of (tomadoresDB ?? []) as { id: string; cnpj: string; corretora_id: string | null }[]) {
+      mapaTomadores.set(t.cnpj, { id: t.id, corretora_id: t.corretora_id })
+    }
+
+    const { data: corretorasDB } = await supabase.from('corretoras').select('id,razao_social,nome_fantasia')
+    const mapaCorretoras = new Map<string, string>()
+    for (const c of (corretorasDB ?? []) as { id: string; razao_social: string; nome_fantasia: string | null }[]) {
+      if (c.razao_social) mapaCorretoras.set(_normOp(c.razao_social), c.id)
+      if (c.nome_fantasia) mapaCorretoras.set(_normOp(c.nome_fantasia), c.id)
+    }
+
+    const { data: modalidadesDB } = await supabase.from('modalidades').select('id,nome,codigo_cobertura,produto_id').eq('status', 'ativo')
+    const mapaModalidades = new Map<string, { id: string; codigo_cobertura: string | null; produto_id: string | null; nome: string }>()
+    for (const m of (modalidadesDB ?? []) as { id: string; nome: string; codigo_cobertura: string | null; produto_id: string | null }[]) {
+      mapaModalidades.set(_normOp(m.nome), { id: m.id, codigo_cobertura: m.codigo_cobertura, produto_id: m.produto_id, nome: m.nome })
+    }
+
+    const temperaturasValidas = ['Quente', 'Morno', 'Frio']
+    const prioridadesValidas = ['Urgente', 'Prioridade', 'Fluxo Normal']
+
+    let inseridos = 0
+    const erros: { linha: number; tomador: string; motivo: string }[] = []
+
+    for (let i = 0; i < dados.length; i++) {
+      const row = dados[i]
+      const linha = i + 2
+      const tomadorCnpj = col(row, 'tomador_cnpj').replace(/\D/g, '')
+      const tomadorNome = col(row, 'tomador_cnpj') // fallback para exibição no erro
+
+      if (!tomadorCnpj) {
+        erros.push({ linha, tomador: tomadorNome || '(vazio)', motivo: 'tomador_cnpj ausente' })
+        continue
+      }
+
+      const tomadorData = mapaTomadores.get(tomadorCnpj)
+      if (!tomadorData) {
+        erros.push({ linha, tomador: tomadorCnpj, motivo: 'Tomador não encontrado pelo CNPJ' })
+        continue
+      }
+
+      const corretoraNome = col(row, 'corretora_nome')
+      const corretora_id = corretoraNome
+        ? (mapaCorretoras.get(_normOp(corretoraNome)) ?? tomadorData.corretora_id)
+        : tomadorData.corretora_id
+
+      const modalidadeNome = col(row, 'modalidade_nome')
+      const modalidadeData = modalidadeNome ? mapaModalidades.get(_normOp(modalidadeNome)) : undefined
+
+      const lmgRaw = col(row, 'lmg').replace(/\./g, '').replace(',', '.')
+      const taxaRaw = col(row, 'taxa').replace(',', '.')
+      const premioRaw = col(row, 'premio_previsto').replace(/\./g, '').replace(',', '.')
+      const tempRaw = col(row, 'temperatura')
+      const priRaw = col(row, 'prioridade')
+      const created_at = _parseDateOp(col(row, 'data_cadastro')) ?? undefined
+
+      const payload: Record<string, unknown> = {
+        tomador_id: tomadorData.id,
+        corretora_id: corretora_id ?? null,
+        corretor: col(row, 'corretor') || null,
+        produto_id: modalidadeData?.produto_id ?? null,
+        modalidade_id: modalidadeData?.id ?? null,
+        modalidade: modalidadeData?.nome ?? col(row, 'modalidade_nome') ?? null,
+        codigo_cobertura: modalidadeData?.codigo_cobertura ?? null,
+        estado: col(row, 'estado').toUpperCase().slice(0, 2) || null,
+        lmg: lmgRaw && !isNaN(parseFloat(lmgRaw)) ? parseFloat(lmgRaw) : null,
+        taxa: taxaRaw && !isNaN(parseFloat(taxaRaw)) ? parseFloat(taxaRaw) : null,
+        vigencia_anos: col(row, 'vigencia_anos') ? parseInt(col(row, 'vigencia_anos')) || null : null,
+        premio_previsto: premioRaw && !isNaN(parseFloat(premioRaw)) ? parseFloat(premioRaw) : null,
+        temperatura: temperaturasValidas.includes(tempRaw) ? tempRaw : null,
+        prioridade: prioridadesValidas.includes(priRaw) ? priRaw : 'Fluxo Normal',
+        observacao: col(row, 'observacao') || null,
+        status: col(row, 'status') || 'Triagem',
+        ativo: true,
+        ...(created_at ? { created_at, updated_at: created_at } : {}),
+      }
+
+      const { error } = await supabase.from('operacoes').insert(payload)
+      if (error) {
+        erros.push({ linha, tomador: tomadorCnpj, motivo: error.message })
+      } else {
+        inseridos++
+      }
+    }
+
+    setResultadoImport({ inseridos, erros })
+    setImportando(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    if (inseridos > 0) carregarOperacoes()
+  }
+
   // ─── Exports ────────────────────────────────────────────────────────────────
 
   async function exportarExcel() {
@@ -425,7 +581,11 @@ export default function OperacoesPage() {
         </div>
         {aba === 'operacoes' ? (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importarCSV} />
             <button className="btn-export" onClick={exportarExcel} disabled={exportando || operacoesFiltradas.length === 0}>⬇ Excel</button>
+            <button className="btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={importando}>
+              {importando ? 'Importando...' : '⬆ Importar Planilha'}
+            </button>
             <button className="btn-primary" onClick={abrirNovo}>+ Nova Operação</button>
           </div>
         ) : (
@@ -450,6 +610,45 @@ export default function OperacoesPage() {
           </button>
         ))}
       </div>
+
+      {/* Modal resultado importação */}
+      {resultadoImport && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setResultadoImport(null)}>
+          <div className="modal-box" style={{ maxWidth: 480 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div className="modal-title">Resultado da Importação</div>
+              <button onClick={() => setResultadoImport(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div className="kpi-card" style={{ flex: 1, textAlign: 'center', padding: '12px 8px' }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#27a96c' }}>{resultadoImport.inseridos}</div>
+                  <div style={{ fontSize: 12, color: '#6080a0' }}>Inseridas</div>
+                </div>
+                <div className="kpi-card" style={{ flex: 1, textAlign: 'center', padding: '12px 8px' }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#d64545' }}>{resultadoImport.erros.length}</div>
+                  <div style={{ fontSize: 12, color: '#6080a0' }}>Erros</div>
+                </div>
+              </div>
+              {resultadoImport.erros.length > 0 && (
+                <div style={{ maxHeight: 200, overflowY: 'auto', background: '#f8f0f0', borderRadius: 8, padding: 12, fontSize: 12 }}>
+                  {resultadoImport.erros.map((e, i) => (
+                    <div key={i} style={{ marginBottom: 4 }}>
+                      <strong>Linha {e.linha}</strong> — {e.tomador}: <span style={{ color: '#d64545' }}>{e.motivo}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ fontSize: 12, color: '#6080a0', marginTop: 4 }}>
+                Importação incremental — operações existentes não foram alteradas.
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn-primary" onClick={() => setResultadoImport(null)}>Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══════════ ABA OPERAÇÕES ══════════ */}
       {aba === 'operacoes' && (
