@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { maskCNPJ, fmtMoeda, fmtData, fmtPercent } from '@/lib/utils'
+import { maskCNPJ, maskMoeda, fmtMoeda, fmtData, fmtPercent } from '@/lib/utils'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo } from '@/types'
 
 interface ModalidadeBasica {
@@ -27,6 +27,7 @@ interface FormOperacao {
   lmg: string
   taxa: string
   vigencia_anos: string
+  periodicidade_vigencia: string
   premio_previsto: string
   temperatura: string
   prioridade: string
@@ -46,7 +47,7 @@ interface FormStatus {
 const FORM_OP_INICIAL: FormOperacao = {
   tomador_id: '', corretora_id: '', produto_id: '', modalidade_id: '',
   modalidade: '', codigo_cobertura: '', corretor: '', lmg: '', taxa: '',
-  vigencia_anos: '', premio_previsto: '', temperatura: 'Frio',
+  vigencia_anos: '', periodicidade_vigencia: 'Anos', premio_previsto: '', temperatura: 'Frio',
   prioridade: 'Fluxo Normal', estado: '', observacao: '', status: 'Triagem', ativo: true,
 }
 
@@ -134,7 +135,7 @@ export default function OperacoesPage() {
   const carregarAuxiliares = useCallback(async () => {
     const supabase = createClient()
     const [{ data: tom }, { data: cor }, { data: prod }, { data: mod }] = await Promise.all([
-      supabase.from('tomadores').select('id,razao_social,cnpj').eq('ativo', true).order('razao_social'),
+      supabase.from('tomadores').select('id,razao_social,cnpj,corretora_id').eq('ativo', true).order('razao_social'),
       supabase.from('corretoras').select('id,razao_social').eq('status', 'ativo').order('razao_social'),
       supabase.from('produtos').select('id,nome,codigo').eq('status', 'ativo').order('codigo'),
       supabase.from('modalidades').select('id,nome,codigo_cobertura,produto_id').eq('status', 'ativo').order('codigo_cobertura'),
@@ -165,6 +166,10 @@ export default function OperacoesPage() {
     const modMatch = modalidades.find(
       (m) => m.nome === op.modalidade && m.produto_id === op.produto_id
     )
+    const lmgStr = op.lmg != null ? op.lmg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''
+    const taxaStr = op.taxa != null ? String(op.taxa) : ''
+    const vigStr = op.vigencia_anos != null ? String(op.vigencia_anos) : ''
+    const periodoStr = op.periodicidade_vigencia ?? 'Anos'
     setForm({
       tomador_id: op.tomador_id ?? '',
       corretora_id: op.corretora_id ?? '',
@@ -173,10 +178,11 @@ export default function OperacoesPage() {
       modalidade: op.modalidade ?? '',
       codigo_cobertura: op.codigo_cobertura ?? '',
       corretor: op.corretor ?? '',
-      lmg: op.lmg != null ? String(op.lmg) : '',
-      taxa: op.taxa != null ? String(op.taxa) : '',
-      vigencia_anos: op.vigencia_anos != null ? String(op.vigencia_anos) : '',
-      premio_previsto: op.premio_previsto != null ? String(op.premio_previsto) : '',
+      lmg: lmgStr,
+      taxa: taxaStr,
+      vigencia_anos: vigStr,
+      periodicidade_vigencia: periodoStr,
+      premio_previsto: calcPremio(lmgStr, taxaStr, vigStr, periodoStr),
       temperatura: op.temperatura ?? 'Frio',
       prioridade: op.prioridade ?? 'Fluxo Normal',
       estado: op.estado ?? '',
@@ -209,11 +215,14 @@ export default function OperacoesPage() {
     }))
   }
 
-  function calcPremio(lmg: string, taxa: string) {
+  function calcPremio(lmg: string, taxa: string, vigencia: string, periodo: string): string {
     const l = parseFloat(lmg.replace(/\./g, '').replace(',', '.'))
     const t = parseFloat(taxa.replace(',', '.'))
-    if (!isNaN(l) && !isNaN(t) && t > 0) {
-      return String((l * t / 100).toFixed(2))
+    const v = parseFloat(vigencia)
+    if (!isNaN(l) && !isNaN(t) && !isNaN(v) && t > 0 && v > 0) {
+      const premioAnual = l * t / 100
+      const total = periodo === 'Meses' ? (premioAnual / 12) * v : premioAnual * v
+      return String(total.toFixed(2))
     }
     return ''
   }
@@ -234,7 +243,7 @@ export default function OperacoesPage() {
       lmg: lmgNum,
       taxa: taxaNum,
       vigencia_anos: form.vigencia_anos ? parseInt(form.vigencia_anos) : null,
-      premio_previsto: form.premio_previsto ? parseFloat(form.premio_previsto.replace(/\./g, '').replace(',', '.')) : (taxaNum && lmgNum ? lmgNum * taxaNum / 100 : null),
+      periodicidade_vigencia: form.periodicidade_vigencia,
       temperatura: form.temperatura || null,
       prioridade: form.prioridade,
       estado: form.estado || null,
@@ -479,7 +488,6 @@ export default function OperacoesPage() {
 
       const lmgRaw = col(row, 'lmg').replace(/\./g, '').replace(',', '.')
       const taxaRaw = col(row, 'taxa').replace(',', '.')
-      const premioRaw = col(row, 'premio_previsto').replace(/\./g, '').replace(',', '.')
       const tempRaw = col(row, 'temperatura')
       const priRaw = col(row, 'prioridade')
       const created_at = _parseDateOp(col(row, 'data_cadastro')) ?? undefined
@@ -496,7 +504,7 @@ export default function OperacoesPage() {
         lmg: lmgRaw && !isNaN(parseFloat(lmgRaw)) ? parseFloat(lmgRaw) : null,
         taxa: taxaRaw && !isNaN(parseFloat(taxaRaw)) ? parseFloat(taxaRaw) : null,
         vigencia_anos: col(row, 'vigencia_anos') ? parseInt(col(row, 'vigencia_anos')) || null : null,
-        premio_previsto: premioRaw && !isNaN(parseFloat(premioRaw)) ? parseFloat(premioRaw) : null,
+        periodicidade_vigencia: col(row, 'periodicidade_vigencia') || 'Anos',
         temperatura: temperaturasValidas.includes(tempRaw) ? tempRaw : null,
         prioridade: prioridadesValidas.includes(priRaw) ? priRaw : 'Fluxo Normal',
         observacao: col(row, 'observacao') || null,
@@ -704,7 +712,11 @@ export default function OperacoesPage() {
                   <div className="form-grid" style={{ marginBottom: 20 }}>
                     <div className="form-field full">
                       <label className="form-label">Tomador</label>
-                      <select className="fam-input" value={form.tomador_id} onChange={(e) => setForm({ ...form, tomador_id: e.target.value })}>
+                      <select className="fam-input" value={form.tomador_id} onChange={(e) => {
+                        const tomadorId = e.target.value
+                        const tomador = tomadores.find((t) => t.id === tomadorId)
+                        setForm((f) => ({ ...f, tomador_id: tomadorId, corretora_id: tomador?.corretora_id ?? f.corretora_id }))
+                      }}>
                         <option value="">— Selecione o tomador —</option>
                         {tomadores.map((t) => <option key={t.id} value={t.id}>{t.razao_social}{t.cnpj ? ` — ${maskCNPJ(t.cnpj)}` : ''}</option>)}
                       </select>
@@ -796,8 +808,8 @@ export default function OperacoesPage() {
                       <input className="fam-input" type="text" placeholder="Ex: 1.000.000,00"
                         value={form.lmg}
                         onChange={(e) => {
-                          const lmg = e.target.value
-                          setForm((f) => ({ ...f, lmg, premio_previsto: calcPremio(lmg, f.taxa) }))
+                          const lmg = maskMoeda(e.target.value)
+                          setForm((f) => ({ ...f, lmg, premio_previsto: calcPremio(lmg, f.taxa, f.vigencia_anos, f.periodicidade_vigencia) }))
                         }} />
                     </div>
                     <div className="form-field">
@@ -806,18 +818,45 @@ export default function OperacoesPage() {
                         value={form.taxa}
                         onChange={(e) => {
                           const taxa = e.target.value
-                          setForm((f) => ({ ...f, taxa, premio_previsto: calcPremio(f.lmg, taxa) }))
+                          setForm((f) => ({ ...f, taxa, premio_previsto: calcPremio(f.lmg, taxa, f.vigencia_anos, f.periodicidade_vigencia) }))
                         }} />
                     </div>
                     <div className="form-field">
-                      <label className="form-label">Vigência (anos)</label>
-                      <input className="fam-input" type="number" placeholder="Ex: 2" min={1} max={30}
-                        value={form.vigencia_anos} onChange={(e) => setForm({ ...form, vigencia_anos: e.target.value })} />
+                      <label className="form-label">Periodicidade</label>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {(['Anos', 'Meses'] as const).map((p) => (
+                          <button key={p} type="button"
+                            onClick={() => setForm((f) => ({ ...f, periodicidade_vigencia: p, premio_previsto: calcPremio(f.lmg, f.taxa, f.vigencia_anos, p) }))}
+                            style={{
+                              flex: 1, padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
+                              fontFamily: "'Calibri','Segoe UI',sans-serif", fontSize: 13, fontWeight: 700,
+                              border: form.periodicidade_vigencia === p ? '2px solid #1a5fa0' : '2px solid #d0e4f5',
+                              background: form.periodicidade_vigencia === p ? '#dbeafe' : '#f8fafc',
+                              color: form.periodicidade_vigencia === p ? '#1a5fa0' : '#6080a0',
+                              transition: 'all 0.15s',
+                            }}
+                          >{p}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="form-field">
+                      <label className="form-label">Vigência ({form.periodicidade_vigencia === 'Meses' ? 'meses' : 'anos'})</label>
+                      <input className="fam-input" type="number"
+                        placeholder={form.periodicidade_vigencia === 'Meses' ? 'Ex: 18' : 'Ex: 2'}
+                        min={1} max={form.periodicidade_vigencia === 'Meses' ? 360 : 30}
+                        value={form.vigencia_anos}
+                        onChange={(e) => {
+                          const vigencia_anos = e.target.value
+                          setForm((f) => ({ ...f, vigencia_anos, premio_previsto: calcPremio(f.lmg, f.taxa, vigencia_anos, f.periodicidade_vigencia) }))
+                        }} />
                     </div>
                     <div className="form-field">
                       <label className="form-label">Prêmio Previsto (R$)</label>
-                      <input className="fam-input" type="text" placeholder="Calculado automaticamente"
-                        value={form.premio_previsto} onChange={(e) => setForm({ ...form, premio_previsto: e.target.value })} />
+                      <input className="fam-input" type="text"
+                        value={form.premio_previsto ? fmtMoeda(parseFloat(form.premio_previsto)) : ''}
+                        readOnly
+                        placeholder="Calculado automaticamente"
+                        style={{ background: '#f0f4f8', color: '#4a6080', cursor: 'default' }} />
                     </div>
                   </div>
 

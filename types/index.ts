@@ -119,6 +119,7 @@ export interface Operacao {
   lmg: number | null
   taxa: number | null
   vigencia_anos: number | null
+  periodicidade_vigencia: string | null
   premio_previsto: number | null
   observacao: string | null
   status: string
