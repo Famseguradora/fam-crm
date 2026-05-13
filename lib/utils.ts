@@ -55,6 +55,14 @@ export function maskTelefone(value: string): string {
     .replace(/(\d{5})(\d)/, '$1-$2')
 }
 
+// Máscara moeda BRL: 500000000 → 5.000.000,00
+export function maskMoeda(value: string): string {
+  const digits = value.replace(/\D/g, '')
+  if (!digits) return ''
+  const num = parseInt(digits, 10)
+  return (num / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
 // Máscara CEP: 01310100 → 01310-100
 export function maskCEP(value: string): string {
   const digits = value.replace(/\D/g, '').slice(0, 8)

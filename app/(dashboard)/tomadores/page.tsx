@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { maskCNPJ, maskTelefone, maskCEP, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
+import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -169,7 +169,7 @@ export default function TomadoresPage() {
       responsavel: t.responsavel ?? '',
       porte: t.porte ?? '',
       prioridade: t.prioridade ?? 'Normal',
-      limite_aprovado: t.limite_aprovado != null ? String(t.limite_aprovado) : '',
+      limite_aprovado: t.limite_aprovado != null ? maskMoeda(String(Math.round(t.limite_aprovado * 100))) : '',
       observacao: t.observacao ?? '',
       status: t.status,
       ativo: t.ativo,
@@ -700,7 +700,7 @@ export default function TomadoresPage() {
                     <div className="form-field">
                       <label className="form-label">Limite Aprovado (R$)</label>
                       <input className="fam-input" type="text" placeholder="Ex: 5.000.000,00" value={form.limite_aprovado}
-                        onChange={(e) => setForm({ ...form, limite_aprovado: e.target.value })} />
+                        onChange={(e) => setForm({ ...form, limite_aprovado: maskMoeda(e.target.value) })} />
                     </div>
                     <div className="form-field">
                       <label className="form-label">Status</label>
