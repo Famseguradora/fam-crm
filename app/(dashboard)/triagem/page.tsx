@@ -315,7 +315,7 @@ export default function TriagemPage() {
 
       {/* Modal Nova Triagem */}
       {mostrarForm && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setMostrarForm(false)}>
+        <div className="modal-overlay">
           <div className="modal-box" style={{ maxWidth: 760 }}>
             <div className="modal-header">
               <div className="modal-title">🔍 Nova Triagem</div>

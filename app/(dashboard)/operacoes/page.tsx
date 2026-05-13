@@ -684,7 +684,7 @@ export default function OperacoesPage() {
 
           {/* Modal Edição / Cadastro */}
           {mostrarForm && (
-            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && fecharForm()}>
+            <div className="modal-overlay">
               <div className="modal-box" style={{ maxWidth: 760 }}>
                 <div className="modal-header">
                   <div className="modal-title">{editando ? '✏️ Editar Operação' : '+ Nova Operação'}</div>
@@ -1038,7 +1038,7 @@ export default function OperacoesPage() {
       {aba === 'status' && (
         <>
           {mostrarFormStatus && (
-            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && fecharFormStatus()}>
+            <div className="modal-overlay">
               <div className="modal-box" style={{ maxWidth: 420 }}>
                 <div className="modal-header">
                   <div className="modal-title">{editandoStatus ? '✏️ Editar Status' : '+ Novo Status'}</div>

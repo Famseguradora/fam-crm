@@ -332,7 +332,7 @@ export default function CorretorasPage() {
 
       {/* ── Modal Cadastro / Edição ── */}
       {mostrarForm && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && fecharForm()}>
+        <div className="modal-overlay">
           <div className="modal-box" style={{ maxWidth: 720 }}>
             <div className="modal-header">
               <div className="modal-title">{editando ? '✏️ Editar Corretora' : '+ Nova Corretora'}</div>

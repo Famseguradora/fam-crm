@@ -151,7 +151,7 @@ export default function UsuariosPage() {
 
       {/* ── Modal Cadastro / Edição ── */}
       {mostrarForm && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && fecharForm()}>
+        <div className="modal-overlay">
           <div className="modal-box">
             <div className="modal-header">
               <div className="modal-title">

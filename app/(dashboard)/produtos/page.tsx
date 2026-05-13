@@ -429,7 +429,7 @@ export default function ProdutosPage() {
 
       {/* ─── Modal ───────────────────────────────────────────────────────────────── */}
       {mostrarForm && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && fecharForm()}>
+        <div className="modal-overlay">
           <div className="modal-box" style={{ maxWidth: 560 }}>
             <div className="modal-header">
               <div className="modal-title">{editando ? '✏️ Editar Modalidade' : '+ Nova Modalidade'}</div>

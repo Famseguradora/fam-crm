@@ -639,7 +639,7 @@ export default function TomadoresPage() {
 
           {/* Modal Cadastro / Edição */}
           {mostrarForm && (
-            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && fecharForm()}>
+            <div className="modal-overlay">
               <div className="modal-box" style={{ maxWidth: 760 }}>
                 <div className="modal-header">
                   <div className="modal-title">{editando ? '✏️ Editar Tomador' : '+ Novo Tomador'}</div>
@@ -949,7 +949,7 @@ export default function TomadoresPage() {
         <>
           {/* Modal Status */}
           {mostrarFormStatus && (
-            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && fecharFormStatus()}>
+            <div className="modal-overlay">
               <div className="modal-box" style={{ maxWidth: 420 }}>
                 <div className="modal-header">
                   <div className="modal-title">{editandoStatus ? '✏️ Editar Status' : '+ Novo Status'}</div>
