@@ -23,7 +23,6 @@ interface FormOperacao {
   modalidade_id: string
   modalidade: string
   codigo_cobertura: string
-  corretor: string
   lmg: string
   taxa: string
   vigencia_anos: string
@@ -46,7 +45,7 @@ interface FormStatus {
 
 const FORM_OP_INICIAL: FormOperacao = {
   tomador_id: '', corretora_id: '', produto_id: '', modalidade_id: '',
-  modalidade: '', codigo_cobertura: '', corretor: '', lmg: '', taxa: '',
+  modalidade: '', codigo_cobertura: '', lmg: '', taxa: '',
   vigencia_anos: '', periodicidade_vigencia: 'Anos', premio_previsto: '', temperatura: 'Frio',
   prioridade: 'Fluxo Normal', estado: '', observacao: '', status: 'Triagem', ativo: true,
 }
@@ -177,7 +176,6 @@ export default function OperacoesPage() {
       modalidade_id: modMatch?.id ?? '',
       modalidade: op.modalidade ?? '',
       codigo_cobertura: op.codigo_cobertura ?? '',
-      corretor: op.corretor ?? '',
       lmg: lmgStr,
       taxa: taxaStr,
       vigencia_anos: vigStr,
@@ -239,7 +237,6 @@ export default function OperacoesPage() {
       produto_id: form.produto_id || null,
       modalidade: form.modalidade || null,
       codigo_cobertura: form.codigo_cobertura || null,
-      corretor: form.corretor || null,
       lmg: lmgNum,
       taxa: taxaNum,
       vigencia_anos: form.vigencia_anos ? parseInt(form.vigencia_anos) : null,
@@ -348,8 +345,7 @@ export default function OperacoesPage() {
         (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
         (op.tomador?.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
         (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
-        (op.produto?.nome ?? '').toLowerCase().includes(buscaLow) ||
-        (op.corretor ?? '').toLowerCase().includes(buscaLow)
+        (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
       const statusMatch = !filtroStatus || op.status === filtroStatus
       const priorMatch = !filtroPrioridade || op.prioridade === filtroPrioridade
       const tempMatch = !filtroTemperatura || op.temperatura === filtroTemperatura
@@ -495,7 +491,6 @@ export default function OperacoesPage() {
       const payload: Record<string, unknown> = {
         tomador_id: tomadorData.id,
         corretora_id: corretora_id ?? null,
-        corretor: col(row, 'corretor') || null,
         produto_id: modalidadeData?.produto_id ?? null,
         modalidade_id: modalidadeData?.id ?? null,
         modalidade: modalidadeData?.nome ?? col(row, 'modalidade_nome') ?? null,
@@ -727,11 +722,6 @@ export default function OperacoesPage() {
                         <option value="">— Selecione a corretora —</option>
                         {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
                       </select>
-                    </div>
-                    <div className="form-field full">
-                      <label className="form-label">Corretor</label>
-                      <input className="fam-input" type="text" placeholder="Nome do corretor responsável"
-                        value={form.corretor} onChange={(e) => setForm({ ...form, corretor: e.target.value })} />
                     </div>
                   </div>
 
