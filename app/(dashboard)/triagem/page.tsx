@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { maskCNPJ, maskTelefone, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
+import { maskCNPJ, maskMoeda, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
 import type { Corretora, Produto, Tomador, Operacao } from '@/types'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -32,6 +32,8 @@ interface FormTriagem {
   lmg: string
   taxa: string
   vigencia_anos: string
+  periodicidade_vigencia: string
+  premio_previsto: string
   temperatura: string
   prioridade: string
   observacao: string
@@ -40,8 +42,20 @@ interface FormTriagem {
 const FORM_INICIAL: FormTriagem = {
   cnpj: '', razao_social: '', nome_fantasia: '', corretora_id: '', cidade: '', estado: '',
   produto_id: '', modalidade_id: '', modalidade: '', codigo_cobertura: '',
-  lmg: '', taxa: '', vigencia_anos: '',
+  lmg: '', taxa: '', vigencia_anos: '', periodicidade_vigencia: 'Anos', premio_previsto: '',
   temperatura: 'Frio', prioridade: 'Fluxo Normal', observacao: '',
+}
+
+function calcPremio(lmg: string, taxa: string, vigencia: string, periodo: string): string {
+  const l = parseFloat(lmg.replace(/\./g, '').replace(',', '.'))
+  const t = parseFloat(taxa.replace(',', '.'))
+  const v = parseFloat(vigencia)
+  if (!isNaN(l) && !isNaN(t) && !isNaN(v) && t > 0 && v > 0) {
+    const premioAnual = l * t / 100
+    const total = periodo === 'Meses' ? (premioAnual / 12) * v : premioAnual * v
+    return String(total.toFixed(2))
+  }
+  return ''
 }
 
 const ESTADOS_BR = [
@@ -167,6 +181,10 @@ export default function TriagemPage() {
       setMensagem({ tipo: 'erro', texto: 'Selecione um produto.' })
       return
     }
+    if (!form.modalidade_id) {
+      setMensagem({ tipo: 'erro', texto: 'Selecione a modalidade.' })
+      return
+    }
     if (!form.lmg || isNaN(parseFloat(form.lmg.replace(',', '.')))) {
       setMensagem({ tipo: 'erro', texto: 'Informe o LMG (Limite Máximo de Garantia).' })
       return
@@ -202,6 +220,7 @@ export default function TriagemPage() {
       const taxaNum = form.taxa ? parseFloat(form.taxa.replace(',', '.')) : null
       const vigNum = form.vigencia_anos ? parseInt(form.vigencia_anos) : null
 
+      // Nunca enviar premio_previsto — coluna GENERATED ALWAYS STORED no banco
       const { error: errOp } = await supabase.from('operacoes').insert({
         tomador_id: tomadorId,
         corretora_id: form.corretora_id || null,
@@ -211,6 +230,7 @@ export default function TriagemPage() {
         lmg: lmgNum,
         taxa: taxaNum,
         vigencia_anos: vigNum,
+        periodicidade_vigencia: form.periodicidade_vigencia,
         temperatura: form.temperatura || null,
         prioridade: form.prioridade,
         estado: form.estado || null,
@@ -427,19 +447,26 @@ export default function TriagemPage() {
                 </div>
               )}
 
-              {/* Corretora (quando tomador existe, permite alterar corretora da operação) */}
+              {/* Corretora (auto-preenchida do tomador quando encontrado) */}
               {cnpjVerificado && tomadorExistente && (
-                <div className="form-grid" style={{ marginBottom: 20 }}>
-                  <div className="form-field full">
-                    <label className="form-label">Corretora da Operação</label>
-                    <select className="fam-input" value={form.corretora_id}
+                <div style={{ marginBottom: 20 }}>
+                  <label className="form-label">Corretora</label>
+                  {tomadorExistente.corretora ? (
+                    <div style={{ marginTop: 5, padding: '9px 12px', background: '#f0f4f8', borderRadius: 8, border: '1px solid #c5d5e8', fontSize: 14, color: '#1a2a3a', fontWeight: 600 }}>
+                      {(tomadorExistente.corretora as { razao_social: string }).razao_social}
+                      <span style={{ fontSize: 12, color: '#6080a0', fontWeight: 400, marginLeft: 8 }}>
+                        (preenchida automaticamente do tomador)
+                      </span>
+                    </div>
+                  ) : (
+                    <select className="fam-input" style={{ marginTop: 5 }} value={form.corretora_id}
                       onChange={(e) => setForm({ ...form, corretora_id: e.target.value })}>
                       <option value="">— Selecione a corretora —</option>
                       {corretoras.map((c) => (
                         <option key={c.id} value={c.id}>{c.razao_social}</option>
                       ))}
                     </select>
-                  </div>
+                  )}
                 </div>
               )}
 
@@ -508,19 +535,56 @@ export default function TriagemPage() {
                       <label className="form-label">LMG (R$) *</label>
                       <input className="fam-input" type="text" placeholder="Ex: 1.000.000,00"
                         value={form.lmg}
-                        onChange={(e) => setForm({ ...form, lmg: e.target.value })}
+                        onChange={(e) => {
+                          const lmg = maskMoeda(e.target.value)
+                          setForm((f) => ({ ...f, lmg, premio_previsto: calcPremio(lmg, f.taxa, f.vigencia_anos, f.periodicidade_vigencia) }))
+                        }}
                         required />
                     </div>
                     <div className="form-field">
                       <label className="form-label">Taxa (%)</label>
                       <input className="fam-input" type="text" placeholder="Ex: 1,50" value={form.taxa}
-                        onChange={(e) => setForm({ ...form, taxa: e.target.value })} />
+                        onChange={(e) => {
+                          const taxa = e.target.value
+                          setForm((f) => ({ ...f, taxa, premio_previsto: calcPremio(f.lmg, taxa, f.vigencia_anos, f.periodicidade_vigencia) }))
+                        }} />
                     </div>
                     <div className="form-field">
-                      <label className="form-label">Vigência (anos)</label>
-                      <input className="fam-input" type="number" placeholder="Ex: 2" min={1} max={30}
+                      <label className="form-label">Periodicidade</label>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {(['Anos', 'Meses'] as const).map((p) => (
+                          <button key={p} type="button"
+                            onClick={() => setForm((f) => ({ ...f, periodicidade_vigencia: p, premio_previsto: calcPremio(f.lmg, f.taxa, f.vigencia_anos, p) }))}
+                            style={{
+                              flex: 1, padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
+                              fontFamily: "'Calibri','Segoe UI',sans-serif", fontSize: 13, fontWeight: 700,
+                              border: form.periodicidade_vigencia === p ? '2px solid #1a5fa0' : '2px solid #d0e4f5',
+                              background: form.periodicidade_vigencia === p ? '#dbeafe' : '#f8fafc',
+                              color: form.periodicidade_vigencia === p ? '#1a5fa0' : '#6080a0',
+                              transition: 'all 0.15s',
+                            }}
+                          >{p}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="form-field">
+                      <label className="form-label">Vigência ({form.periodicidade_vigencia === 'Meses' ? 'meses' : 'anos'})</label>
+                      <input className="fam-input" type="number"
+                        placeholder={form.periodicidade_vigencia === 'Meses' ? 'Ex: 18' : 'Ex: 2'}
+                        min={1} max={form.periodicidade_vigencia === 'Meses' ? 360 : 30}
                         value={form.vigencia_anos}
-                        onChange={(e) => setForm({ ...form, vigencia_anos: e.target.value })} />
+                        onChange={(e) => {
+                          const vigencia_anos = e.target.value
+                          setForm((f) => ({ ...f, vigencia_anos, premio_previsto: calcPremio(f.lmg, f.taxa, vigencia_anos, f.periodicidade_vigencia) }))
+                        }} />
+                    </div>
+                    <div className="form-field">
+                      <label className="form-label">Prêmio Previsto (R$)</label>
+                      <input className="fam-input" type="text"
+                        value={form.premio_previsto ? fmtMoeda(parseFloat(form.premio_previsto)) : ''}
+                        readOnly
+                        placeholder="Calculado automaticamente"
+                        style={{ background: '#f0f4f8', color: '#4a6080', cursor: 'default' }} />
                     </div>
                     <div className="form-field">
                       <label className="form-label">Temperatura</label>
