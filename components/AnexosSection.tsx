@@ -72,7 +72,6 @@ export default function AnexosSection({ entidadeTipo, entidadeId }: Props) {
     setProgresso(`Enviando ${file.name}…`)
     try {
       const supabase = createClient()
-      const ext = file.name.includes('.') ? file.name.split('.').pop() : ''
       const nomeSeguro = file.name.replace(/[^a-zA-Z0-9._\-]/g, '_')
       const path = `${entidadeTipo}/${entidadeId}/${Date.now()}_${nomeSeguro}`
 
@@ -104,18 +103,28 @@ export default function AnexosSection({ entidadeTipo, entidadeId }: Props) {
   }
 
   async function baixarAnexo(anexo: Anexo) {
+    setErro('')
     const supabase = createClient()
     const { data, error } = await supabase.storage
       .from(BUCKET)
       .createSignedUrl(anexo.storage_path, 120)
     if (error || !data?.signedUrl) { setErro('Erro ao gerar link de download.'); return }
-    const a = document.createElement('a')
-    a.href = data.signedUrl
-    a.download = anexo.nome_original
-    a.target = '_blank'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    try {
+      // Fetch como blob para preservar extensão/formato original (ex: .html, .pdf)
+      const res = await fetch(data.signedUrl)
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = anexo.nome_original
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(blobUrl)
+    } catch {
+      // fallback: abre em nova aba
+      window.open(data.signedUrl, '_blank')
+    }
   }
 
   async function excluirAnexo(anexo: Anexo) {
