@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskMoeda, fmtMoeda, fmtData, fmtPercent } from '@/lib/utils'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo } from '@/types'
+import AnexosSection from '@/components/AnexosSection'
 
 interface ModalidadeBasica {
   id: string
@@ -901,6 +902,13 @@ export default function OperacoesPage() {
                     </button>
                   </div>
                 </form>
+
+                {editando && (
+                  <>
+                    <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
+                    <AnexosSection entidadeTipo="operacao" entidadeId={editando.id} />
+                  </>
+                )}
               </div>
             </div>
           )}

@@ -128,6 +128,17 @@ export interface Operacao {
   updated_at: string
 }
 
+export interface Anexo {
+  id: string
+  entidade_tipo: 'tomador' | 'operacao' | 'corretora'
+  entidade_id: string
+  nome_original: string
+  storage_path: string
+  tipo_mime: string | null
+  tamanho_bytes: number | null
+  created_at: string
+}
+
 export interface DashboardConfig {
   id: string
   usuario_id: string

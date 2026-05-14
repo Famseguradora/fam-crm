@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
+import AnexosSection from '@/components/AnexosSection'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -817,6 +818,13 @@ export default function TomadoresPage() {
                     </button>
                   </div>
                 </form>
+
+                {editando && (
+                  <>
+                    <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
+                    <AnexosSection entidadeTipo="tomador" entidadeId={editando.id} />
+                  </>
+                )}
               </div>
             </div>
           )}

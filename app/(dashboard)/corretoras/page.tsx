@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskTelefone, maskCEP, titleCase, fmtData, validarCNPJ } from '@/lib/utils'
 import type { Corretora } from '@/types'
+import AnexosSection from '@/components/AnexosSection'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -493,6 +494,13 @@ export default function CorretorasPage() {
                 </button>
               </div>
             </form>
+
+            {editando && (
+              <>
+                <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
+                <AnexosSection entidadeTipo="corretora" entidadeId={editando.id} />
+              </>
+            )}
           </div>
         </div>
       )}
