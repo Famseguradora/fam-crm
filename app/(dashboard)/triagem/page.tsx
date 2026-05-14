@@ -29,7 +29,6 @@ interface FormTriagem {
   modalidade_id: string
   modalidade: string
   codigo_cobertura: string
-  corretor: string
   lmg: string
   taxa: string
   vigencia_anos: string
@@ -41,7 +40,7 @@ interface FormTriagem {
 const FORM_INICIAL: FormTriagem = {
   cnpj: '', razao_social: '', nome_fantasia: '', corretora_id: '', cidade: '', estado: '',
   produto_id: '', modalidade_id: '', modalidade: '', codigo_cobertura: '',
-  corretor: '', lmg: '', taxa: '', vigencia_anos: '',
+  lmg: '', taxa: '', vigencia_anos: '',
   temperatura: 'Frio', prioridade: 'Fluxo Normal', observacao: '',
 }
 
@@ -209,11 +208,9 @@ export default function TriagemPage() {
         produto_id: form.produto_id,
         modalidade: form.modalidade || null,
         codigo_cobertura: form.codigo_cobertura || null,
-        corretor: form.corretor || null,
         lmg: lmgNum,
         taxa: taxaNum,
         vigencia_anos: vigNum,
-        premio_previsto: taxaNum && lmgNum ? (lmgNum * taxaNum) / 100 : null,
         temperatura: form.temperatura || null,
         prioridade: form.prioridade,
         estado: form.estado || null,
@@ -524,12 +521,6 @@ export default function TriagemPage() {
                       <input className="fam-input" type="number" placeholder="Ex: 2" min={1} max={30}
                         value={form.vigencia_anos}
                         onChange={(e) => setForm({ ...form, vigencia_anos: e.target.value })} />
-                    </div>
-                    <div className="form-field">
-                      <label className="form-label">Corretor</label>
-                      <input className="fam-input" type="text" placeholder="Nome do corretor responsável"
-                        value={form.corretor}
-                        onChange={(e) => setForm({ ...form, corretor: e.target.value })} />
                     </div>
                     <div className="form-field">
                       <label className="form-label">Temperatura</label>

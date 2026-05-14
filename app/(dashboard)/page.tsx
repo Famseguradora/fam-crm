@@ -37,7 +37,8 @@ interface RawTomador {
 
 interface RawOperacao {
   id: string
-  corretor: string | null
+  corretora_id: string | null
+  corretora: { id: string; razao_social: string } | null
   modalidade: string | null
   premio_previsto: number | null
   lmg: number | null
@@ -74,7 +75,7 @@ const CARDS_CONFIG = [
   { id: 'kpisOperacoes',  label: '📋 Operações — KPIs' },
   { id: 'barCorretoras',  label: '📊 Top Corretoras por Limite Aprovado' },
   { id: 'donutTomadores', label: '🔵 Distribuição por Status (Tomadores)' },
-  { id: 'barCorretores',  label: '📊 Top Corretores por Prêmio Previsto' },
+  { id: 'barCorretores',  label: '📊 Top Corretoras por Prêmio Previsto' },
   { id: 'donutOperacoes', label: '🟢 Status das Operações' },
   { id: 'barModalidades', label: '📊 Prêmio Previsto por Modalidade' },
 ] as const
@@ -128,7 +129,7 @@ export default function DashboardPage() {
           .select('id, status, corretora_id, corretora:corretoras(id,razao_social), limite_aprovado'),
         supabase
           .from('operacoes')
-          .select('id, corretor, modalidade, premio_previsto, lmg, status'),
+          .select('id, corretora_id, corretora:corretoras(id,razao_social), modalidade, premio_previsto, lmg, status'),
         supabase.from('corretoras').select('*', { count: 'exact', head: true }),
         supabase.from('status_fluxo_tomador').select('*').order('ordem'),
         supabase.from('status_fluxo_operacao').select('*').order('ordem'),
@@ -171,7 +172,7 @@ export default function DashboardPage() {
   const tomadoresCadastrados = tomadores.filter(t => t.status === 'Ativo - Cadastrado').length
   const limiteAprovadoTotal = tomadores.reduce((s, t) => s + (t.limite_aprovado ?? 0), 0)
 
-  const corretoresUnicos = new Set(operacoes.map(o => o.corretor).filter(Boolean)).size
+  const corretoresUnicos = new Set(operacoes.map(o => o.corretora_id).filter(Boolean)).size
   const lmgTotal = operacoes.reduce((s, o) => s + (o.lmg ?? 0), 0)
   const lmgLiquido = operacoes
     .filter(o => !['Recusado', 'Perdido'].includes(o.status ?? ''))
@@ -203,7 +204,7 @@ export default function DashboardPage() {
 
   const corretorPorPremio: Record<string, number> = {}
   for (const o of operacoes) {
-    const nome = o.corretor ?? 'Sem Corretor'
+    const nome = (o.corretora as { razao_social: string } | null)?.razao_social ?? 'Sem Corretora'
     corretorPorPremio[nome] = (corretorPorPremio[nome] ?? 0) + (o.premio_previsto ?? 0)
   }
   const topCorretores = Object.entries(corretorPorPremio)
@@ -266,7 +267,7 @@ export default function DashboardPage() {
     doc.text('Operações — Resumo', 14, y)
     autoTable(doc, {
       startY: y + 4,
-      head: [['Corretores', 'Total Operações', 'LMG Total', 'LMG Líquido', 'Prêmio Previsto Total']],
+      head: [['Corretoras', 'Total Operações', 'LMG Total', 'LMG Líquido', 'Prêmio Previsto Total']],
       body: [[String(corretoresUnicos), String(operacoes.length), fmtBRL(lmgTotal), fmtBRL(lmgLiquido), fmtBRL(premioTotal)]],
     })
 
@@ -280,10 +281,10 @@ export default function DashboardPage() {
 
     y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
     if (y > 240) { doc.addPage(); y = 20 }
-    doc.text('Top Corretores por Prêmio Previsto', 14, y)
+    doc.text('Top Corretoras por Prêmio Previsto', 14, y)
     autoTable(doc, {
       startY: y + 4,
-      head: [['Corretor', 'Prêmio Previsto']],
+      head: [['Corretora', 'Prêmio Previsto']],
       body: [...topCorretores].reverse().map(r => [r.nome, fmtBRL(r.valor)]),
     })
 
@@ -417,7 +418,7 @@ export default function DashboardPage() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 28 }}>
             {[
-              { label: 'Corretores', value: fmtNum(corretoresUnicos), sub: 'Únicos em operações', dark: false },
+              { label: 'Corretoras', value: fmtNum(corretoresUnicos), sub: 'Únicas em operações', dark: false },
               { label: 'Total de Operações', value: fmtNum(operacoes.length), sub: 'Todas as operações', dark: false },
               { label: 'LMG Total', value: fmtBRL(lmgTotal), sub: 'Soma total LMG', dark: false },
               { label: 'LMG Total em Potencial', value: fmtBRL(lmgLiquido), sub: 'LMG Total – Negados/Perdidos', dark: true },
@@ -516,7 +517,7 @@ export default function DashboardPage() {
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#102040', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ ...dot('#16a34a'), display: 'inline-block' }} />
-                    Top Corretores por Prêmio Previsto
+                    Top Corretoras por Prêmio Previsto
                   </div>
                   {!mounted || topCorretores.length === 0 ? (
                     <div style={{ textAlign: 'center', color: '#a0b8d0', padding: '24px 0', fontSize: 13 }}>Sem dados</div>
