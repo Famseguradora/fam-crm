@@ -23,24 +23,17 @@ export async function proxy(request: NextRequest) {
     }
   )
 
+  // Optimistic check only — reads session from cookie, no network call.
+  // Token refresh and real JWT validation happen in layout.tsx (Node.js runtime).
+  const { data: { session } } = await supabase.auth.getSession()
   const { pathname } = request.nextUrl
   const isPublic = publicRoutes.some((r) => pathname.startsWith(r))
 
-  let user = null
-  try {
-    const { data } = await supabase.auth.getUser()
-    user = data.user
-  } catch {
-    // Network/timeout error in proxy — fail open so the layout can handle auth.
-    // Unauthenticated users on protected routes will be caught by layout.tsx.
-    return supabaseResponse
-  }
-
-  if (!user && !isPublic) {
+  if (!session && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (user && pathname === '/login') {
+  if (session && pathname === '/login') {
     return NextResponse.redirect(new URL('/', request.url))
   }
 
