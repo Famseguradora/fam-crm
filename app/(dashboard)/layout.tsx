@@ -20,6 +20,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect('/alterar-senha')
   }
 
+  // Se onboarding não concluído, redireciona (fora deste layout, sem loop)
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('onboarding_completo')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (!profile?.onboarding_completo) {
+    redirect('/onboarding')
+  }
+
   return (
     <DashboardShell
       nomeUsuario={usuarioDb?.nome ?? user.email ?? ''}

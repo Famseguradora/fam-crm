@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const PUBLIC_ROUTES = ['/login', '/auth/callback', '/alterar-senha', '/onboarding']
+const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding']
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -26,7 +26,7 @@ export async function proxy(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
 
-  const isPublic = PUBLIC_ROUTES.some((r) => pathname.startsWith(r))
+  const isPublic = publicRoutes.some((r) => pathname.startsWith(r))
 
   if (!user && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
@@ -34,18 +34,6 @@ export async function proxy(request: NextRequest) {
 
   if (user && pathname === '/login') {
     return NextResponse.redirect(new URL('/', request.url))
-  }
-
-  if (user && !isPublic) {
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('onboarding_completo')
-      .eq('user_id', user.id)
-      .single()
-
-    if (!profile?.onboarding_completo) {
-      return NextResponse.redirect(new URL('/onboarding', request.url))
-    }
   }
 
   return supabaseResponse

@@ -13,8 +13,6 @@ const c = {
   accent: '#e8b84b',
   accentBg: 'rgba(232,184,75,0.08)',
   accentBorder: 'rgba(232,184,75,0.25)',
-  blue: '#38bdf8',
-  blueBg: 'rgba(56,189,248,0.08)',
   success: '#4ade80',
   successBg: 'rgba(74,222,128,0.08)',
 }
@@ -54,10 +52,7 @@ function extractPerfilAnalista(resposta: string): 'conservador' | 'moderado' | '
 }
 
 function splitLista(texto: string): string[] {
-  return texto
-    .split(/[,;\/\n]+/)
-    .map(s => s.trim())
-    .filter(Boolean)
+  return texto.split(/[,;/\n]+/).map(s => s.trim()).filter(Boolean)
 }
 
 export default function OnboardingPage() {
@@ -165,8 +160,7 @@ export default function OnboardingPage() {
       }, { onConflict: 'user_id' })
 
       setStatus('completo')
-      addBot(`Configuração concluída! Seu perfil de analista está pronto. Redirecionando para a tela de Análise de Crédito...`)
-
+      addBot('Configuração concluída! Seu perfil de analista está pronto. Redirecionando para a tela de Análise de Crédito...')
       setTimeout(() => router.push('/subscricao/analise-credito'), 2000)
     } catch {
       addBot('Houve um erro ao salvar seu perfil. Tente novamente.')
@@ -177,11 +171,20 @@ export default function OnboardingPage() {
   const progresso = Math.round((perguntaIdx / PERGUNTAS.length) * 100)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 110px)', background: c.bg, margin: '-28px -32px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: c.bg, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
+
+      {/* Mini header */}
+      <div style={{ padding: '14px 24px', borderBottom: `1px solid ${c.border}`, display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, background: '#0a1628' }}>
+        <div style={{ width: 32, height: 32, background: 'linear-gradient(135deg,#3070c8,#a0c0e8)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 16, color: 'white' }}>F</div>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'white' }}>FAM Seguradora</div>
+          <div style={{ fontSize: 10, color: '#a0c0e8', letterSpacing: '1.5px', textTransform: 'uppercase' }}>Configuração do Perfil</div>
+        </div>
+      </div>
 
       {/* Progresso */}
-      <div style={{ padding: '16px 24px 0', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+      <div style={{ padding: '14px 24px 0', flexShrink: 0, maxWidth: 720, width: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
           {BLOCOS.map((b, i) => {
             const feito = i < blocoAtual
             const ativo = i === blocoAtual
@@ -193,15 +196,12 @@ export default function OnboardingPage() {
                   background: feito ? c.successBg : ativo ? c.accentBg : 'rgba(255,255,255,0.03)',
                   border: `0.5px solid ${feito ? 'rgba(74,222,128,0.3)' : ativo ? c.accentBorder : c.border}`,
                   color: feito ? c.success : ativo ? c.accent : c.muted,
-                  fontSize: 11, fontWeight: ativo ? 700 : 400,
-                  transition: 'all 0.3s',
+                  fontSize: 11, fontWeight: ativo ? 700 : 400, transition: 'all 0.3s',
                 }}>
                   <span style={{ fontSize: 12 }}>{feito ? '✓' : b.icon}</span>
                   <span>{b.nome}</span>
                 </div>
-                {i < BLOCOS.length - 1 && (
-                  <div style={{ width: 20, height: 1, background: feito ? 'rgba(74,222,128,0.3)' : c.border }} />
-                )}
+                {i < BLOCOS.length - 1 && <div style={{ width: 16, height: 1, background: feito ? 'rgba(74,222,128,0.3)' : c.border }} />}
               </div>
             )
           })}
@@ -213,23 +213,18 @@ export default function OnboardingPage() {
       </div>
 
       {/* Chat */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 720, width: '100%', margin: '0 auto', boxSizing: 'border-box', alignSelf: 'center' }}>
         {msgs.map((msg, i) => (
           <div key={i} style={{ display: 'flex', justifyContent: msg.from === 'user' ? 'flex-end' : 'flex-start' }}>
             {msg.from === 'bot' && (
-              <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg,#3070c8,#a0c0e8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: 'white', flexShrink: 0, marginRight: 10, marginTop: 2 }}>
-                F
-              </div>
+              <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg,#3070c8,#a0c0e8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: 'white', flexShrink: 0, marginRight: 10, marginTop: 2 }}>F</div>
             )}
             <div style={{
-              maxWidth: '70%',
-              padding: '10px 14px',
+              maxWidth: '72%', padding: '10px 14px',
               borderRadius: msg.from === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
               background: msg.from === 'user' ? c.accentBg : c.card,
               border: `0.5px solid ${msg.from === 'user' ? c.accentBorder : c.border}`,
-              color: c.text,
-              fontSize: 13,
-              lineHeight: 1.55,
+              color: c.text, fontSize: 13, lineHeight: 1.55,
             }}>
               {msg.text}
             </div>
@@ -238,16 +233,14 @@ export default function OnboardingPage() {
         {status === 'gerando' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg,#3070c8,#a0c0e8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: 'white' }}>F</div>
-            <div style={{ padding: '8px 14px', borderRadius: '14px 14px 14px 4px', background: c.card, border: `0.5px solid ${c.border}`, color: c.muted, fontSize: 13 }}>
-              ···
-            </div>
+            <div style={{ padding: '8px 14px', borderRadius: '14px 14px 14px 4px', background: c.card, border: `0.5px solid ${c.border}`, color: c.muted, fontSize: 13 }}>···</div>
           </div>
         )}
         <div ref={chatEndRef} />
       </div>
 
       {/* Input */}
-      <div style={{ padding: '12px 24px 16px', borderTop: `1px solid ${c.border}`, flexShrink: 0 }}>
+      <div style={{ padding: '12px 24px 20px', borderTop: `1px solid ${c.border}`, flexShrink: 0, maxWidth: 720, width: '100%', margin: '0 auto', boxSizing: 'border-box', alignSelf: 'center' }}>
         {status === 'completo' ? (
           <div style={{ textAlign: 'center', fontSize: 13, color: c.success, padding: 12 }}>
             ✓ Configuração concluída — redirecionando...
@@ -266,24 +259,22 @@ export default function OnboardingPage() {
                 flex: 1, fontSize: 13, padding: '10px 14px', borderRadius: 10, resize: 'none',
                 background: 'rgba(255,255,255,0.05)', color: c.text,
                 border: `0.5px solid rgba(255,255,255,0.15)`, outline: 'none',
-                fontFamily: 'inherit', lineHeight: 1.5,
-                opacity: status === 'gerando' ? 0.5 : 1,
+                fontFamily: 'inherit', lineHeight: 1.5, opacity: status === 'gerando' ? 0.5 : 1,
               }}
             />
             <button
               onClick={enviar}
               disabled={!input.trim() || status === 'gerando'}
               style={{
-                padding: '10px 18px', borderRadius: 10, cursor: !input.trim() || status === 'gerando' ? 'not-allowed' : 'pointer',
+                padding: '10px 18px', borderRadius: 10,
+                cursor: !input.trim() || status === 'gerando' ? 'not-allowed' : 'pointer',
                 background: input.trim() && status === 'conversando' ? c.accentBg : 'rgba(255,255,255,0.03)',
                 color: input.trim() && status === 'conversando' ? c.accent : c.muted,
                 border: `0.5px solid ${input.trim() && status === 'conversando' ? c.accentBorder : c.border}`,
                 fontSize: 16, opacity: !input.trim() || status === 'gerando' ? 0.4 : 1,
                 transition: 'all 0.15s',
               }}
-            >
-              ↑
-            </button>
+            >↑</button>
           </div>
         )}
       </div>
