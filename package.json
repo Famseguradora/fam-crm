@@ -9,6 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
+    "@blocknote/mantine": "^0.51.0",
+    "@blocknote/react": "^0.51.0",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
     "jspdf": "^4.2.1",
