@@ -23,10 +23,18 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
-
   const isPublic = publicRoutes.some((r) => pathname.startsWith(r))
+
+  let user = null
+  try {
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch {
+    // Network/timeout error in proxy — fail open so the layout can handle auth.
+    // Unauthenticated users on protected routes will be caught by layout.tsx.
+    return supabaseResponse
+  }
 
   if (!user && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
