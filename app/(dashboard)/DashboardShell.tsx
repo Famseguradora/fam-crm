@@ -35,6 +35,10 @@ const PERFORMANCE_ITEMS = [
   { label: 'Performance', href: '/performance', icon: '📊' },
 ]
 
+const CONFIG_ITEMS = [
+  { label: 'Skills de IA', href: '/configuracoes/skills', icon: '🧠' },
+]
+
 export default function DashboardShell({ nomeUsuario, perfilUsuario, children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
@@ -308,6 +312,23 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, children }:
               </div>
             )}
             {PERFORMANCE_ITEMS.map((item) => (
+              <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} />
+            ))}
+          </div>
+
+          {/* Configurações */}
+          <div style={{ paddingTop: 8 }}>
+            {sidebarOpen && (
+              <div style={{
+                fontSize: 10, fontWeight: 700, color: '#4a7ab5',
+                letterSpacing: '1.5px', textTransform: 'uppercase',
+                padding: '0 16px 8px',
+                whiteSpace: 'nowrap',
+              }}>
+                Configurações
+              </div>
+            )}
+            {CONFIG_ITEMS.map((item) => (
               <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} />
             ))}
           </div>
