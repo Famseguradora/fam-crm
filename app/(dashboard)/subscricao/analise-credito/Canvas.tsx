@@ -1,9 +1,6 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { useCreateBlockNote } from '@blocknote/react'
-import { BlockNoteView } from '@blocknote/mantine'
-import '@blocknote/mantine/style.css'
 import type { Tomador } from './FilaTomadores'
 
 export interface Indicador {
@@ -122,43 +119,23 @@ function IndicadorCard({ ind }: { ind: Indicador }) {
 }
 
 export default function Canvas({ tomador, data, onSalvar }: Props) {
-  const editor = useCreateBlockNote({
-    initialContent: [{ type: 'paragraph', content: '' }],
-  })
+  const [conteudo, setConteudo] = useState('')
   const salvando = useRef(false)
 
   useEffect(() => {
     if (!data?.blocos?.length) return
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const blocks: any[] = data.blocos.map(b => {
-      if (b.type === 'heading') {
-        return {
-          type: 'heading',
-          props: { level: b.level ?? 2 },
-          content: [{ type: 'text', text: b.content, styles: {} }],
-        }
-      }
-      if (b.type === 'bulletListItem') {
-        return {
-          type: 'bulletListItem',
-          content: [{ type: 'text', text: b.content, styles: {} }],
-        }
-      }
-      return {
-        type: 'paragraph',
-        content: [{ type: 'text', text: b.content, styles: {} }],
-      }
-    })
-
-    editor.replaceBlocks(editor.document, blocks)
+    const md = data.blocos.map(b => {
+      if (b.type === 'heading') return `${'#'.repeat(b.level ?? 2)} ${b.content}`
+      if (b.type === 'bulletListItem') return `- ${b.content}`
+      return b.content
+    }).join('\n\n')
+    setConteudo(md)
   }, [data])
 
-  async function handleSalvar() {
+  function handleSalvar() {
     if (salvando.current) return
     salvando.current = true
-    const md = await editor.blocksToMarkdownLossy(editor.document)
-    onSalvar(md)
+    onSalvar(conteudo)
     salvando.current = false
   }
 
@@ -209,11 +186,17 @@ export default function Canvas({ tomador, data, onSalvar }: Props) {
       )}
 
       {/* Editor */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-        <BlockNoteView
-          editor={editor}
-          theme="dark"
-          style={{ minHeight: 300 }}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 16px' }}>
+        <textarea
+          value={conteudo}
+          onChange={e => setConteudo(e.target.value)}
+          placeholder="A análise aparecerá aqui após perguntar ao assistente..."
+          style={{
+            width: '100%', height: '100%', minHeight: 300,
+            background: 'transparent', border: 'none', outline: 'none',
+            color: c.text, fontSize: 13, lineHeight: 1.7,
+            fontFamily: 'inherit', resize: 'none', boxSizing: 'border-box',
+          }}
         />
       </div>
     </div>
