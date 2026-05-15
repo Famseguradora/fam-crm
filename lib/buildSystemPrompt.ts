@@ -37,6 +37,18 @@ export async function buildSystemPrompt(options: SystemPromptOptions = {}): Prom
     })
   }
 
+  if (user) {
+    const { data: perfil } = await supabase
+      .from('user_profiles')
+      .select('contexto_ia')
+      .eq('user_id', user.id)
+      .single()
+    if (perfil?.contexto_ia) {
+      partes.push('\n=== PERFIL DO ANALISTA ===')
+      partes.push(perfil.contexto_ia)
+    }
+  }
+
   if (options.tomadorNome || options.tomadorId) {
     partes.push('\n=== SESSAO ATUAL ===')
     if (options.tomadorNome) partes.push(`Tomador: ${options.tomadorNome}`)

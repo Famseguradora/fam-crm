@@ -86,6 +86,18 @@ async function buildServerSystemPrompt(supabase: any, { tomadorId, tomadorNome }
     pessoais.forEach((p: any) => partes.push(`--- ${p.titulo} ---\n${p.conteudo}`))
   }
 
+  if (user) {
+    const { data: perfil } = await supabase
+      .from('user_profiles')
+      .select('contexto_ia')
+      .eq('user_id', user.id)
+      .single()
+    if (perfil?.contexto_ia) {
+      partes.push('\n=== PERFIL DO ANALISTA ===')
+      partes.push(perfil.contexto_ia)
+    }
+  }
+
   if (tomadorNome || tomadorId) {
     partes.push('\n=== SESSAO ATUAL ===')
     if (tomadorNome) partes.push(`Tomador: ${tomadorNome}`)
