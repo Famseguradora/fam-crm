@@ -34,6 +34,7 @@ interface FormTomador {
   observacao: string
   status: string
   ativo: boolean
+  data_entrada: string
 }
 
 interface FormStatus {
@@ -48,7 +49,7 @@ const FORM_TOM_INICIAL: FormTomador = {
   email: '', telefone: '', celular: '',
   cep: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '',
   responsavel: '', porte: '', prioridade: 'Normal', limite_aprovado: '', observacao: '',
-  status: 'Triagem', ativo: true,
+  status: 'Triagem', ativo: true, data_entrada: '',
 }
 
 const FORM_STATUS_INICIAL: FormStatus = { nome: '', cor: '#6080a0', ordem: '99', ativo: true }
@@ -81,7 +82,6 @@ export default function TomadoresPage() {
   const [busca, setBusca] = useState('')
   const [filtroStatus, setFiltroStatus] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('')
-  const [filtroAtivo, setFiltroAtivo] = useState('')
   const [filtroCorretora, setFiltroCorretora] = useState('')
   const [erroCnpj, setErroCnpj] = useState('')
   const [exportando, setExportando] = useState(false)
@@ -110,7 +110,7 @@ export default function TomadoresPage() {
     const supabase = createClient()
     const { data } = await supabase
       .from('tomadores')
-      .select('*, corretora:corretoras(id,razao_social)')
+      .select('*, corretora:corretoras(id,razao_social,nome_fantasia)')
       .order('razao_social')
     setTomadores((data as Tomador[]) ?? [])
     setCarregando(false)
@@ -174,6 +174,7 @@ export default function TomadoresPage() {
       observacao: t.observacao ?? '',
       status: t.status,
       ativo: t.ativo,
+      data_entrada: t.data_entrada ?? '',
     })
     setMensagem(null)
     setErroCnpj('')
@@ -226,6 +227,7 @@ export default function TomadoresPage() {
       observacao: form.observacao || null,
       status: form.status,
       ativo: form.ativo,
+      data_entrada: form.data_entrada || null,
     }
     try {
       const supabase = createClient()
@@ -326,10 +328,9 @@ export default function TomadoresPage() {
       corrNome.includes(buscaLow)
     const statusMatch = !filtroStatus || t.status === filtroStatus
     const estadoMatch = !filtroEstado || t.estado === filtroEstado
-    const ativoMatch = !filtroAtivo || String(t.ativo) === filtroAtivo
     const corrMatch = !filtroCorretora || t.corretora_id === filtroCorretora
-    return textMatch && statusMatch && estadoMatch && ativoMatch && corrMatch
-  }), [tomadores, busca, filtroStatus, filtroEstado, filtroAtivo, filtroCorretora])
+    return textMatch && statusMatch && estadoMatch && corrMatch
+  }), [tomadores, busca, filtroStatus, filtroEstado, filtroCorretora])
 
   const kpis = useMemo(() => {
     const ativos = tomadoresFiltrados.filter((t) => t.status !== 'Perdido' && t.status !== 'Recusado')
@@ -709,13 +710,10 @@ export default function TomadoresPage() {
                         ))}
                       </select>
                     </div>
-                    <div className="form-field" style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 22 }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, color: '#1a2a3a' }}>
-                        <input type="checkbox" checked={form.ativo}
-                          onChange={(e) => setForm({ ...form, ativo: e.target.checked })}
-                          style={{ width: 16, height: 16 }} />
-                        Tomador ativo
-                      </label>
+                    <div className="form-field">
+                      <label className="form-label">Data de Entrada na FAM</label>
+                      <input className="fam-input" type="date" value={form.data_entrada}
+                        onChange={(e) => setForm({ ...form, data_entrada: e.target.value })} />
                     </div>
                   </div>
 
@@ -848,14 +846,6 @@ export default function TomadoresPage() {
                 {estadosNoDados.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
               </select>
             </div>
-            <div className="filter-group" style={{ flex: '1 1 110px' }}>
-              <label className="filter-label">Situação</label>
-              <select className="fam-input" value={filtroAtivo} onChange={(e) => setFiltroAtivo(e.target.value)}>
-                <option value="">Todos</option>
-                <option value="true">Ativos</option>
-                <option value="false">Inativos</option>
-              </select>
-            </div>
             <div className="filter-group" style={{ flex: '1 1 160px' }}>
               <label className="filter-label">Corretora</label>
               <select className="fam-input" value={filtroCorretora} onChange={(e) => setFiltroCorretora(e.target.value)}>
@@ -863,10 +853,10 @@ export default function TomadoresPage() {
                 {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
               </select>
             </div>
-            {(busca || filtroStatus || filtroEstado || filtroAtivo || filtroCorretora) && (
+            {(busca || filtroStatus || filtroEstado || filtroCorretora) && (
               <div className="filter-group" style={{ justifyContent: 'flex-end' }}>
                 <label className="filter-label">&nbsp;</label>
-                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus(''); setFiltroEstado(''); setFiltroAtivo(''); setFiltroCorretora('') }}>Limpar</button>
+                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus(''); setFiltroEstado(''); setFiltroCorretora('') }}>Limpar</button>
               </div>
             )}
             <div style={{ marginLeft: 'auto', fontSize: 13, color: '#6080a0', alignSelf: 'flex-end', paddingBottom: 2 }}>
@@ -885,14 +875,15 @@ export default function TomadoresPage() {
                   <th>Cidade / UF</th>
                   <th>Limite</th>
                   <th>Status</th>
+                  <th>Data Entrada</th>
                 </tr>
               </thead>
               <tbody>
                 {carregando ? (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : tomadoresFiltrados.length === 0 ? (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
-                    {busca || filtroStatus || filtroEstado || filtroAtivo || filtroCorretora
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                    {busca || filtroStatus || filtroEstado || filtroCorretora
                       ? 'Nenhum tomador encontrado para os filtros selecionados.'
                       : 'Nenhum tomador cadastrado ainda.'}
                   </td></tr>
@@ -903,7 +894,7 @@ export default function TomadoresPage() {
                       <div style={{ fontWeight: 600 }}>{t.razao_social}</div>
                       {t.nome_fantasia && <div style={{ fontSize: 11, color: '#6080a0' }}>{t.nome_fantasia}</div>}
                     </td>
-                    <td style={{ fontSize: 13, color: '#6080a0' }}>{(t.corretora as Corretora | undefined)?.razao_social ?? '—'}</td>
+                    <td style={{ fontSize: 13, color: '#6080a0' }}>{(t.corretora as Corretora | undefined)?.nome_fantasia ?? (t.corretora as Corretora | undefined)?.razao_social ?? '—'}</td>
                     <td style={{ fontSize: 13, color: '#6080a0' }}>
                       {t.cidade ? `${t.cidade}${t.estado ? `/${t.estado}` : ''}` : t.estado ?? '—'}
                     </td>
@@ -918,6 +909,9 @@ export default function TomadoresPage() {
                       }}>
                         {t.status}
                       </span>
+                    </td>
+                    <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
+                      {t.data_entrada ? fmtData(t.data_entrada) : '—'}
                     </td>
                   </tr>
                 ))}
@@ -1042,9 +1036,9 @@ export default function TomadoresPage() {
               </thead>
               <tbody>
                 {carregandoStatus ? (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : statusLista.length === 0 ? (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Nenhum status cadastrado.</td></tr>
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Nenhum status cadastrado.</td></tr>
                 ) : statusLista.map((s) => (
                   <tr key={s.id}>
                     <td style={{ color: '#6080a0', fontSize: 13 }}>{s.ordem}</td>

@@ -98,6 +98,7 @@ export interface Tomador {
   observacao: string | null
   status: string
   ativo: boolean
+  data_entrada: string | null
   created_at: string
   updated_at: string
 }
@@ -124,6 +125,7 @@ export interface Operacao {
   observacao: string | null
   status: string
   ativo: boolean
+  data_entrada: string | null
   created_at: string
   updated_at: string
 }

@@ -35,6 +35,7 @@ interface FormOperacao {
   observacao: string
   status: string
   ativo: boolean
+  data_entrada: string
 }
 
 interface FormStatus {
@@ -48,7 +49,7 @@ const FORM_OP_INICIAL: FormOperacao = {
   tomador_id: '', corretora_id: '', produto_id: '', modalidade_id: '',
   modalidade: '', codigo_cobertura: '', lmg: '', taxa: '',
   vigencia_anos: '', periodicidade_vigencia: 'Anos', premio_previsto: '', temperatura: 'Frio',
-  prioridade: 'Fluxo Normal', estado: '', observacao: '', status: 'Triagem', ativo: true,
+  prioridade: 'Fluxo Normal', estado: '', observacao: '', status: 'Triagem', ativo: true, data_entrada: '',
 }
 
 const FORM_STATUS_INICIAL: FormStatus = { nome: '', cor: '#6080a0', ordem: '99', ativo: true }
@@ -116,7 +117,7 @@ export default function OperacoesPage() {
     const supabase = createClient()
     const { data } = await supabase
       .from('operacoes')
-      .select('*, tomador:tomadores(id,razao_social,cnpj,porte), corretora:corretoras(id,razao_social), produto:produtos(id,nome)')
+      .select('*, tomador:tomadores(id,razao_social,cnpj,porte), corretora:corretoras(id,razao_social,nome_fantasia), produto:produtos(id,nome)')
       .eq('ativo', true)
       .order('created_at', { ascending: false })
     setOperacoes((data as Operacao[]) ?? [])
@@ -188,6 +189,7 @@ export default function OperacoesPage() {
       observacao: op.observacao ?? '',
       status: op.status,
       ativo: op.ativo,
+      data_entrada: op.data_entrada ?? '',
     })
     setMensagem(null)
     setMostrarForm(true)
@@ -255,6 +257,7 @@ export default function OperacoesPage() {
       observacao: form.observacao || null,
       status: form.status,
       ativo: form.ativo,
+      data_entrada: form.data_entrada || null,
     }
     try {
       const supabase = createClient()
@@ -872,6 +875,11 @@ export default function OperacoesPage() {
                       </select>
                     </div>
                     <div className="form-field">
+                      <label className="form-label">Data de Entrada na FAM</label>
+                      <input className="fam-input" type="date" value={form.data_entrada}
+                        onChange={(e) => setForm({ ...form, data_entrada: e.target.value })} />
+                    </div>
+                    <div className="form-field">
                       <label className="form-label">Prioridade</label>
                       <select className="fam-input" value={form.prioridade} onChange={(e) => setForm({ ...form, prioridade: e.target.value })}>
                         <option value="Fluxo Normal">Fluxo Normal</option>
@@ -991,15 +999,16 @@ export default function OperacoesPage() {
                   <th>Temp.</th>
                   <th>Prioridade</th>
                   <th>Status</th>
+                  <th>Data Entrada</th>
                   <th>Avançar</th>
                   <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {carregando ? (
-                  <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : operacoesFiltradas.length === 0 ? (
-                  <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                  <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                     {busca || filtroStatus || filtroPrioridade || filtroTemperatura || filtroCorretora || filtroProduto
                       ? 'Nenhuma operação encontrada para os filtros selecionados.'
                       : 'Nenhuma operação registrada ainda.'}
@@ -1014,7 +1023,7 @@ export default function OperacoesPage() {
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{op.tomador?.razao_social ?? '—'}</div>
                         {op.tomador?.cnpj && <div style={{ fontSize: 11, color: '#6080a0' }}>{maskCNPJ(op.tomador.cnpj)}</div>}
                       </td>
-                      <td style={{ fontSize: 13, color: '#6080a0' }}>{op.corretora?.razao_social ?? '—'}</td>
+                      <td style={{ fontSize: 13, color: '#6080a0' }}>{op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'}</td>
                       <td style={{ fontSize: 13 }}>
                         <div>{op.produto?.nome ?? '—'}</div>
                         {op.modalidade && <div style={{ fontSize: 11, color: '#6080a0' }}>{op.modalidade}</div>}
@@ -1043,6 +1052,9 @@ export default function OperacoesPage() {
                         }}>
                           {op.status}
                         </span>
+                      </td>
+                      <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
+                        {op.data_entrada ? fmtData(op.data_entrada) : '—'}
                       </td>
                       <td>
                         {proximoStatus ? (
