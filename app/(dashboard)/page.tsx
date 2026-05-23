@@ -97,6 +97,8 @@ export default function DashboardPage() {
   const [mounted, setMounted] = useState(false)
   const [cartoes, setCartoes] = useState<CartoesState>(CARDS_DEFAULT)
   const [modalCartoes, setModalCartoes] = useState(false)
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null)
+  const [gerandoPdf, setGerandoPdf] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -236,69 +238,204 @@ export default function DashboardPage() {
 
   // ── handlers ──────────────────────────────────────────────────────────────
 
+  function fecharPreviewPdf() {
+    if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl)
+    setPreviewPdfUrl(null)
+  }
+
   async function handleExportarPDF() {
-    const { default: jsPDF } = await import('jspdf')
-    const { default: autoTable } = await import('jspdf-autotable')
-    const doc = new jsPDF()
+    setGerandoPdf(true)
+    try {
+      const { default: jsPDF } = await import('jspdf')
+      const { default: autoTable } = await import('jspdf-autotable')
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' })
 
-    doc.setFontSize(18)
-    doc.text('FAM Seguradora — Painel Executivo', 14, 20)
-    doc.setFontSize(11)
-    doc.setTextColor(100)
-    doc.text(fmtDataExtenso(), 14, 28)
+      type RGB = [number, number, number]
+      const ML = 14, PW = 210, CW = 182
+      const getLastY = () => ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 0)
 
-    doc.setFontSize(13)
-    doc.setTextColor(0)
-    doc.text('Operações Fechadas', 14, 42)
-    autoTable(doc, {
-      startY: 46,
-      head: [['QTD. Fechadas', 'Prêmio Total Fechado', 'LMG Total Fechado']],
-      body: [[String(opsFechadas.length), fmtBRL(premioFechado), fmtBRL(lmgFechado)]],
-    })
+      const navyHead = { fillColor: [30, 64, 128] as RGB, textColor: [255, 255, 255] as RGB, fontSize: 9, fontStyle: 'bold' as const, cellPadding: 4 }
+      const greenHead = { fillColor: [22, 163, 74] as RGB, textColor: [255, 255, 255] as RGB, fontSize: 9, fontStyle: 'bold' as const, cellPadding: 4 }
+      const tBase = { styles: { fontSize: 9, cellPadding: 3 }, margin: { left: ML, right: ML } }
 
-    let y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
-    doc.text('Tomadores — Resumo', 14, y)
-    autoTable(doc, {
-      startY: y + 4,
-      head: [['Corretoras', 'Corr. c/ Tomadores', 'Tom. Recebidos', 'Tom. Cadastrados', 'Limite Aprovado Total']],
-      body: [[String(totalCorretoras), String(corretorasComTomadores), String(tomadores.length), String(tomadoresCadastrados), fmtBRL(limiteAprovadoTotal)]],
-    })
+      const drawSecHeader = (text: string, y: number, rgb: RGB): number => {
+        doc.setFillColor(rgb[0], rgb[1], rgb[2])
+        doc.roundedRect(ML, y, CW, 10, 2, 2, 'F')
+        doc.setTextColor(255, 255, 255)
+        doc.setFontSize(9)
+        doc.setFont('helvetica', 'bold')
+        doc.text(text.toUpperCase(), ML + 5, y + 7)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(0, 0, 0)
+        return y + 12
+      }
 
-    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
-    doc.text('Operações — Resumo', 14, y)
-    autoTable(doc, {
-      startY: y + 4,
-      head: [['Corretoras', 'Total Operações', 'LMG Total', 'LMG Líquido', 'Prêmio Previsto Total']],
-      body: [[String(corretoresUnicos), String(operacoes.length), fmtBRL(lmgTotal), fmtBRL(lmgLiquido), fmtBRL(premioTotal)]],
-    })
+      const drawKpiRow = (cards: Array<{ label: string; value: string; accent?: RGB }>, y: number): number => {
+        const n = cards.length, gap = 3
+        const cardW = (CW - gap * (n - 1)) / n
+        cards.forEach((c, i) => {
+          const x = ML + i * (cardW + gap)
+          const acc: RGB = c.accent ?? [30, 64, 128]
+          doc.setFillColor(248, 250, 252)
+          doc.roundedRect(x, y, cardW, 22, 2, 2, 'F')
+          doc.setFillColor(acc[0], acc[1], acc[2])
+          doc.roundedRect(x, y, cardW, 2.5, 1, 1, 'F')
+          doc.setTextColor(96, 128, 160)
+          doc.setFontSize(6.5)
+          doc.setFont('helvetica', 'bold')
+          const lines = doc.splitTextToSize(c.label.toUpperCase(), cardW - 4) as string[]
+          doc.text(lines.slice(0, 2), x + 2, y + 7)
+          doc.setTextColor(16, 32, 64)
+          doc.setFontSize(9)
+          doc.setFont('helvetica', 'bold')
+          doc.text(c.value, x + 2, y + 18)
+        })
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(0, 0, 0)
+        return y + 28
+      }
 
-    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
-    doc.text('Top Corretoras por Limite Aprovado', 14, y)
-    autoTable(doc, {
-      startY: y + 4,
-      head: [['Corretora', 'Limite Aprovado']],
-      body: [...topCorretoras].reverse().map(r => [r.nome, fmtBRL(r.valor)]),
-    })
+      // ── HEADER BANNER ────────────────────────────────────────────────────────
+      doc.setFillColor(10, 22, 40)
+      doc.rect(0, 0, PW, 42, 'F')
+      doc.setFillColor(232, 184, 75)
+      doc.rect(0, 38, PW, 4, 'F')
+      doc.setTextColor(255, 255, 255)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(20)
+      doc.text('FAM Seguradora', ML, 17)
+      doc.setFontSize(11)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(160, 192, 232)
+      doc.text('Painel Executivo — Relatório de Desempenho', ML, 27)
+      doc.setFontSize(8)
+      doc.text(fmtDataExtenso(), ML, 35)
 
-    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
-    if (y > 240) { doc.addPage(); y = 20 }
-    doc.text('Top Corretoras por Prêmio Previsto', 14, y)
-    autoTable(doc, {
-      startY: y + 4,
-      head: [['Corretora', 'Prêmio Previsto']],
-      body: [...topCorretores].reverse().map(r => [r.nome, fmtBRL(r.valor)]),
-    })
+      // ── DESTAQUE ─────────────────────────────────────────────────────────────
+      let y = 50
+      doc.setFillColor(26, 53, 96)
+      doc.roundedRect(ML, y, CW, 32, 3, 3, 'F')
+      const c1 = ML + 5, c2 = ML + 65, c3 = ML + 128
+      doc.setTextColor(232, 184, 75)
+      doc.setFontSize(7.5)
+      doc.setFont('helvetica', 'bold')
+      doc.text('OPERAÇÕES FECHADAS — DESTAQUE', c1, y + 8)
+      doc.setTextColor(160, 192, 232)
+      doc.setFontSize(7)
+      doc.text('QTD. FECHADAS', c1, y + 14)
+      doc.text('PRÊMIO TOTAL FECHADO', c2, y + 14)
+      doc.text('LMG TOTAL FECHADO', c3, y + 14)
+      doc.setTextColor(255, 255, 255)
+      doc.setFontSize(20)
+      doc.text(String(opsFechadas.length), c1, y + 27)
+      doc.setFontSize(13)
+      doc.text(fmtBRL(premioFechado), c2, y + 27)
+      doc.text(fmtBRL(lmgFechado), c3, y + 27)
 
-    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
-    if (y > 240) { doc.addPage(); y = 20 }
-    doc.text('Prêmio Previsto por Modalidade (Top 6)', 14, y)
-    autoTable(doc, {
-      startY: y + 4,
-      head: [['Modalidade', 'Prêmio Previsto']],
-      body: topModalidades.map(r => [r.nome, fmtBRL(r.valor)]),
-    })
+      // ── TOMADORES KPIs ───────────────────────────────────────────────────────
+      y = 90
+      y = drawSecHeader('Tomadores — Resumo', y, [30, 64, 128])
+      y = drawKpiRow([
+        { label: 'Corretoras', value: fmtNum(totalCorretoras) },
+        { label: 'Corretoras com Tomadores', value: fmtNum(corretorasComTomadores) },
+        { label: 'Tomadores Recebidos', value: fmtNum(tomadores.length) },
+        { label: 'Tomadores Cadastrados', value: fmtNum(tomadoresCadastrados) },
+        { label: 'Limite Aprovado Total', value: fmtBRL(limiteAprovadoTotal), accent: [205, 160, 40] },
+      ], y)
 
-    doc.save(`FAM-Dashboard-${new Date().toISOString().slice(0, 10)}.pdf`)
+      // ── OPERAÇÕES KPIs ───────────────────────────────────────────────────────
+      y = drawSecHeader('Operações — Resumo', y + 2, [22, 163, 74])
+      y = drawKpiRow([
+        { label: 'Corretoras', value: fmtNum(corretoresUnicos) },
+        { label: 'Total Operações', value: fmtNum(operacoes.length) },
+        { label: 'LMG Total', value: fmtBRL(lmgTotal) },
+        { label: 'LMG Líquido', value: fmtBRL(lmgLiquido), accent: [205, 160, 40] },
+        { label: 'Prêmio Previsto Total', value: fmtBRL(premioTotal) },
+      ], y)
+
+      // ── TABELAS ──────────────────────────────────────────────────────────────
+      y = drawSecHeader('Top Corretoras por Limite Aprovado', y + 2, [30, 64, 128])
+      autoTable(doc, {
+        startY: y - 2,
+        head: [['Corretora', 'Limite Aprovado']],
+        body: [...topCorretoras].reverse().map(r => [r.nome, fmtBRL(r.valor)]),
+        headStyles: navyHead,
+        alternateRowStyles: { fillColor: [240, 246, 255] as RGB },
+        columnStyles: { 1: { halign: 'right' } },
+        ...tBase,
+      })
+
+      y = getLastY() + 8
+      if (y > 220) { doc.addPage(); y = 20 }
+      y = drawSecHeader('Top Corretoras por Prêmio Previsto', y, [22, 163, 74])
+      autoTable(doc, {
+        startY: y - 2,
+        head: [['Corretora', 'Prêmio Previsto']],
+        body: [...topCorretores].reverse().map(r => [r.nome, fmtBRL(r.valor)]),
+        headStyles: greenHead,
+        alternateRowStyles: { fillColor: [240, 253, 244] as RGB },
+        columnStyles: { 1: { halign: 'right' } },
+        ...tBase,
+      })
+
+      y = getLastY() + 8
+      if (y > 220) { doc.addPage(); y = 20 }
+      y = drawSecHeader('Prêmio Previsto por Modalidade (Top 6)', y, [30, 64, 128])
+      autoTable(doc, {
+        startY: y - 2,
+        head: [['Modalidade', 'Prêmio Previsto']],
+        body: topModalidades.map(r => [r.nome, fmtBRL(r.valor)]),
+        headStyles: navyHead,
+        alternateRowStyles: { fillColor: [240, 246, 255] as RGB },
+        columnStyles: { 1: { halign: 'right' } },
+        ...tBase,
+      })
+
+      y = getLastY() + 8
+      if (y > 220) { doc.addPage(); y = 20 }
+      y = drawSecHeader('Tomadores por Status', y, [30, 64, 128])
+      autoTable(doc, {
+        startY: y - 2,
+        head: [['Status', 'Qtd']],
+        body: statusTomadorChart.map(s => [s.name, String(s.value)]),
+        headStyles: navyHead,
+        alternateRowStyles: { fillColor: [240, 246, 255] as RGB },
+        columnStyles: { 1: { halign: 'center', cellWidth: 20 } },
+        ...tBase,
+      })
+
+      y = getLastY() + 8
+      if (y > 220) { doc.addPage(); y = 20 }
+      y = drawSecHeader('Operações por Status', y, [22, 163, 74])
+      autoTable(doc, {
+        startY: y - 2,
+        head: [['Status', 'Qtd']],
+        body: statusOperacaoChart.map(s => [s.name, String(s.value)]),
+        headStyles: greenHead,
+        alternateRowStyles: { fillColor: [240, 253, 244] as RGB },
+        columnStyles: { 1: { halign: 'center', cellWidth: 20 } },
+        ...tBase,
+      })
+
+      // ── FOOTER em todas as páginas ────────────────────────────────────────────
+      const nPages = doc.getNumberOfPages()
+      for (let p = 1; p <= nPages; p++) {
+        doc.setPage(p)
+        doc.setFillColor(10, 22, 40)
+        doc.rect(0, 287, PW, 10, 'F')
+        doc.setTextColor(160, 192, 232)
+        doc.setFontSize(7)
+        doc.setFont('helvetica', 'normal')
+        doc.text('FAM Seguradora — Painel Executivo — Documento Confidencial', ML, 293)
+        doc.text(`${p} / ${nPages}`, PW - ML, 293, { align: 'right' })
+      }
+
+      const blob = doc.output('blob')
+      const url = URL.createObjectURL(blob)
+      setPreviewPdfUrl(url)
+    } finally {
+      setGerandoPdf(false)
+    }
   }
 
   // ── style helpers ─────────────────────────────────────────────────────────
@@ -349,9 +486,10 @@ export default function DashboardPage() {
           </button>
           <button
             onClick={handleExportarPDF}
-            style={{ background: 'white', border: '1px solid #c0d4e8', color: '#1e4080', borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+            disabled={gerandoPdf}
+            style={{ background: 'white', border: '1px solid #c0d4e8', color: '#1e4080', borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: gerandoPdf ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: gerandoPdf ? 0.6 : 1 }}
           >
-            ↓ Exportar PDF
+            {gerandoPdf ? '⏳ Gerando…' : '↓ Exportar PDF'}
           </button>
         </div>
       </div>
@@ -590,6 +728,36 @@ export default function DashboardPage() {
               </BarChart>
             </ResponsiveContainer>
           )}
+        </div>
+      )}
+
+      {/* ── Modal: Prévia PDF ── */}
+      {previewPdfUrl && (
+        <div className="modal-overlay" onClick={fecharPreviewPdf}>
+          <div
+            style={{ background: 'white', borderRadius: 14, width: '88vw', maxWidth: 960, height: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,.3)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #dde8f4', flexShrink: 0 }}>
+              <div style={{ fontWeight: 700, color: '#102040', fontSize: 15 }}>Prévia do Relatório</div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <a
+                  href={previewPdfUrl}
+                  download={`FAM-Dashboard-${new Date().toISOString().slice(0, 10)}.pdf`}
+                  style={{ padding: '7px 16px', borderRadius: 8, background: '#1e4080', color: 'white', fontWeight: 600, fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  ⬇ Baixar PDF
+                </a>
+                <button
+                  onClick={fecharPreviewPdf}
+                  style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #dde8f4', background: 'white', color: '#6080a0', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+                >
+                  ✕ Fechar
+                </button>
+              </div>
+            </div>
+            <iframe src={previewPdfUrl} style={{ flex: 1, border: 'none', width: '100%' }} title="Prévia PDF" />
+          </div>
         </div>
       )}
 

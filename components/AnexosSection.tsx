@@ -102,29 +102,14 @@ export default function AnexosSection({ entidadeTipo, entidadeId }: Props) {
     }
   }
 
-  async function baixarAnexo(anexo: Anexo) {
+  async function abrirAnexo(anexo: Anexo) {
     setErro('')
     const supabase = createClient()
     const { data, error } = await supabase.storage
       .from(BUCKET)
-      .createSignedUrl(anexo.storage_path, 120)
-    if (error || !data?.signedUrl) { setErro('Erro ao gerar link de download.'); return }
-    try {
-      // Fetch como blob para preservar extensão/formato original (ex: .html, .pdf)
-      const res = await fetch(data.signedUrl)
-      const blob = await res.blob()
-      const blobUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = blobUrl
-      a.download = anexo.nome_original
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(blobUrl)
-    } catch {
-      // fallback: abre em nova aba
-      window.open(data.signedUrl, '_blank')
-    }
+      .createSignedUrl(anexo.storage_path, 300)
+    if (error || !data?.signedUrl) { setErro('Erro ao gerar link do arquivo.'); return }
+    window.open(data.signedUrl, '_blank')
   }
 
   async function excluirAnexo(anexo: Anexo) {
@@ -231,11 +216,11 @@ export default function AnexosSection({ entidadeTipo, entidadeId }: Props) {
                 </div>
               </div>
               <button
-                onClick={() => baixarAnexo(a)}
-                title="Baixar"
+                onClick={() => abrirAnexo(a)}
+                title="Abrir"
                 style={{ padding: '4px 10px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif", whiteSpace: 'nowrap' }}
               >
-                ⬇ Baixar
+                ↗ Abrir
               </button>
               <button
                 onClick={() => setConfirmExcluir(a)}
