@@ -1001,7 +1001,7 @@ export default function OperacoesPage() {
                   const statusIdx = statusOpcoes.findIndex((s) => s.nome === op.status)
                   const proximoStatus = statusOpcoes[statusIdx + 1] ?? null
                   return (
-                    <tr key={op.id}>
+                    <tr key={op.id} onClick={() => abrirEditar(op)} style={{ cursor: 'pointer' }}>
                       <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
                       <td>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{op.tomador?.razao_social ?? '—'}</div>
@@ -1040,7 +1040,7 @@ export default function OperacoesPage() {
                       <td>
                         {proximoStatus ? (
                           <button
-                            onClick={() => mudarStatus(op, proximoStatus.nome)}
+                            onClick={(e) => { e.stopPropagation(); mudarStatus(op, proximoStatus.nome); }}
                             title={`Avançar para: ${proximoStatus.nome}`}
                             style={{
                               padding: '4px 10px', borderRadius: 6, border: 'none',

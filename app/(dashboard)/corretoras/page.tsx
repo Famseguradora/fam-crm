@@ -195,12 +195,6 @@ export default function CorretorasPage() {
     }
   }
 
-  async function toggleStatus(c: Corretora) {
-    const supabase = createClient()
-    await supabase.from('corretoras').update({ status: c.status === 'ativo' ? 'inativo' : 'ativo' }).eq('id', c.id)
-    await carregarCorretoras()
-  }
-
   // ─── Derived data ──────────────────────────────────────────────────────────
 
   const corretorasFiltradas = useMemo(() => corretoras.filter((c) => {
@@ -545,34 +539,25 @@ export default function CorretorasPage() {
             <tr>
               <th>#</th>
               <th>Razão Social</th>
-              <th>Nome Fantasia</th>
               <th>CNPJ</th>
-              <th>Cód. SUSEP</th>
               <th>Contato</th>
               <th>Cidade / UF</th>
               <th>Responsável</th>
-              <th>Status</th>
               <th>Ações</th>
             </tr>
           </thead>
           <tbody>
             {carregando ? (
-              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando corretoras...</td></tr>
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando corretoras...</td></tr>
             ) : corretorasFiltradas.length === 0 ? (
-              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                 {busca || filtroEstado || filtroStatus ? 'Nenhuma corretora encontrada para os filtros selecionados.' : 'Nenhuma corretora cadastrada ainda.'}
               </td></tr>
             ) : corretorasFiltradas.map((c, i) => (
-              <tr key={c.id}>
+              <tr key={c.id} onClick={() => abrirEditar(c)} style={{ cursor: 'pointer' }}>
                 <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
                 <td style={{ fontWeight: 600 }}>{c.razao_social}</td>
-                <td style={{ fontSize: 13, color: '#6080a0' }}>{c.nome_fantasia || '—'}</td>
                 <td style={{ fontSize: 13, fontFamily: 'monospace' }}>{maskCNPJ(c.cnpj)}</td>
-                <td>
-                  {c.codigo_susep
-                    ? <span className="badge badge-purple">{c.codigo_susep}</span>
-                    : <span style={{ color: '#6080a0', fontSize: 13 }}>—</span>}
-                </td>
                 <td style={{ fontSize: 13 }}>
                   {c.email && <div>{c.email}</div>}
                   {c.telefone && <div style={{ color: '#6080a0' }}>{c.telefone}</div>}
@@ -583,19 +568,9 @@ export default function CorretorasPage() {
                 </td>
                 <td style={{ fontSize: 13, color: '#6080a0' }}>{c.responsavel || '—'}</td>
                 <td>
-                  <span className={`badge ${c.status === 'ativo' ? 'badge-green' : 'badge-red'}`}>
-                    {c.status === 'ativo' ? 'ATIVO' : 'INATIVO'}
-                  </span>
-                </td>
-                <td>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={() => abrirEditar(c)} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
-                      Editar
-                    </button>
-                    <button onClick={() => toggleStatus(c)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif", background: c.status === 'ativo' ? '#fdf3e6' : '#e6f9f0', color: c.status === 'ativo' ? '#a05010' : '#1a7a50' }}>
-                      {c.status === 'ativo' ? 'Desativar' : 'Ativar'}
-                    </button>
-                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); abrirEditar(c); }} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
+                    Editar
+                  </button>
                 </td>
               </tr>
             ))}

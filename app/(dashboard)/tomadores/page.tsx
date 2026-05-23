@@ -324,12 +324,16 @@ export default function TomadoresPage() {
     return textMatch && statusMatch && estadoMatch && ativoMatch && corrMatch
   }), [tomadores, busca, filtroStatus, filtroEstado, filtroAtivo, filtroCorretora])
 
-  const kpis = useMemo(() => ({
-    total: tomadores.length,
-    ativos: tomadores.filter((t) => t.ativo).length,
-    emTriagem: tomadores.filter((t) => t.status === 'Triagem').length,
-    emAnalise: tomadores.filter((t) => t.status === 'Em Análise').length,
-  }), [tomadores])
+  const kpis = useMemo(() => {
+    const ativos = tomadores.filter((t) => t.status !== 'Perdido' && t.status !== 'Recusado')
+    const limiteTotal = ativos.reduce((sum, t) => sum + (t.limite_aprovado ?? 0), 0)
+    return {
+      total: tomadores.length,
+      ativos: ativos.length,
+      fechados: tomadores.filter((t) => t.status === 'Fechado').length,
+      limiteTotal,
+    }
+  }, [tomadores])
 
   const estadosNoDados = useMemo(() =>
     [...new Set(tomadores.map((t) => t.estado).filter(Boolean))].sort() as string[],
@@ -513,19 +517,6 @@ export default function TomadoresPage() {
     return s?.cor ?? '#6080a0'
   }
 
-  function badgePorte(porte: string | null) {
-    if (!porte) return 'badge-gray'
-    if (porte === 'Large' || porte === 'Corporate') return 'badge-blue'
-    if (porte === 'Middle') return 'badge-purple'
-    return 'badge-gray'
-  }
-
-  function badgePrioridade(p: string | null) {
-    if (p === 'Urgente') return 'badge-red'
-    if (p === 'Prioridade') return 'badge-yellow'
-    return 'badge-gray'
-  }
-
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -619,22 +610,22 @@ export default function TomadoresPage() {
             <div className="kpi-card highlight" style={{ flex: '1 1 150px' }}>
               <div className="kpi-label">Total</div>
               <div className="kpi-value">{kpis.total}</div>
-              <div className="kpi-sub">tomadores cadastrados</div>
+              <div className="kpi-sub">tomadores recebidos</div>
             </div>
             <div className="kpi-card green" style={{ flex: '1 1 150px' }}>
               <div className="kpi-label">Ativos</div>
               <div className="kpi-value">{kpis.ativos}</div>
-              <div className="kpi-sub">em operação</div>
+              <div className="kpi-sub">em operação − (Negados/Perdidos)</div>
             </div>
             <div className="kpi-card accent" style={{ flex: '1 1 150px' }}>
-              <div className="kpi-label">Em Triagem</div>
-              <div className="kpi-value">{kpis.emTriagem}</div>
-              <div className="kpi-sub">aguardando análise</div>
+              <div className="kpi-label">Fechados</div>
+              <div className="kpi-value">{kpis.fechados}</div>
+              <div className="kpi-sub">total de tomadores fechados</div>
             </div>
             <div className="kpi-card" style={{ flex: '1 1 150px' }}>
-              <div className="kpi-label">Em Análise</div>
-              <div className="kpi-value">{kpis.emAnalise}</div>
-              <div className="kpi-sub">em processamento</div>
+              <div className="kpi-label">Limite Aprovado Total</div>
+              <div className="kpi-value" style={{ fontSize: 18 }}>{fmtMoeda(kpis.limiteTotal)}</div>
+              <div className="kpi-sub">Limite Total − (Negados/Perdidos)</div>
             </div>
           </div>
 
@@ -883,46 +874,31 @@ export default function TomadoresPage() {
                 <tr>
                   <th>#</th>
                   <th>Razão Social</th>
-                  <th>CNPJ</th>
                   <th>Corretora</th>
                   <th>Cidade / UF</th>
-                  <th>Porte</th>
-                  <th>Prioridade</th>
                   <th>Limite</th>
                   <th>Status</th>
-                  <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {carregando ? (
-                  <tr><td colSpan={10} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : tomadoresFiltrados.length === 0 ? (
-                  <tr><td colSpan={10} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                     {busca || filtroStatus || filtroEstado || filtroAtivo || filtroCorretora
                       ? 'Nenhum tomador encontrado para os filtros selecionados.'
                       : 'Nenhum tomador cadastrado ainda.'}
                   </td></tr>
                 ) : tomadoresFiltrados.map((t, i) => (
-                  <tr key={t.id}>
+                  <tr key={t.id} onClick={() => abrirEditar(t)} style={{ cursor: 'pointer' }}>
                     <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
                     <td>
                       <div style={{ fontWeight: 600 }}>{t.razao_social}</div>
                       {t.nome_fantasia && <div style={{ fontSize: 11, color: '#6080a0' }}>{t.nome_fantasia}</div>}
                     </td>
-                    <td style={{ fontSize: 13, fontFamily: 'monospace' }}>{t.cnpj ? maskCNPJ(t.cnpj) : <span style={{ color: '#aaa' }}>—</span>}</td>
                     <td style={{ fontSize: 13, color: '#6080a0' }}>{(t.corretora as Corretora | undefined)?.razao_social ?? '—'}</td>
                     <td style={{ fontSize: 13, color: '#6080a0' }}>
                       {t.cidade ? `${t.cidade}${t.estado ? `/${t.estado}` : ''}` : t.estado ?? '—'}
-                    </td>
-                    <td>
-                      {t.porte
-                        ? <span className={`badge ${badgePorte(t.porte)}`}>{t.porte}</span>
-                        : <span style={{ color: '#6080a0', fontSize: 13 }}>—</span>}
-                    </td>
-                    <td>
-                      <span className={`badge ${badgePrioridade(t.prioridade)}`}>
-                        {t.prioridade ?? 'Normal'}
-                      </span>
                     </td>
                     <td style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
                       {t.limite_aprovado ? fmtMoeda(t.limite_aprovado) : '—'}
@@ -935,14 +911,6 @@ export default function TomadoresPage() {
                       }}>
                         {t.status}
                       </span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button onClick={() => abrirEditar(t)}
-                          style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
-                          Editar
-                        </button>
-                      </div>
                     </td>
                   </tr>
                 ))}
