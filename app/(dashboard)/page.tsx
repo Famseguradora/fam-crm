@@ -108,6 +108,15 @@ export default function DashboardPage() {
     } catch { /* ignore */ }
   }, [])
 
+  useEffect(() => {
+    if (!modalCartoes) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setModalCartoes(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [modalCartoes])
+
   function toggleCard(id: CardId) {
     setCartoes(prev => {
       const next = { ...prev, [id]: !prev[id] }
@@ -246,191 +255,35 @@ export default function DashboardPage() {
   async function handleExportarPDF() {
     setGerandoPdf(true)
     try {
-      const { default: jsPDF } = await import('jspdf')
-      const { default: autoTable } = await import('jspdf-autotable')
-      const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+        import('jspdf'),
+        import('html2canvas'),
+      ])
 
-      type RGB = [number, number, number]
-      const ML = 14, PW = 210, CW = 182
-      const getLastY = () => ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 0)
+      const element = document.getElementById('dashboard-content')
+      if (!element) return
 
-      const navyHead = { fillColor: [30, 64, 128] as RGB, textColor: [255, 255, 255] as RGB, fontSize: 9, fontStyle: 'bold' as const, cellPadding: 4 }
-      const greenHead = { fillColor: [22, 163, 74] as RGB, textColor: [255, 255, 255] as RGB, fontSize: 9, fontStyle: 'bold' as const, cellPadding: 4 }
-      const tBase = { styles: { fontSize: 9, cellPadding: 3 }, margin: { left: ML, right: ML } }
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#f0f4f8',
+      })
 
-      const drawSecHeader = (text: string, y: number, rgb: RGB): number => {
-        doc.setFillColor(rgb[0], rgb[1], rgb[2])
-        doc.roundedRect(ML, y, CW, 10, 2, 2, 'F')
-        doc.setTextColor(255, 255, 255)
-        doc.setFontSize(9)
-        doc.setFont('helvetica', 'bold')
-        doc.text(text.toUpperCase(), ML + 5, y + 7)
-        doc.setFont('helvetica', 'normal')
-        doc.setTextColor(0, 0, 0)
-        return y + 12
+      const imgData = canvas.toDataURL('image/jpeg', 0.92)
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+      const pageW = 210, pageH = 297, margin = 8
+      const contentW = pageW - margin * 2
+      const imgH = (canvas.height * contentW) / canvas.width
+
+      let yOffset = 0
+      while (yOffset < imgH) {
+        if (yOffset > 0) pdf.addPage()
+        pdf.addImage(imgData, 'JPEG', margin, margin - yOffset, contentW, imgH)
+        yOffset += pageH - margin * 2
       }
 
-      const drawKpiRow = (cards: Array<{ label: string; value: string; accent?: RGB }>, y: number): number => {
-        const n = cards.length, gap = 3
-        const cardW = (CW - gap * (n - 1)) / n
-        cards.forEach((c, i) => {
-          const x = ML + i * (cardW + gap)
-          const acc: RGB = c.accent ?? [30, 64, 128]
-          doc.setFillColor(248, 250, 252)
-          doc.roundedRect(x, y, cardW, 22, 2, 2, 'F')
-          doc.setFillColor(acc[0], acc[1], acc[2])
-          doc.roundedRect(x, y, cardW, 2.5, 1, 1, 'F')
-          doc.setTextColor(96, 128, 160)
-          doc.setFontSize(6.5)
-          doc.setFont('helvetica', 'bold')
-          const lines = doc.splitTextToSize(c.label.toUpperCase(), cardW - 4) as string[]
-          doc.text(lines.slice(0, 2), x + 2, y + 7)
-          doc.setTextColor(16, 32, 64)
-          doc.setFontSize(9)
-          doc.setFont('helvetica', 'bold')
-          doc.text(c.value, x + 2, y + 18)
-        })
-        doc.setFont('helvetica', 'normal')
-        doc.setTextColor(0, 0, 0)
-        return y + 28
-      }
-
-      // ── HEADER BANNER ────────────────────────────────────────────────────────
-      doc.setFillColor(10, 22, 40)
-      doc.rect(0, 0, PW, 42, 'F')
-      doc.setFillColor(232, 184, 75)
-      doc.rect(0, 38, PW, 4, 'F')
-      doc.setTextColor(255, 255, 255)
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(20)
-      doc.text('FAM Seguradora', ML, 17)
-      doc.setFontSize(11)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(160, 192, 232)
-      doc.text('Painel Executivo — Relatório de Desempenho', ML, 27)
-      doc.setFontSize(8)
-      doc.text(fmtDataExtenso(), ML, 35)
-
-      // ── DESTAQUE ─────────────────────────────────────────────────────────────
-      let y = 50
-      doc.setFillColor(26, 53, 96)
-      doc.roundedRect(ML, y, CW, 32, 3, 3, 'F')
-      const c1 = ML + 5, c2 = ML + 65, c3 = ML + 128
-      doc.setTextColor(232, 184, 75)
-      doc.setFontSize(7.5)
-      doc.setFont('helvetica', 'bold')
-      doc.text('OPERAÇÕES FECHADAS — DESTAQUE', c1, y + 8)
-      doc.setTextColor(160, 192, 232)
-      doc.setFontSize(7)
-      doc.text('QTD. FECHADAS', c1, y + 14)
-      doc.text('PRÊMIO TOTAL FECHADO', c2, y + 14)
-      doc.text('LMG TOTAL FECHADO', c3, y + 14)
-      doc.setTextColor(255, 255, 255)
-      doc.setFontSize(20)
-      doc.text(String(opsFechadas.length), c1, y + 27)
-      doc.setFontSize(13)
-      doc.text(fmtBRL(premioFechado), c2, y + 27)
-      doc.text(fmtBRL(lmgFechado), c3, y + 27)
-
-      // ── TOMADORES KPIs ───────────────────────────────────────────────────────
-      y = 90
-      y = drawSecHeader('Tomadores — Resumo', y, [30, 64, 128])
-      y = drawKpiRow([
-        { label: 'Corretoras', value: fmtNum(totalCorretoras) },
-        { label: 'Corretoras com Tomadores', value: fmtNum(corretorasComTomadores) },
-        { label: 'Tomadores Recebidos', value: fmtNum(tomadores.length) },
-        { label: 'Tomadores Cadastrados', value: fmtNum(tomadoresCadastrados) },
-        { label: 'Limite Aprovado Total', value: fmtBRL(limiteAprovadoTotal), accent: [205, 160, 40] },
-      ], y)
-
-      // ── OPERAÇÕES KPIs ───────────────────────────────────────────────────────
-      y = drawSecHeader('Operações — Resumo', y + 2, [22, 163, 74])
-      y = drawKpiRow([
-        { label: 'Corretoras', value: fmtNum(corretoresUnicos) },
-        { label: 'Total Operações', value: fmtNum(operacoes.length) },
-        { label: 'LMG Total', value: fmtBRL(lmgTotal) },
-        { label: 'LMG Líquido', value: fmtBRL(lmgLiquido), accent: [205, 160, 40] },
-        { label: 'Prêmio Previsto Total', value: fmtBRL(premioTotal) },
-      ], y)
-
-      // ── TABELAS ──────────────────────────────────────────────────────────────
-      y = drawSecHeader('Top Corretoras por Limite Aprovado', y + 2, [30, 64, 128])
-      autoTable(doc, {
-        startY: y - 2,
-        head: [['Corretora', 'Limite Aprovado']],
-        body: [...topCorretoras].reverse().map(r => [r.nome, fmtBRL(r.valor)]),
-        headStyles: navyHead,
-        alternateRowStyles: { fillColor: [240, 246, 255] as RGB },
-        columnStyles: { 1: { halign: 'right' } },
-        ...tBase,
-      })
-
-      y = getLastY() + 8
-      if (y > 220) { doc.addPage(); y = 20 }
-      y = drawSecHeader('Top Corretoras por Prêmio Previsto', y, [22, 163, 74])
-      autoTable(doc, {
-        startY: y - 2,
-        head: [['Corretora', 'Prêmio Previsto']],
-        body: [...topCorretores].reverse().map(r => [r.nome, fmtBRL(r.valor)]),
-        headStyles: greenHead,
-        alternateRowStyles: { fillColor: [240, 253, 244] as RGB },
-        columnStyles: { 1: { halign: 'right' } },
-        ...tBase,
-      })
-
-      y = getLastY() + 8
-      if (y > 220) { doc.addPage(); y = 20 }
-      y = drawSecHeader('Prêmio Previsto por Modalidade (Top 6)', y, [30, 64, 128])
-      autoTable(doc, {
-        startY: y - 2,
-        head: [['Modalidade', 'Prêmio Previsto']],
-        body: topModalidades.map(r => [r.nome, fmtBRL(r.valor)]),
-        headStyles: navyHead,
-        alternateRowStyles: { fillColor: [240, 246, 255] as RGB },
-        columnStyles: { 1: { halign: 'right' } },
-        ...tBase,
-      })
-
-      y = getLastY() + 8
-      if (y > 220) { doc.addPage(); y = 20 }
-      y = drawSecHeader('Tomadores por Status', y, [30, 64, 128])
-      autoTable(doc, {
-        startY: y - 2,
-        head: [['Status', 'Qtd']],
-        body: statusTomadorChart.map(s => [s.name, String(s.value)]),
-        headStyles: navyHead,
-        alternateRowStyles: { fillColor: [240, 246, 255] as RGB },
-        columnStyles: { 1: { halign: 'center', cellWidth: 20 } },
-        ...tBase,
-      })
-
-      y = getLastY() + 8
-      if (y > 220) { doc.addPage(); y = 20 }
-      y = drawSecHeader('Operações por Status', y, [22, 163, 74])
-      autoTable(doc, {
-        startY: y - 2,
-        head: [['Status', 'Qtd']],
-        body: statusOperacaoChart.map(s => [s.name, String(s.value)]),
-        headStyles: greenHead,
-        alternateRowStyles: { fillColor: [240, 253, 244] as RGB },
-        columnStyles: { 1: { halign: 'center', cellWidth: 20 } },
-        ...tBase,
-      })
-
-      // ── FOOTER em todas as páginas ────────────────────────────────────────────
-      const nPages = doc.getNumberOfPages()
-      for (let p = 1; p <= nPages; p++) {
-        doc.setPage(p)
-        doc.setFillColor(10, 22, 40)
-        doc.rect(0, 287, PW, 10, 'F')
-        doc.setTextColor(160, 192, 232)
-        doc.setFontSize(7)
-        doc.setFont('helvetica', 'normal')
-        doc.text('FAM Seguradora — Painel Executivo — Documento Confidencial', ML, 293)
-        doc.text(`${p} / ${nPages}`, PW - ML, 293, { align: 'right' })
-      }
-
-      const blob = doc.output('blob')
+      const blob = pdf.output('blob')
       const url = URL.createObjectURL(blob)
       setPreviewPdfUrl(url)
     } finally {
@@ -467,7 +320,7 @@ export default function DashboardPage() {
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
+    <div id="dashboard-content" style={{ fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 16 }}>
@@ -477,7 +330,7 @@ export default function DashboardPage() {
             Visão consolidada — {fmtDataExtenso()}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+        <div data-html2canvas-ignore="true" style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
           <button
             onClick={() => setModalCartoes(true)}
             style={{ background: '#f0f6ff', border: '1px solid #c0d4e8', color: '#2255a4', borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
