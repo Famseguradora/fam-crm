@@ -188,6 +188,13 @@ export default function TomadoresPage() {
     setErroCnpj('')
   }
 
+  useEffect(() => {
+    if (!mostrarForm) return
+    function handleEsc(e: KeyboardEvent) { if (e.key === 'Escape') fecharForm() }
+    document.addEventListener('keydown', handleEsc)
+    return () => document.removeEventListener('keydown', handleEsc)
+  }, [mostrarForm])
+
   async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault()
     const cnpjDigits = form.cnpj.replace(/\D/g, '')
@@ -325,15 +332,15 @@ export default function TomadoresPage() {
   }), [tomadores, busca, filtroStatus, filtroEstado, filtroAtivo, filtroCorretora])
 
   const kpis = useMemo(() => {
-    const ativos = tomadores.filter((t) => t.status !== 'Perdido' && t.status !== 'Recusado')
+    const ativos = tomadoresFiltrados.filter((t) => t.status !== 'Perdido' && t.status !== 'Recusado')
     const limiteTotal = ativos.reduce((sum, t) => sum + (t.limite_aprovado ?? 0), 0)
     return {
-      total: tomadores.length,
+      total: tomadoresFiltrados.length,
       ativos: ativos.length,
-      fechados: tomadores.filter((t) => t.status === 'Fechado').length,
+      fechados: tomadoresFiltrados.filter((t) => t.status === 'Fechado').length,
       limiteTotal,
     }
-  }, [tomadores])
+  }, [tomadoresFiltrados])
 
   const estadosNoDados = useMemo(() =>
     [...new Set(tomadores.map((t) => t.estado).filter(Boolean))].sort() as string[],

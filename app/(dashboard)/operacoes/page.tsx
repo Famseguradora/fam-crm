@@ -200,6 +200,13 @@ export default function OperacoesPage() {
     setMensagem(null)
   }
 
+  useEffect(() => {
+    if (!mostrarForm) return
+    function handleEsc(e: KeyboardEvent) { if (e.key === 'Escape') fecharForm() }
+    document.addEventListener('keydown', handleEsc)
+    return () => document.removeEventListener('keydown', handleEsc)
+  }, [mostrarForm])
+
   function handleSetorChange(prodId: string) {
     setForm((f) => ({ ...f, produto_id: prodId, modalidade_id: '', modalidade: '', codigo_cobertura: '' }))
   }

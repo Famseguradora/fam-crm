@@ -58,13 +58,21 @@ export default function CorretorasPage() {
   const [buscandoCep, setBuscandoCep] = useState(false)
   const [exportando, setExportando] = useState(false)
   const [erroCnpj, setErroCnpj] = useState('')
+  const [corretorasComTomadores, setCorretorasComTomadores] = useState(0)
+  const [corretorasComOperacoes, setCorretorasComOperacoes] = useState(0)
 
   const carregarCorretoras = useCallback(async () => {
     setCarregando(true)
     const supabase = createClient()
-    const { data, error } = await supabase.from('corretoras').select('*').order('razao_social')
+    const [{ data, error }, { data: tomIds }, { data: opIds }] = await Promise.all([
+      supabase.from('corretoras').select('*').order('razao_social'),
+      supabase.from('tomadores').select('corretora_id'),
+      supabase.from('operacoes').select('corretora_id'),
+    ])
     if (error) console.error('corretoras:', error.message)
     setCorretoras(data ?? [])
+    setCorretorasComTomadores(new Set((tomIds ?? []).map((r: { corretora_id: string | null }) => r.corretora_id).filter(Boolean)).size)
+    setCorretorasComOperacoes(new Set((opIds ?? []).map((r: { corretora_id: string | null }) => r.corretora_id).filter(Boolean)).size)
     setCarregando(false)
   }, [])
 
@@ -142,6 +150,13 @@ export default function CorretorasPage() {
     setErroCnpj('')
   }
 
+  useEffect(() => {
+    if (!mostrarForm) return
+    function handleEsc(e: KeyboardEvent) { if (e.key === 'Escape') fecharForm() }
+    document.addEventListener('keydown', handleEsc)
+    return () => document.removeEventListener('keydown', handleEsc)
+  }, [mostrarForm])
+
   async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault()
     setErroCnpj('')
@@ -211,8 +226,6 @@ export default function CorretorasPage() {
   const kpis = useMemo(() => ({
     total: corretoras.length,
     ativas: corretoras.filter((c) => c.status === 'ativo').length,
-    inativas: corretoras.filter((c) => c.status === 'inativo').length,
-    estados: new Set(corretoras.map((c) => c.estado).filter(Boolean)).size,
   }), [corretoras])
 
   const estadosNoDados = useMemo(() =>
@@ -313,15 +326,15 @@ export default function CorretorasPage() {
           <div className="kpi-value">{kpis.ativas}</div>
           <div className="kpi-sub">em operação</div>
         </div>
-        <div className="kpi-card red" style={{ flex: '1 1 150px' }}>
-          <div className="kpi-label">Inativas</div>
-          <div className="kpi-value">{kpis.inativas}</div>
-          <div className="kpi-sub">fora de operação</div>
-        </div>
         <div className="kpi-card accent" style={{ flex: '1 1 150px' }}>
-          <div className="kpi-label">Estados</div>
-          <div className="kpi-value">{kpis.estados}</div>
-          <div className="kpi-sub">estados cobertos</div>
+          <div className="kpi-label">Corretoras com Tomadores</div>
+          <div className="kpi-value">{corretorasComTomadores}</div>
+          <div className="kpi-sub">cadastradas únicas</div>
+        </div>
+        <div className="kpi-card" style={{ flex: '1 1 150px' }}>
+          <div className="kpi-label">Corretoras com Operações</div>
+          <div className="kpi-value">{corretorasComOperacoes}</div>
+          <div className="kpi-sub">total de operações por corretoras ativas</div>
         </div>
       </div>
 
@@ -540,7 +553,6 @@ export default function CorretorasPage() {
               <th>#</th>
               <th>Razão Social</th>
               <th>CNPJ</th>
-              <th>Contato</th>
               <th>Cidade / UF</th>
               <th>Responsável</th>
               <th>Ações</th>
@@ -548,9 +560,9 @@ export default function CorretorasPage() {
           </thead>
           <tbody>
             {carregando ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando corretoras...</td></tr>
+              <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando corretoras...</td></tr>
             ) : corretorasFiltradas.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+              <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                 {busca || filtroEstado || filtroStatus ? 'Nenhuma corretora encontrada para os filtros selecionados.' : 'Nenhuma corretora cadastrada ainda.'}
               </td></tr>
             ) : corretorasFiltradas.map((c, i) => (
@@ -558,11 +570,6 @@ export default function CorretorasPage() {
                 <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
                 <td style={{ fontWeight: 600 }}>{c.razao_social}</td>
                 <td style={{ fontSize: 13, fontFamily: 'monospace' }}>{maskCNPJ(c.cnpj)}</td>
-                <td style={{ fontSize: 13 }}>
-                  {c.email && <div>{c.email}</div>}
-                  {c.telefone && <div style={{ color: '#6080a0' }}>{c.telefone}</div>}
-                  {!c.email && !c.telefone && <span style={{ color: '#6080a0' }}>—</span>}
-                </td>
                 <td style={{ fontSize: 13, color: '#6080a0' }}>
                   {c.cidade ? `${c.cidade}${c.estado ? ` / ${c.estado}` : ''}` : '—'}
                 </td>

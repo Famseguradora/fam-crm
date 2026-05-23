@@ -169,8 +169,9 @@ export default function DashboardPage() {
   const lmgFechado = opsFechadas.reduce((s, o) => s + (o.lmg ?? 0), 0)
 
   const corretorasComTomadores = new Set(tomadores.map(t => t.corretora_id).filter(Boolean)).size
-  const tomadoresCadastrados = tomadores.filter(t => t.status === 'Ativo - Cadastrado').length
-  const limiteAprovadoTotal = tomadores.reduce((s, t) => s + (t.limite_aprovado ?? 0), 0)
+  const tomadoresAtivos = tomadores.filter(t => t.status !== 'Perdido' && t.status !== 'Recusado')
+  const tomadoresCadastrados = tomadoresAtivos.length
+  const limiteAprovadoTotal = tomadoresAtivos.reduce((s, t) => s + (t.limite_aprovado ?? 0), 0)
 
   const corretoresUnicos = new Set(operacoes.map(o => o.corretora_id).filter(Boolean)).size
   const lmgTotal = operacoes.reduce((s, o) => s + (o.lmg ?? 0), 0)
