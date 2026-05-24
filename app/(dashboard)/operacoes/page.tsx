@@ -685,6 +685,10 @@ export default function OperacoesPage() {
     ? modalidades.filter((m) => m.produto_id === form.produto_id)
     : []
 
+  const tomadoresDaCorretora = form.corretora_id
+    ? tomadores.filter((t) => t.corretora_id === form.corretora_id)
+    : tomadores
+
   return (
     <>
       {/* Cabeçalho */}
@@ -825,7 +829,7 @@ export default function OperacoesPage() {
                           setForm((f) => ({ ...f, tomador_id: tomadorId, corretora_id: tomador?.corretora_id ?? f.corretora_id }))
                         }}>
                           <option value="">— Selecione o tomador —</option>
-                          {tomadores.map((t) => <option key={t.id} value={t.id}>{t.razao_social}{t.cnpj ? ` — ${maskCNPJ(t.cnpj)}` : ''}</option>)}
+                          {tomadoresDaCorretora.map((t) => <option key={t.id} value={t.id}>{t.razao_social}{t.cnpj ? ` — ${maskCNPJ(t.cnpj)}` : ''}</option>)}
                         </select>
                         <button
                           type="button"
@@ -844,7 +848,12 @@ export default function OperacoesPage() {
                     </div>
                     <div className="form-field full">
                       <label className="form-label">Corretora</label>
-                      <select className="fam-input" value={form.corretora_id} onChange={(e) => setForm({ ...form, corretora_id: e.target.value })}>
+                      <select className="fam-input" value={form.corretora_id} onChange={(e) => {
+                        const corrId = e.target.value
+                        const tomadorAtual = tomadores.find((t) => t.id === form.tomador_id)
+                        const manterTomador = !corrId || !tomadorAtual || tomadorAtual.corretora_id === corrId
+                        setForm((f) => ({ ...f, corretora_id: corrId, tomador_id: manterTomador ? f.tomador_id : '' }))
+                      }}>
                         <option value="">— Selecione a corretora —</option>
                         {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
                       </select>
