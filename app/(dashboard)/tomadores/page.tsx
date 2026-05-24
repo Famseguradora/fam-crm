@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
+import { useDateRange } from '@/lib/context/date-range-context'
 import AnexosSection from '@/components/AnexosSection'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ const CORES_RAPIDAS = [
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function TomadoresPage() {
+  const { dataInicio, isFiltered } = useDateRange()
   const [aba, setAba] = useState<'tomadores' | 'status'>('tomadores')
 
   // ── Tomadores ──
@@ -344,7 +346,8 @@ export default function TomadoresPage() {
       const statusMatch = !filtroStatus || t.status === filtroStatus
       const estadoMatch = !filtroEstado || t.estado === filtroEstado
       const corrMatch = !filtroCorretora || t.corretora_id === filtroCorretora
-      return textMatch && statusMatch && estadoMatch && corrMatch
+      const dataMatch = !isFiltered || !t.data_entrada || t.data_entrada >= dataInicio
+      return textMatch && statusMatch && estadoMatch && corrMatch && dataMatch
     })
     if (!sortField) return filtered
     return [...filtered].sort((a, b) => {
@@ -366,7 +369,7 @@ export default function TomadoresPage() {
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [tomadores, busca, filtroStatus, filtroEstado, filtroCorretora, sortField, sortDir])
+  }, [tomadores, busca, filtroStatus, filtroEstado, filtroCorretora, sortField, sortDir, dataInicio, isFiltered])
 
   const kpis = useMemo(() => {
     const ativos = tomadoresFiltrados.filter((t) => t.status !== 'Perdido' && t.status !== 'Recusado')
@@ -649,6 +652,20 @@ export default function TomadoresPage() {
       {/* ══════════ ABA TOMADORES ══════════ */}
       {aba === 'tomadores' && (
         <>
+          {/* Badge filtro global */}
+          {isFiltered && (
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              background: 'rgba(48,112,200,.06)', border: '1px solid #3070c8',
+              borderRadius: 8, padding: '7px 14px', marginBottom: 16,
+              fontSize: 13, color: '#3070c8', fontWeight: 600,
+            }}>
+              <span>📅</span>
+              <span>Exibindo tomadores a partir de <strong>{fmtData(dataInicio)}</strong></span>
+              <span style={{ fontSize: 12, color: '#6080a0', fontWeight: 400 }}>— configurado em Configurações › Sistema</span>
+            </div>
+          )}
+
           {/* KPIs */}
           <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
             <div className="kpi-card highlight" style={{ flex: '1 1 150px' }}>

@@ -11,7 +11,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // Busca dados do usuário para exibir perfil e nome
   const { data: usuarioDb } = await supabase
     .from('usuarios')
-    .select('nome, perfil, primeiro_acesso')
+    .select('nome, perfil, primeiro_acesso, proprietario')
     .eq('auth_id', user.id)
     .single()
 
@@ -31,10 +31,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect('/onboarding')
   }
 
+  // Carrega configuração global de data de início dos cálculos
+  const { data: config } = await supabase
+    .from('configuracoes_sistema')
+    .select('valor')
+    .eq('chave', 'data_inicio_calculos')
+    .single()
+
   return (
     <DashboardShell
       nomeUsuario={usuarioDb?.nome ?? user.email ?? ''}
       perfilUsuario={usuarioDb?.perfil ?? 'usuario'}
+      proprietario={usuarioDb?.proprietario ?? false}
+      dataInicio={config?.valor ?? null}
     >
       {children}
     </DashboardShell>

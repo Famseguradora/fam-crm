@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useDateRange } from '@/lib/context/date-range-context'
+import { fmtData } from '@/lib/utils'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -33,6 +35,7 @@ interface RawTomador {
   corretora_id: string | null
   corretora: { id: string; razao_social: string } | null
   limite_aprovado: number | null
+  data_entrada: string | null
 }
 
 interface RawOperacao {
@@ -43,6 +46,7 @@ interface RawOperacao {
   premio_previsto: number | null
   lmg: number | null
   status: string | null
+  data_entrada: string | null
 }
 
 interface StatusFluxo {
@@ -92,6 +96,7 @@ const CARDS_DEFAULT: CartoesState = Object.fromEntries(
 
 export default function DashboardPage() {
   const supabase = createClient()
+  const { dataInicio, isFiltered } = useDateRange()
   const [loading, setLoading] = useState(true)
   const [dados, setDados] = useState<DashDados | null>(null)
   const [mounted, setMounted] = useState(false)
@@ -137,10 +142,10 @@ export default function DashboardPage() {
       ] = await Promise.all([
         supabase
           .from('tomadores')
-          .select('id, status, corretora_id, corretora:corretoras(id,razao_social), limite_aprovado'),
+          .select('id, status, corretora_id, corretora:corretoras(id,razao_social), limite_aprovado, data_entrada'),
         supabase
           .from('operacoes')
-          .select('id, corretora_id, corretora:corretoras(id,razao_social), modalidade, premio_previsto, lmg, status'),
+          .select('id, corretora_id, corretora:corretoras(id,razao_social), modalidade, premio_previsto, lmg, status, data_entrada'),
         supabase.from('corretoras').select('*', { count: 'exact', head: true }),
         supabase.from('status_fluxo_tomador').select('*').order('ordem'),
         supabase.from('status_fluxo_operacao').select('*').order('ordem'),
@@ -171,7 +176,15 @@ export default function DashboardPage() {
     )
   }
 
-  const { tomadores, operacoes, totalCorretoras, statusTomador, statusOperacao } = dados
+  const { tomadores: todosTomdores, operacoes: todasOps, totalCorretoras, statusTomador, statusOperacao } = dados
+
+  // ── Filtro global de data de início dos cálculos ───────────────────────────
+  const tomadores = isFiltered
+    ? todosTomdores.filter(t => !t.data_entrada || t.data_entrada >= dataInicio)
+    : todosTomdores
+  const operacoes = isFiltered
+    ? todasOps.filter(o => !o.data_entrada || o.data_entrada >= dataInicio)
+    : todasOps
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
 
@@ -346,6 +359,19 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* ── Badge filtro global ── */}
+      {isFiltered && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          background: 'rgba(48,112,200,.08)', border: '1px solid #3070c8',
+          borderRadius: 8, padding: '8px 16px', marginBottom: 20,
+          fontSize: 13, color: '#3070c8', fontWeight: 600,
+        }}>
+          <span>📅</span>
+          <span>Exibindo dados a partir de <strong>{fmtData(dataInicio)}</strong></span>
+        </div>
+      )}
 
       {/* ── Destaque ── */}
       {cartoes.destaque && (

@@ -15,12 +15,24 @@ export function fmtPercent(valor: number | null | undefined): string {
   return (valor * 100).toFixed(2).replace('.', ',') + '%'
 }
 
-// Capitaliza nome próprio: "MARCO DRAGONE" → "Marco Dragone"
+// Capitaliza nome próprio respeitando artigos/preposições do português
+// Ex: "BANCO DO BRASIL S.A." → "Banco do Brasil S.A."
+const BR_LOWER_WORDS = new Set([
+  'de','da','do','dos','das','e','em','na','no','nas','nos',
+  'a','o','as','os','com','por','para','sob','sobre','entre',
+])
 export function titleCase(str: string): string {
   if (!str) return ''
   return str
     .toLowerCase()
-    .replace(/(?:^|\s|[-/])\S/g, (c) => c.toUpperCase())
+    .split(/(\s+)/)
+    .map((part, idx, arr) => {
+      if (/^\s+$/.test(part)) return part
+      const isFirst = arr.slice(0, idx).every(p => /^\s+$/.test(p))
+      if (!isFirst && BR_LOWER_WORDS.has(part)) return part
+      return part.replace(/(?:^|[-/])\S/g, c => c.toUpperCase())
+    })
+    .join('')
 }
 
 // Máscara CNPJ: 12345678000195 → 12.345.678/0001-95

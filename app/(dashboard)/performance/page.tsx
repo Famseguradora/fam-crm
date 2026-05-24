@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useDateRange } from '@/lib/context/date-range-context'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
@@ -243,6 +244,7 @@ function BreakdownBar({ items, total }: { items: { key: string; value: number; c
 
 export default function PerformancePage() {
   const supabase = createClient()
+  const { dataInicio: dataInicioGlobal, isFiltered } = useDateRange()
 
   const [loading, setLoading]           = useState(true)
   const [operacoes, setOperacoes]       = useState<RawOperacao[]>([])
@@ -290,7 +292,10 @@ export default function PerformancePage() {
   // ── Compute metrics ──────────────────────────────────────────────────────────
 
   const m = useMemo(() => {
-    const { inicio, fim } = getPeriodo(periodo, customInicio, customFim)
+    // Quando filtro global está ativo, usa a data de início global e fim = hoje
+    const { inicio, fim } = isFiltered
+      ? { inicio: new Date(dataInicioGlobal + 'T00:00:00'), fim: new Date() }
+      : getPeriodo(periodo, customInicio, customFim)
     const { inicio: iniAnt, fim: fimAnt } = getPeriodoAnterior(inicio, fim)
 
     const opsA  = operacoes.filter(o => inRange(o.created_at, inicio, fim))
@@ -383,7 +388,7 @@ export default function PerformancePage() {
       totalOpsA: novasOps,
       totalTomsA: tomsA.length,
     }
-  }, [operacoes, tomadores, periodo, customInicio, customFim])
+  }, [operacoes, tomadores, periodo, customInicio, customFim, isFiltered, dataInicioGlobal])
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -421,11 +426,26 @@ export default function PerformancePage() {
         </button>
       </div>
 
+      {/* ── Badge filtro global ── */}
+      {isFiltered && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          background: 'rgba(48,112,200,.06)', border: '1px solid #3070c8',
+          borderRadius: 8, padding: '8px 16px', marginBottom: 14,
+          fontSize: 13, color: '#3070c8', fontWeight: 600,
+        }}>
+          <span>📅</span>
+          <span>Filtro global ativo — exibindo a partir de <strong>{new Date(dataInicioGlobal + 'T00:00:00').toLocaleDateString('pt-BR')}</strong></span>
+          <span style={{ fontSize: 12, color: '#6080a0', fontWeight: 400 }}>— seletor de período ignorado</span>
+        </div>
+      )}
+
       {/* ── Period selector ── */}
       <div style={{
         display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap',
         background: 'white', borderRadius: 10, padding: '10px 14px',
         border: '1px solid #dde8f4', marginBottom: 20, boxShadow: '0 1px 6px rgba(30,64,128,.06)',
+        opacity: isFiltered ? 0.45 : 1, pointerEvents: isFiltered ? 'none' : 'auto',
       }}>
         {PERIODO_BTNS.map(btn => {
           const active = periodo === btn.value

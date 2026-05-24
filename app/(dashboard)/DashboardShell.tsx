@@ -4,10 +4,13 @@ import { useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fmtDataExtenso } from '@/lib/utils'
+import { DateRangeProvider } from '@/lib/context/date-range-context'
 
 interface Props {
   nomeUsuario: string
   perfilUsuario: string
+  proprietario: boolean
+  dataInicio: string | null
   children: React.ReactNode
 }
 
@@ -37,10 +40,11 @@ const PERFORMANCE_ITEMS = [
 ]
 
 const CONFIG_ITEMS = [
-  { label: 'Skills de IA', href: '/configuracoes/skills', icon: '🧠' },
+  { label: 'Skills de IA', href: '/configuracoes/skills',  icon: '🧠', proprietarioOnly: false },
+  { label: 'Sistema',      href: '/configuracoes/sistema', icon: '⚙️', proprietarioOnly: true },
 ]
 
-export default function DashboardShell({ nomeUsuario, perfilUsuario, children }: Props) {
+export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, dataInicio, children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -391,7 +395,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, children }:
                 Configurações
               </div>
             )}
-            {CONFIG_ITEMS.map((item) => (
+            {CONFIG_ITEMS.filter(item => !item.proprietarioOnly || proprietario).map((item) => (
               <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} />
             ))}
           </div>
@@ -407,7 +411,9 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, children }:
 
         {/* ── Conteúdo ── */}
         <div style={{ flex: 1, padding: '28px 32px', minWidth: 0 }}>
-          {children}
+          <DateRangeProvider initialDate={dataInicio}>
+            {children}
+          </DateRangeProvider>
         </div>
       </div>
 
