@@ -15,11 +15,12 @@ interface Tab {
   label: string
   href: string
   adminOnly?: boolean
+  disabled?: boolean
 }
 
 const TABS: Tab[] = [
   { label: '📊 Dashboard',  href: '/' },
-  { label: '🔍 Triagem',    href: '/triagem' },
+  { label: '🔍 Triagem',    href: '/triagem',   disabled: true },
   { label: '👥 Tomadores',  href: '/tomadores' },
   { label: '📋 Operações',  href: '/operacoes' },
   { label: '🏢 Corretoras', href: '/corretoras', adminOnly: true },
@@ -27,8 +28,8 @@ const TABS: Tab[] = [
 ]
 
 const SUBSCRICAO_ITEMS = [
-  { label: 'Análise de Crédito',    href: '/subscricao/analise-credito',    icon: '📈' },
-  { label: 'Análise de Subscrição', href: '/subscricao/analise-subscricao', icon: '📋' },
+  { label: 'Análise de Crédito',    href: '/subscricao/analise-credito',    icon: '📈', disabled: true },
+  { label: 'Análise de Subscrição', href: '/subscricao/analise-subscricao', icon: '📋', disabled: true },
 ]
 
 const PERFORMANCE_ITEMS = [
@@ -57,21 +58,34 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, children }:
 
   const sidebarW = sidebarOpen ? 220 : 52
 
+  const [toast, setToast] = useState<string | null>(null)
+
+  function showToast(msg: string) {
+    setToast(msg)
+    setTimeout(() => setToast(null), 3000)
+  }
+
   function SidebarBtn({
     href,
     icon,
     label,
+    disabled,
   }: {
     href: string
     icon: string
     label: string
+    disabled?: boolean
   }) {
-    const isActive = href === '/'
-      ? pathname === '/'
-      : pathname.startsWith(href)
+    const isActive = !disabled && (href === '/' ? pathname === '/' : pathname.startsWith(href))
     return (
       <button
-        onClick={() => router.push(href)}
+        onClick={() => {
+          if (disabled) {
+            showToast(`🚧 "${label}" está em construção`)
+          } else {
+            router.push(href)
+          }
+        }}
         title={!sidebarOpen ? label : undefined}
         style={{
           display: 'flex',
@@ -83,31 +97,37 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, children }:
           background: isActive ? 'rgba(232,184,75,.08)' : 'transparent',
           border: 'none',
           borderLeft: isActive ? '3px solid #e8b84b' : '3px solid transparent',
-          color: isActive ? 'white' : '#a0c0e8',
+          color: disabled ? '#4a6080' : isActive ? 'white' : '#a0c0e8',
           fontFamily: "'Calibri','Segoe UI',sans-serif",
           fontSize: 13,
           fontWeight: 600,
-          cursor: 'pointer',
+          cursor: disabled ? 'not-allowed' : 'pointer',
           transition: 'all .18s',
           textAlign: 'left',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
+          opacity: disabled ? 0.55 : 1,
         }}
         onMouseEnter={(e) => {
-          if (!isActive) {
+          if (!isActive && !disabled) {
             e.currentTarget.style.color = 'white'
             e.currentTarget.style.background = 'rgba(255,255,255,.05)'
           }
         }}
         onMouseLeave={(e) => {
-          if (!isActive) {
+          if (!isActive && !disabled) {
             e.currentTarget.style.color = '#a0c0e8'
             e.currentTarget.style.background = 'transparent'
           }
         }}
       >
         <span style={{ fontSize: 15, flexShrink: 0, lineHeight: 1 }}>{icon}</span>
-        {sidebarOpen && <span>{label}</span>}
+        {sidebarOpen && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {label}
+            {disabled && <span style={{ fontSize: 10, color: '#e8b84b', fontWeight: 700 }}>EM BREVE</span>}
+          </span>
+        )}
       </button>
     )
   }
@@ -202,43 +222,86 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, children }:
         flexShrink: 0,
       }}>
         {tabsVisiveis.map((tab) => {
-          const isActive =
+          const isActive = !tab.disabled && (
             tab.href === '/' ? pathname === '/' : pathname.startsWith(tab.href)
+          )
           return (
             <button
               key={tab.href}
-              onClick={() => router.push(tab.href)}
+              onClick={() => {
+                if (tab.disabled) {
+                  showToast(`🚧 "${tab.label.replace(/^\S+\s/, '')}" está em construção`)
+                } else {
+                  router.push(tab.href)
+                }
+              }}
               style={{
                 padding: '11px 24px 10px',
                 background: isActive ? 'rgba(232,184,75,.08)' : 'transparent',
                 border: 'none',
                 borderBottom: isActive ? '3px solid #e8b84b' : '3px solid transparent',
-                color: isActive ? 'white' : '#a0c0e8',
+                color: tab.disabled ? '#4a6080' : isActive ? 'white' : '#a0c0e8',
                 fontFamily: "'Calibri','Segoe UI',sans-serif",
                 fontSize: 15,
                 fontWeight: 600,
-                cursor: 'pointer',
+                cursor: tab.disabled ? 'not-allowed' : 'pointer',
                 transition: 'all .18s',
                 whiteSpace: 'nowrap',
+                opacity: tab.disabled ? 0.55 : 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
               }}
               onMouseEnter={(e) => {
-                if (!isActive) {
+                if (!isActive && !tab.disabled) {
                   e.currentTarget.style.color = 'white'
                   e.currentTarget.style.background = 'rgba(255,255,255,.05)'
                 }
               }}
               onMouseLeave={(e) => {
-                if (!isActive) {
+                if (!isActive && !tab.disabled) {
                   e.currentTarget.style.color = '#a0c0e8'
                   e.currentTarget.style.background = 'transparent'
                 }
               }}
             >
               {tab.label}
+              {tab.disabled && (
+                <span style={{ fontSize: 9, color: '#e8b84b', fontWeight: 700, letterSpacing: '0.5px' }}>
+                  EM BREVE
+                </span>
+              )}
             </button>
           )
         })}
       </div>
+
+      {/* ── Toast "Em construção" ── */}
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          bottom: 32,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#0a1628',
+          border: '1px solid #e8b84b',
+          color: 'white',
+          padding: '14px 28px',
+          borderRadius: 10,
+          fontSize: 14,
+          fontWeight: 600,
+          fontFamily: "'Calibri','Segoe UI',sans-serif",
+          zIndex: 9999,
+          boxShadow: '0 4px 24px rgba(0,0,0,.5)',
+          letterSpacing: '0.3px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+        }}>
+          <span>{toast}</span>
+          <span style={{ fontSize: 11, color: '#a0c0e8', fontWeight: 400 }}>— disponível em breve</span>
+        </div>
+      )}
 
       {/* ── Body row ── */}
       <div style={{ display: 'flex', flex: 1 }}>
@@ -295,7 +358,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, children }:
               </div>
             )}
             {SUBSCRICAO_ITEMS.map((item) => (
-              <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} />
+              <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} disabled={item.disabled} />
             ))}
           </div>
 

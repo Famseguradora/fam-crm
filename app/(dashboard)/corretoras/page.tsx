@@ -60,6 +60,8 @@ export default function CorretorasPage() {
   const [erroCnpj, setErroCnpj] = useState('')
   const [corretorasComTomadores, setCorretorasComTomadores] = useState(0)
   const [corretorasComOperacoes, setCorretorasComOperacoes] = useState(0)
+  const [sortField, setSortField] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   const carregarCorretoras = useCallback(async () => {
     setCarregando(true)
@@ -212,16 +214,40 @@ export default function CorretorasPage() {
 
   // ─── Derived data ──────────────────────────────────────────────────────────
 
-  const corretorasFiltradas = useMemo(() => corretoras.filter((c) => {
-    const textMatch =
-      c.razao_social.toLowerCase().includes(busca.toLowerCase()) ||
-      (c.nome_fantasia ?? '').toLowerCase().includes(busca.toLowerCase()) ||
-      c.cnpj.includes(busca.replace(/\D/g, '')) ||
-      (c.responsavel ?? '').toLowerCase().includes(busca.toLowerCase())
-    const estadoMatch = !filtroEstado || c.estado === filtroEstado
-    const statusMatch = !filtroStatus || c.status === filtroStatus
-    return textMatch && estadoMatch && statusMatch
-  }), [corretoras, busca, filtroEstado, filtroStatus])
+  function handleSort(field: string) {
+    if (sortField === field) setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir('asc') }
+  }
+
+  function sortIcon(field: string) {
+    if (sortField !== field) return ' ↕'
+    return sortDir === 'asc' ? ' ▲' : ' ▼'
+  }
+
+  const thSort: React.CSSProperties = { cursor: 'pointer', userSelect: 'none' }
+
+  const corretorasFiltradas = useMemo(() => {
+    const filtered = corretoras.filter((c) => {
+      const textMatch =
+        c.razao_social.toLowerCase().includes(busca.toLowerCase()) ||
+        (c.nome_fantasia ?? '').toLowerCase().includes(busca.toLowerCase()) ||
+        c.cnpj.includes(busca.replace(/\D/g, '')) ||
+        (c.responsavel ?? '').toLowerCase().includes(busca.toLowerCase())
+      const estadoMatch = !filtroEstado || c.estado === filtroEstado
+      const statusMatch = !filtroStatus || c.status === filtroStatus
+      return textMatch && estadoMatch && statusMatch
+    })
+    if (!sortField) return filtered
+    return [...filtered].sort((a, b) => {
+      let va = '', vb = ''
+      if (sortField === 'razao_social') { va = a.razao_social; vb = b.razao_social }
+      else if (sortField === 'cnpj') { va = a.cnpj; vb = b.cnpj }
+      else if (sortField === 'cidade') { va = a.cidade ?? ''; vb = b.cidade ?? '' }
+      else if (sortField === 'responsavel') { va = a.responsavel ?? ''; vb = b.responsavel ?? '' }
+      const cmp = va.localeCompare(vb, 'pt-BR', { sensitivity: 'base' })
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [corretoras, busca, filtroEstado, filtroStatus, sortField, sortDir])
 
   const kpis = useMemo(() => ({
     total: corretoras.length,
@@ -551,10 +577,10 @@ export default function CorretorasPage() {
           <thead>
             <tr>
               <th>#</th>
-              <th>Razão Social</th>
-              <th>CNPJ</th>
-              <th>Cidade / UF</th>
-              <th>Responsável</th>
+              <th style={thSort} onClick={() => handleSort('razao_social')}>Razão Social{sortIcon('razao_social')}</th>
+              <th style={thSort} onClick={() => handleSort('cnpj')}>CNPJ{sortIcon('cnpj')}</th>
+              <th style={thSort} onClick={() => handleSort('cidade')}>Cidade / UF{sortIcon('cidade')}</th>
+              <th style={thSort} onClick={() => handleSort('responsavel')}>Responsável{sortIcon('responsavel')}</th>
               <th>Ações</th>
             </tr>
           </thead>

@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS public.operacoes (
   premio_previsto  NUMERIC(18,2) GENERATED ALWAYS AS
                    (ROUND(lmg * taxa * vigencia_anos, 2)) STORED,
   status           TEXT NOT NULL DEFAULT 'Em Análise',
+  data_entrada     DATE,
   ativo            BOOLEAN NOT NULL DEFAULT TRUE,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()

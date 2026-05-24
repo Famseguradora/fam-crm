@@ -48,6 +48,8 @@ export default function ProdutosPage() {
 
   // Export
   const [exportando, setExportando] = useState(false)
+  const [sortField, setSortField] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   // ─── Loaders ─────────────────────────────────────────────────────────────────
 
@@ -135,17 +137,49 @@ export default function ProdutosPage() {
 
   // ─── Derived ─────────────────────────────────────────────────────────────────
 
-  const filtradas = useMemo(() => modalidades.filter((m) => {
-    const txt = busca.toLowerCase()
-    const textMatch = !busca ||
-      m.nome.toLowerCase().includes(txt) ||
-      (m.codigo_cobertura ?? '').toLowerCase().includes(txt) ||
-      (m.produto?.nome ?? '').toLowerCase().includes(txt) ||
-      (m.grupo ?? '').toLowerCase().includes(txt)
-    const setorMatch = !filtroSetor || m.produto_id === filtroSetor
-    const stMatch = !filtroStatus || m.status === filtroStatus
-    return textMatch && setorMatch && stMatch
-  }), [modalidades, busca, filtroSetor, filtroStatus])
+  function handleSort(field: string) {
+    if (sortField === field) setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir('asc') }
+  }
+
+  function sortIcon(field: string) {
+    if (sortField !== field) return ' ↕'
+    return sortDir === 'asc' ? ' ▲' : ' ▼'
+  }
+
+  const thSort: React.CSSProperties = { cursor: 'pointer', userSelect: 'none' }
+
+  const filtradas = useMemo(() => {
+    const filtered = modalidades.filter((m) => {
+      const txt = busca.toLowerCase()
+      const textMatch = !busca ||
+        m.nome.toLowerCase().includes(txt) ||
+        (m.codigo_cobertura ?? '').toLowerCase().includes(txt) ||
+        (m.produto?.nome ?? '').toLowerCase().includes(txt) ||
+        (m.grupo ?? '').toLowerCase().includes(txt)
+      const setorMatch = !filtroSetor || m.produto_id === filtroSetor
+      const stMatch = !filtroStatus || m.status === filtroStatus
+      return textMatch && setorMatch && stMatch
+    })
+    if (!sortField) return filtered
+    return [...filtered].sort((a, b) => {
+      let cmp = 0
+      if (sortField === 'codigo_cobertura') {
+        cmp = (a.codigo_cobertura ?? '').localeCompare(b.codigo_cobertura ?? '', 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'produto') {
+        cmp = (a.produto?.nome ?? '').localeCompare(b.produto?.nome ?? '', 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'nome') {
+        cmp = a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'grupo') {
+        cmp = (a.grupo ?? '').localeCompare(b.grupo ?? '', 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'status') {
+        cmp = (a.status ?? '').localeCompare(b.status ?? '', 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'created_at') {
+        cmp = (a.created_at ?? '').localeCompare(b.created_at ?? '')
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [modalidades, busca, filtroSetor, filtroStatus, sortField, sortDir])
 
   const kpis = useMemo(() => {
     const pub = produtos.find((p) => p.codigo === '75')
@@ -353,12 +387,12 @@ export default function ProdutosPage() {
         <table className="fam-table">
           <thead>
             <tr>
-              <th>Cód. Cobertura</th>
-              <th>Produto</th>
-              <th>Modalidade</th>
-              <th>Grupo</th>
-              <th>Status</th>
-              <th>Cadastrado em</th>
+              <th style={thSort} onClick={() => handleSort('codigo_cobertura')}>Cód. Cobertura{sortIcon('codigo_cobertura')}</th>
+              <th style={thSort} onClick={() => handleSort('produto')}>Produto{sortIcon('produto')}</th>
+              <th style={thSort} onClick={() => handleSort('nome')}>Modalidade{sortIcon('nome')}</th>
+              <th style={thSort} onClick={() => handleSort('grupo')}>Grupo{sortIcon('grupo')}</th>
+              <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
+              <th style={thSort} onClick={() => handleSort('created_at')}>Cadastrado em{sortIcon('created_at')}</th>
               <th>Ações</th>
             </tr>
           </thead>

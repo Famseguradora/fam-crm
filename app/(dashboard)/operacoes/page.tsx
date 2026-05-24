@@ -45,6 +45,13 @@ interface FormStatus {
   ativo: boolean
 }
 
+interface FormTomadorBasico {
+  razao_social: string
+  cnpj: string
+  corretora_id: string
+  porte: string
+}
+
 const FORM_OP_INICIAL: FormOperacao = {
   tomador_id: '', corretora_id: '', produto_id: '', modalidade_id: '',
   modalidade: '', codigo_cobertura: '', lmg: '', taxa: '',
@@ -53,6 +60,7 @@ const FORM_OP_INICIAL: FormOperacao = {
 }
 
 const FORM_STATUS_INICIAL: FormStatus = { nome: '', cor: '#6080a0', ordem: '99', ativo: true }
+const FORM_TB_INICIAL: FormTomadorBasico = { razao_social: '', cnpj: '', corretora_id: '', porte: '' }
 
 const ESTADOS_BR = [
   'AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG',
@@ -109,6 +117,16 @@ export default function OperacoesPage() {
   const [enviandoStatus, setEnviandoStatus] = useState(false)
   const [msgStatus, setMsgStatus] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
   const [confirmExcluir, setConfirmExcluir] = useState<StatusFluxo | null>(null)
+
+  // ── Sorting ──
+  const [sortField, setSortField] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  // ── Cadastro Básico Tomador ──
+  const [mostrarFormTomador, setMostrarFormTomador] = useState(false)
+  const [formTomador, setFormTomador] = useState<FormTomadorBasico>(FORM_TB_INICIAL)
+  const [enviandoTomador, setEnviandoTomador] = useState(false)
+  const [msgTomador, setMsgTomador] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
 
   // ─── Loaders ────────────────────────────────────────────────────────────────
 
@@ -202,12 +220,58 @@ export default function OperacoesPage() {
     setMensagem(null)
   }
 
+  function fecharFormTomador() {
+    setMostrarFormTomador(false)
+    setFormTomador(FORM_TB_INICIAL)
+    setMsgTomador(null)
+  }
+
+  async function handleSalvarTomadorBasico(e: React.SyntheticEvent) {
+    e.preventDefault()
+    if (!formTomador.razao_social.trim()) {
+      setMsgTomador({ tipo: 'erro', texto: 'Razão Social é obrigatória.' })
+      return
+    }
+    setEnviandoTomador(true)
+    setMsgTomador(null)
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from('tomadores')
+      .insert({
+        razao_social: formTomador.razao_social.trim(),
+        cnpj: formTomador.cnpj.replace(/\D/g, '') || null,
+        corretora_id: formTomador.corretora_id || null,
+        porte: formTomador.porte || null,
+        status: 'Aguardando Análise',
+        ativo: true,
+      })
+      .select('id,razao_social,cnpj,corretora_id')
+      .single()
+    setEnviandoTomador(false)
+    if (error) {
+      setMsgTomador({ tipo: 'erro', texto: 'Erro ao cadastrar: ' + error.message })
+      return
+    }
+    await carregarAuxiliares()
+    setForm((f) => ({ ...f, tomador_id: data.id, corretora_id: data.corretora_id ?? f.corretora_id }))
+    fecharFormTomador()
+  }
+
   useEffect(() => {
     if (!mostrarForm) return
-    function handleEsc(e: KeyboardEvent) { if (e.key === 'Escape') fecharForm() }
+    function handleEsc(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      if (mostrarFormTomador) {
+        setMostrarFormTomador(false)
+        setFormTomador(FORM_TB_INICIAL)
+        setMsgTomador(null)
+      } else {
+        fecharForm()
+      }
+    }
     document.addEventListener('keydown', handleEsc)
     return () => document.removeEventListener('keydown', handleEsc)
-  }, [mostrarForm])
+  }, [mostrarForm, mostrarFormTomador])
 
   function handleSetorChange(prodId: string) {
     setForm((f) => ({ ...f, produto_id: prodId, modalidade_id: '', modalidade: '', codigo_cobertura: '' }))
@@ -349,8 +413,20 @@ export default function OperacoesPage() {
 
   // ─── Derived data ────────────────────────────────────────────────────────────
 
+  function handleSort(field: string) {
+    if (sortField === field) setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir('asc') }
+  }
+
+  function sortIcon(field: string) {
+    if (sortField !== field) return ' ↕'
+    return sortDir === 'asc' ? ' ▲' : ' ▼'
+  }
+
+  const thSort: React.CSSProperties = { cursor: 'pointer', userSelect: 'none' }
+
   const operacoesFiltradas = useMemo(() => {
-    let result = operacoes.filter((op) => {
+    const filtered = operacoes.filter((op) => {
       const buscaLow = busca.toLowerCase()
       const textMatch = !busca ||
         (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
@@ -364,15 +440,39 @@ export default function OperacoesPage() {
       const prodMatch = !filtroProduto || op.produto_id === filtroProduto
       return textMatch && statusMatch && priorMatch && tempMatch && corrMatch && prodMatch
     })
-    // Ordenar por prioridade → created_at
-    result = [...result].sort((a, b) => {
+    if (sortField) {
+      return [...filtered].sort((a, b) => {
+        let cmp = 0
+        if (sortField === 'tomador') {
+          cmp = (a.tomador?.razao_social ?? '').localeCompare(b.tomador?.razao_social ?? '', 'pt-BR', { sensitivity: 'base' })
+        } else if (sortField === 'corretora') {
+          cmp = (a.corretora?.razao_social ?? '').localeCompare(b.corretora?.razao_social ?? '', 'pt-BR', { sensitivity: 'base' })
+        } else if (sortField === 'cobertura') {
+          cmp = (a.produto?.nome ?? '').localeCompare(b.produto?.nome ?? '', 'pt-BR', { sensitivity: 'base' })
+        } else if (sortField === 'lmg') {
+          cmp = (a.lmg ?? 0) - (b.lmg ?? 0)
+        } else if (sortField === 'taxa') {
+          cmp = (a.taxa ?? 0) - (b.taxa ?? 0)
+        } else if (sortField === 'temperatura') {
+          cmp = (a.temperatura ?? '').localeCompare(b.temperatura ?? '', 'pt-BR', { sensitivity: 'base' })
+        } else if (sortField === 'prioridade') {
+          cmp = (PRIORIDADE_ORDEM[a.prioridade ?? 'Fluxo Normal'] ?? 2) - (PRIORIDADE_ORDEM[b.prioridade ?? 'Fluxo Normal'] ?? 2)
+        } else if (sortField === 'status') {
+          cmp = (a.status ?? '').localeCompare(b.status ?? '', 'pt-BR', { sensitivity: 'base' })
+        } else if (sortField === 'data_entrada') {
+          cmp = (a.data_entrada ?? '').localeCompare(b.data_entrada ?? '')
+        }
+        return sortDir === 'asc' ? cmp : -cmp
+      })
+    }
+    // Ordenação padrão por prioridade → created_at
+    return [...filtered].sort((a, b) => {
       const pa = PRIORIDADE_ORDEM[a.prioridade ?? 'Fluxo Normal'] ?? 2
       const pb = PRIORIDADE_ORDEM[b.prioridade ?? 'Fluxo Normal'] ?? 2
       if (pa !== pb) return pa - pb
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     })
-    return result
-  }, [operacoes, busca, filtroStatus, filtroPrioridade, filtroTemperatura, filtroCorretora, filtroProduto])
+  }, [operacoes, busca, filtroStatus, filtroPrioridade, filtroTemperatura, filtroCorretora, filtroProduto, sortField, sortDir])
 
   const kpis = useMemo(() => {
     const lmgTotal = operacoes.reduce((acc, op) => acc + (op.lmg ?? 0), 0)
@@ -718,14 +818,29 @@ export default function OperacoesPage() {
                   <div className="form-grid" style={{ marginBottom: 20 }}>
                     <div className="form-field full">
                       <label className="form-label">Tomador</label>
-                      <select className="fam-input" value={form.tomador_id} onChange={(e) => {
-                        const tomadorId = e.target.value
-                        const tomador = tomadores.find((t) => t.id === tomadorId)
-                        setForm((f) => ({ ...f, tomador_id: tomadorId, corretora_id: tomador?.corretora_id ?? f.corretora_id }))
-                      }}>
-                        <option value="">— Selecione o tomador —</option>
-                        {tomadores.map((t) => <option key={t.id} value={t.id}>{t.razao_social}{t.cnpj ? ` — ${maskCNPJ(t.cnpj)}` : ''}</option>)}
-                      </select>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <select className="fam-input" style={{ flex: 1 }} value={form.tomador_id} onChange={(e) => {
+                          const tomadorId = e.target.value
+                          const tomador = tomadores.find((t) => t.id === tomadorId)
+                          setForm((f) => ({ ...f, tomador_id: tomadorId, corretora_id: tomador?.corretora_id ?? f.corretora_id }))
+                        }}>
+                          <option value="">— Selecione o tomador —</option>
+                          {tomadores.map((t) => <option key={t.id} value={t.id}>{t.razao_social}{t.cnpj ? ` — ${maskCNPJ(t.cnpj)}` : ''}</option>)}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => setMostrarFormTomador(true)}
+                          title="Cadastrar novo tomador básico"
+                          style={{
+                            whiteSpace: 'nowrap', padding: '8px 12px', borderRadius: 7,
+                            border: '1.5px solid #c5d5e8', background: '#f0f6ff',
+                            color: '#1e4080', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                            flexShrink: 0, transition: 'background 0.15s',
+                          }}
+                        >
+                          + Cadastro Básico
+                        </button>
+                      </div>
                     </div>
                     <div className="form-field full">
                       <label className="form-label">Corretora</label>
@@ -928,6 +1043,69 @@ export default function OperacoesPage() {
             </div>
           )}
 
+          {/* Modal Cadastro Básico Tomador */}
+          {mostrarFormTomador && (
+            <div className="modal-overlay" style={{ zIndex: 1100 }}>
+              <div className="modal-box" style={{ maxWidth: 480 }}>
+                <div className="modal-header">
+                  <div className="modal-title">Cadastro Básico — Tomador</div>
+                  <button onClick={fecharFormTomador} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
+                </div>
+                <p style={{ fontSize: 13, color: '#6080a0', marginBottom: 16 }}>
+                  Preencha os dados essenciais. Após salvar, o tomador será selecionado automaticamente na operação.
+                </p>
+                {msgTomador && (
+                  <div className={msgTomador.tipo === 'sucesso' ? 'alert-success' : 'alert-error'} style={{ marginBottom: 16 }}>
+                    {msgTomador.texto}
+                  </div>
+                )}
+                <form onSubmit={handleSalvarTomadorBasico}>
+                  <div className="form-grid" style={{ marginBottom: 20 }}>
+                    <div className="form-field full">
+                      <label className="form-label">Razão Social *</label>
+                      <input className="fam-input" type="text" placeholder="Nome da empresa"
+                        value={formTomador.razao_social}
+                        onChange={(e) => setFormTomador((f) => ({ ...f, razao_social: e.target.value }))} />
+                    </div>
+                    <div className="form-field">
+                      <label className="form-label">CNPJ</label>
+                      <input className="fam-input" type="text" placeholder="00.000.000/0000-00"
+                        value={formTomador.cnpj}
+                        onChange={(e) => setFormTomador((f) => ({ ...f, cnpj: maskCNPJ(e.target.value) }))} />
+                    </div>
+                    <div className="form-field">
+                      <label className="form-label">Porte</label>
+                      <select className="fam-input" value={formTomador.porte}
+                        onChange={(e) => setFormTomador((f) => ({ ...f, porte: e.target.value }))}>
+                        <option value="">— Selecione —</option>
+                        <option value="Small">Small</option>
+                        <option value="Middle">Middle</option>
+                        <option value="Corporate">Corporate</option>
+                        <option value="Large">Large</option>
+                      </select>
+                    </div>
+                    <div className="form-field full">
+                      <label className="form-label">Corretora</label>
+                      <select className="fam-input" value={formTomador.corretora_id}
+                        onChange={(e) => setFormTomador((f) => ({ ...f, corretora_id: e.target.value }))}>
+                        <option value="">— Selecione a corretora —</option>
+                        {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn-secondary" onClick={fecharFormTomador}>
+                      Voltar para Operação
+                    </button>
+                    <button type="submit" className="btn-primary" disabled={enviandoTomador}>
+                      {enviandoTomador ? 'Salvando...' : 'Salvar Tomador'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
           {/* Filtros */}
           <div className="filter-row">
             <div className="filter-group" style={{ flex: '2 1 220px' }}>
@@ -991,15 +1169,15 @@ export default function OperacoesPage() {
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>Tomador</th>
-                  <th>Corretora</th>
-                  <th>Cobertura / Modalidade</th>
-                  <th>LMG</th>
-                  <th>Taxa</th>
-                  <th>Temp.</th>
-                  <th>Prioridade</th>
-                  <th>Status</th>
-                  <th>Data Entrada</th>
+                  <th style={thSort} onClick={() => handleSort('tomador')}>Tomador{sortIcon('tomador')}</th>
+                  <th style={thSort} onClick={() => handleSort('corretora')}>Corretora{sortIcon('corretora')}</th>
+                  <th style={thSort} onClick={() => handleSort('cobertura')}>Cobertura / Modalidade{sortIcon('cobertura')}</th>
+                  <th style={thSort} onClick={() => handleSort('lmg')}>LMG{sortIcon('lmg')}</th>
+                  <th style={thSort} onClick={() => handleSort('taxa')}>Taxa{sortIcon('taxa')}</th>
+                  <th style={thSort} onClick={() => handleSort('temperatura')}>Temp.{sortIcon('temperatura')}</th>
+                  <th style={thSort} onClick={() => handleSort('prioridade')}>Prioridade{sortIcon('prioridade')}</th>
+                  <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
+                  <th style={thSort} onClick={() => handleSort('data_entrada')}>Data Entrada{sortIcon('data_entrada')}</th>
                   <th>Avançar</th>
                   <th>Ações</th>
                 </tr>

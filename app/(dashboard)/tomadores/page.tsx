@@ -85,6 +85,8 @@ export default function TomadoresPage() {
   const [filtroCorretora, setFiltroCorretora] = useState('')
   const [erroCnpj, setErroCnpj] = useState('')
   const [exportando, setExportando] = useState(false)
+  const [sortField, setSortField] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [importando, setImportando] = useState(false)
   const [resultadoImport, setResultadoImport] = useState<{
     inseridos: number
@@ -316,21 +318,55 @@ export default function TomadoresPage() {
 
   // ─── Filtered data ──────────────────────────────────────────────────────────
 
-  const tomadoresFiltrados = useMemo(() => tomadores.filter((t) => {
-    const buscaLow = busca.toLowerCase()
-    const buscaDigitos = busca.replace(/\D/g, '')
-    const corrNome = (t.corretora as Corretora | undefined)?.razao_social?.toLowerCase() ?? ''
-    const textMatch = !busca ||
-      t.razao_social.toLowerCase().includes(buscaLow) ||
-      (t.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
-      (buscaDigitos.length > 0 && (t.cnpj ?? '').includes(buscaDigitos)) ||
-      (t.responsavel ?? '').toLowerCase().includes(buscaLow) ||
-      corrNome.includes(buscaLow)
-    const statusMatch = !filtroStatus || t.status === filtroStatus
-    const estadoMatch = !filtroEstado || t.estado === filtroEstado
-    const corrMatch = !filtroCorretora || t.corretora_id === filtroCorretora
-    return textMatch && statusMatch && estadoMatch && corrMatch
-  }), [tomadores, busca, filtroStatus, filtroEstado, filtroCorretora])
+  function handleSort(field: string) {
+    if (sortField === field) setSortDir((d) => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir('asc') }
+  }
+
+  function sortIcon(field: string) {
+    if (sortField !== field) return ' ↕'
+    return sortDir === 'asc' ? ' ▲' : ' ▼'
+  }
+
+  const thSort: React.CSSProperties = { cursor: 'pointer', userSelect: 'none' }
+
+  const tomadoresFiltrados = useMemo(() => {
+    const filtered = tomadores.filter((t) => {
+      const buscaLow = busca.toLowerCase()
+      const buscaDigitos = busca.replace(/\D/g, '')
+      const corrNome = (t.corretora as Corretora | undefined)?.razao_social?.toLowerCase() ?? ''
+      const textMatch = !busca ||
+        t.razao_social.toLowerCase().includes(buscaLow) ||
+        (t.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
+        (buscaDigitos.length > 0 && (t.cnpj ?? '').includes(buscaDigitos)) ||
+        (t.responsavel ?? '').toLowerCase().includes(buscaLow) ||
+        corrNome.includes(buscaLow)
+      const statusMatch = !filtroStatus || t.status === filtroStatus
+      const estadoMatch = !filtroEstado || t.estado === filtroEstado
+      const corrMatch = !filtroCorretora || t.corretora_id === filtroCorretora
+      return textMatch && statusMatch && estadoMatch && corrMatch
+    })
+    if (!sortField) return filtered
+    return [...filtered].sort((a, b) => {
+      let cmp = 0
+      if (sortField === 'razao_social') {
+        cmp = a.razao_social.localeCompare(b.razao_social, 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'corretora') {
+        const ca = (a.corretora as Corretora | undefined)?.razao_social ?? ''
+        const cb = (b.corretora as Corretora | undefined)?.razao_social ?? ''
+        cmp = ca.localeCompare(cb, 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'cidade') {
+        cmp = (a.cidade ?? '').localeCompare(b.cidade ?? '', 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'limite') {
+        cmp = (a.limite_aprovado ?? 0) - (b.limite_aprovado ?? 0)
+      } else if (sortField === 'status') {
+        cmp = (a.status ?? '').localeCompare(b.status ?? '', 'pt-BR', { sensitivity: 'base' })
+      } else if (sortField === 'data_entrada') {
+        cmp = (a.data_entrada ?? '').localeCompare(b.data_entrada ?? '')
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [tomadores, busca, filtroStatus, filtroEstado, filtroCorretora, sortField, sortDir])
 
   const kpis = useMemo(() => {
     const ativos = tomadoresFiltrados.filter((t) => t.status !== 'Perdido' && t.status !== 'Recusado')
@@ -870,12 +906,12 @@ export default function TomadoresPage() {
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>Razão Social</th>
-                  <th>Corretora</th>
-                  <th>Cidade / UF</th>
-                  <th>Limite</th>
-                  <th>Status</th>
-                  <th>Data Entrada</th>
+                  <th style={thSort} onClick={() => handleSort('razao_social')}>Razão Social{sortIcon('razao_social')}</th>
+                  <th style={thSort} onClick={() => handleSort('corretora')}>Corretora{sortIcon('corretora')}</th>
+                  <th style={thSort} onClick={() => handleSort('cidade')}>Cidade / UF{sortIcon('cidade')}</th>
+                  <th style={thSort} onClick={() => handleSort('limite')}>Limite{sortIcon('limite')}</th>
+                  <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
+                  <th style={thSort} onClick={() => handleSort('data_entrada')}>Data Entrada{sortIcon('data_entrada')}</th>
                 </tr>
               </thead>
               <tbody>
