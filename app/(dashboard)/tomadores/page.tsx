@@ -107,6 +107,11 @@ export default function TomadoresPage() {
   const [msgStatus, setMsgStatus] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
   const [confirmExcluir, setConfirmExcluir] = useState<StatusFluxo | null>(null)
 
+  // ── Permissão proprietário ──
+  const [isProprietario, setIsProprietario] = useState(false)
+  const [confirmExcluirTomador, setConfirmExcluirTomador] = useState<Tomador | null>(null)
+  const [excluindoTomador, setExcluindoTomador] = useState(false)
+
   // ─── Loaders ────────────────────────────────────────────────────────────────
 
   const carregarTomadores = useCallback(async () => {
@@ -143,6 +148,15 @@ export default function TomadoresPage() {
     carregarStatusLista()
     carregarCorretoras()
   }, [carregarTomadores, carregarStatusLista, carregarCorretoras])
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      supabase.from('usuarios').select('proprietario').eq('auth_id', user.id).single()
+        .then(({ data }) => setIsProprietario(data?.proprietario ?? false))
+    })
+  }, [])
 
   // ─── Tomadores CRUD ─────────────────────────────────────────────────────────
 
@@ -191,6 +205,22 @@ export default function TomadoresPage() {
     setForm(FORM_TOM_INICIAL)
     setMensagem(null)
     setErroCnpj('')
+  }
+
+  async function excluirTomador() {
+    if (!confirmExcluirTomador) return
+    setExcluindoTomador(true)
+    const supabase = createClient()
+    const { error } = await supabase.from('tomadores').delete().eq('id', confirmExcluirTomador.id)
+    setExcluindoTomador(false)
+    if (error) {
+      setConfirmExcluirTomador(null)
+      setMensagem({ tipo: 'erro', texto: 'Erro ao excluir: ' + error.message })
+      return
+    }
+    setConfirmExcluirTomador(null)
+    fecharForm()
+    await carregarTomadores()
   }
 
   useEffect(() => {
@@ -860,7 +890,13 @@ export default function TomadoresPage() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end' }}>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                    {editando && isProprietario && (
+                      <button type="button" onClick={() => setConfirmExcluirTomador(editando)}
+                        style={{ marginRight: 'auto', background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 16px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
+                        🗑 Excluir Tomador
+                      </button>
+                    )}
                     <button type="button" className="btn-secondary" onClick={fecharForm}>Cancelar</button>
                     <button type="submit" className="btn-primary" disabled={enviando}>
                       {enviando ? 'Salvando...' : editando ? 'Salvar Alterações' : 'Cadastrar Tomador'}
@@ -874,6 +910,28 @@ export default function TomadoresPage() {
                     <AnexosSection entidadeTipo="tomador" entidadeId={editando.id} />
                   </>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Modal confirmar exclusão de tomador */}
+          {confirmExcluirTomador && (
+            <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setConfirmExcluirTomador(null) }}>
+              <div className="modal-box" style={{ maxWidth: 400 }}>
+                <div className="modal-header">
+                  <div className="modal-title">Excluir Tomador</div>
+                  <button onClick={() => setConfirmExcluirTomador(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
+                </div>
+                <p style={{ color: '#1a2a3a', margin: '0 0 20px', lineHeight: 1.5 }}>
+                  Tem certeza que deseja excluir permanentemente <strong>{confirmExcluirTomador.razao_social}</strong>? Esta ação é <strong style={{ color: '#d64545' }}>irreversível</strong>.
+                </p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <button className="btn-secondary" onClick={() => setConfirmExcluirTomador(null)}>Cancelar</button>
+                  <button onClick={excluirTomador} disabled={excluindoTomador}
+                    style={{ background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
+                    {excluindoTomador ? 'Excluindo...' : 'Sim, Excluir'}
+                  </button>
+                </div>
               </div>
             </div>
           )}

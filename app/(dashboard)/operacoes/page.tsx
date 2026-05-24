@@ -118,6 +118,11 @@ export default function OperacoesPage() {
   const [msgStatus, setMsgStatus] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
   const [confirmExcluir, setConfirmExcluir] = useState<StatusFluxo | null>(null)
 
+  // ── Permissão proprietário ──
+  const [isProprietario, setIsProprietario] = useState(false)
+  const [confirmExcluirOp, setConfirmExcluirOp] = useState<Operacao | null>(null)
+  const [excluindoOp, setExcluindoOp] = useState(false)
+
   // ── Sorting ──
   const [sortField, setSortField] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -171,6 +176,15 @@ export default function OperacoesPage() {
     carregarAuxiliares()
   }, [carregarOperacoes, carregarStatusLista, carregarAuxiliares])
 
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      supabase.from('usuarios').select('proprietario').eq('auth_id', user.id).single()
+        .then(({ data }) => setIsProprietario(data?.proprietario ?? false))
+    })
+  }, [])
+
   // ─── Operações CRUD ─────────────────────────────────────────────────────────
 
   function abrirNovo() {
@@ -218,6 +232,22 @@ export default function OperacoesPage() {
     setEditando(null)
     setForm(FORM_OP_INICIAL)
     setMensagem(null)
+  }
+
+  async function excluirOperacao() {
+    if (!confirmExcluirOp) return
+    setExcluindoOp(true)
+    const supabase = createClient()
+    const { error } = await supabase.from('operacoes').delete().eq('id', confirmExcluirOp.id)
+    setExcluindoOp(false)
+    if (error) {
+      setConfirmExcluirOp(null)
+      setMensagem({ tipo: 'erro', texto: 'Erro ao excluir: ' + error.message })
+      return
+    }
+    setConfirmExcluirOp(null)
+    fecharForm()
+    await carregarOperacoes()
   }
 
   function fecharFormTomador() {
@@ -1034,7 +1064,13 @@ export default function OperacoesPage() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                    {editando && isProprietario && (
+                      <button type="button" onClick={() => setConfirmExcluirOp(editando)}
+                        style={{ marginRight: 'auto', background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 16px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
+                        🗑 Excluir Operação
+                      </button>
+                    )}
                     <button type="button" className="btn-secondary" onClick={fecharForm}>Cancelar</button>
                     <button type="submit" className="btn-primary" disabled={enviando}>
                       {enviando ? 'Salvando...' : editando ? 'Salvar Alterações' : 'Cadastrar Operação'}
@@ -1048,6 +1084,28 @@ export default function OperacoesPage() {
                     <AnexosSection entidadeTipo="operacao" entidadeId={editando.id} />
                   </>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Modal confirmar exclusão de operação */}
+          {confirmExcluirOp && (
+            <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setConfirmExcluirOp(null) }}>
+              <div className="modal-box" style={{ maxWidth: 400 }}>
+                <div className="modal-header">
+                  <div className="modal-title">Excluir Operação</div>
+                  <button onClick={() => setConfirmExcluirOp(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
+                </div>
+                <p style={{ color: '#1a2a3a', margin: '0 0 20px', lineHeight: 1.5 }}>
+                  Tem certeza que deseja excluir permanentemente a operação de <strong>{confirmExcluirOp.tomador?.razao_social ?? 'este tomador'}</strong>? Esta ação é <strong style={{ color: '#d64545' }}>irreversível</strong>.
+                </p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <button className="btn-secondary" onClick={() => setConfirmExcluirOp(null)}>Cancelar</button>
+                  <button onClick={excluirOperacao} disabled={excluindoOp}
+                    style={{ background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
+                    {excluindoOp ? 'Excluindo...' : 'Sim, Excluir'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
