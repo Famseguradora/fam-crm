@@ -18,6 +18,22 @@ function fmtData(iso: string): string {
   return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+function getMimeType(file: File): string {
+  if (file.type) return file.type
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  const map: Record<string, string> = {
+    pdf: 'application/pdf', html: 'text/html', htm: 'text/html',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', txt: 'text/plain', csv: 'text/csv',
+    zip: 'application/zip', mp4: 'video/mp4', mp3: 'audio/mpeg',
+  }
+  return (ext && map[ext]) || 'application/octet-stream'
+}
+
 function iconeArquivo(mime: string | null): string {
   if (!mime) return '📄'
   if (mime.startsWith('image/')) return '🖼️'
@@ -34,9 +50,10 @@ function iconeArquivo(mime: string | null): string {
 interface Props {
   entidadeTipo: 'tomador' | 'operacao' | 'corretora'
   entidadeId: string
+  tomadorId?: string
 }
 
-export default function AnexosSection({ entidadeTipo, entidadeId }: Props) {
+export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: Props) {
   const [anexos, setAnexos] = useState<Anexo[]>([])
   const [carregando, setCarregando] = useState(true)
   const [enviando, setEnviando] = useState(false)
@@ -50,12 +67,19 @@ export default function AnexosSection({ entidadeTipo, entidadeId }: Props) {
   const carregar = useCallback(async () => {
     setCarregando(true)
     const supabase = createClient()
-    const { data } = await supabase
-      .from('anexos')
-      .select('*')
-      .eq('entidade_tipo', entidadeTipo)
-      .eq('entidade_id', entidadeId)
-      .order('created_at', { ascending: false })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase.from('anexos').select('*').order('created_at', { ascending: false })
+
+    if (entidadeTipo === 'tomador') {
+      query = query.or(
+        `and(entidade_tipo.eq.tomador,entidade_id.eq.${entidadeId}),` +
+        `and(entidade_tipo.eq.operacao,tomador_id.eq.${entidadeId})`
+      )
+    } else {
+      query = query.eq('entidade_tipo', entidadeTipo).eq('entidade_id', entidadeId)
+    }
+
+    const { data } = await query
     setAnexos((data as Anexo[]) ?? [])
     setCarregando(false)
   }, [entidadeTipo, entidadeId])
@@ -75,17 +99,19 @@ export default function AnexosSection({ entidadeTipo, entidadeId }: Props) {
       const nomeSeguro = file.name.replace(/[^a-zA-Z0-9._\-]/g, '_')
       const path = `${entidadeTipo}/${entidadeId}/${Date.now()}_${nomeSeguro}`
 
+      const mimeType = getMimeType(file)
       const { error: uploadError } = await supabase.storage
         .from(BUCKET)
-        .upload(path, file, { upsert: false, contentType: file.type || undefined })
+        .upload(path, file, { upsert: false, contentType: mimeType })
       if (uploadError) throw new Error(uploadError.message)
 
       const { error: dbError } = await supabase.from('anexos').insert({
         entidade_tipo: entidadeTipo,
         entidade_id: entidadeId,
+        tomador_id: tomadorId ?? null,
         nome_original: file.name,
         storage_path: path,
-        tipo_mime: file.type || null,
+        tipo_mime: mimeType,
         tamanho_bytes: file.size,
       })
       if (dbError) {

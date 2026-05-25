@@ -134,6 +134,7 @@ export interface Anexo {
   id: string
   entidade_tipo: 'tomador' | 'operacao' | 'corretora'
   entidade_id: string
+  tomador_id?: string | null
   nome_original: string
   storage_path: string
   tipo_mime: string | null

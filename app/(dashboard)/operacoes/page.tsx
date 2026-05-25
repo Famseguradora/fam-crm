@@ -1474,7 +1474,7 @@ export default function OperacoesPage() {
                 {editando && (
                   <>
                     <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
-                    <AnexosSection entidadeTipo="operacao" entidadeId={editando.id} />
+                    <AnexosSection entidadeTipo="operacao" entidadeId={editando.id} tomadorId={editando.tomador_id ?? undefined} />
                   </>
                 )}
               </div>
