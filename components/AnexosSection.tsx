@@ -135,6 +135,25 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
       .from(BUCKET)
       .createSignedUrl(anexo.storage_path, 300)
     if (error || !data?.signedUrl) { setErro('Erro ao gerar link do arquivo.'); return }
+
+    const ext = anexo.nome_original.split('.').pop()?.toLowerCase()
+    const isHtml = ext === 'html' || ext === 'htm'
+
+    if (isHtml) {
+      try {
+        const res = await fetch(data.signedUrl)
+        const html = await res.text()
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+        const blobUrl = URL.createObjectURL(blob)
+        const win = window.open(blobUrl, '_blank')
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000)
+        if (!win) setErro('Pop-up bloqueado pelo browser. Permita pop-ups para este site.')
+      } catch {
+        window.open(data.signedUrl, '_blank')
+      }
+      return
+    }
+
     window.open(data.signedUrl, '_blank')
   }
 
