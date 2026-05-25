@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS public.operacoes (
   produto_id       UUID REFERENCES public.produtos(id) ON DELETE SET NULL,
   modalidade       TEXT NOT NULL,
   estado           CHAR(2),
-  temperatura      TEXT CHECK (temperatura IN ('Quente', 'Frio')),
+  temperatura      TEXT CHECK (temperatura IN ('Quente', 'Morno', 'Frio')),
   lmg              NUMERIC(18,2) NOT NULL DEFAULT 0,
   taxa             NUMERIC(8,6)  NOT NULL DEFAULT 0,
   vigencia_anos    NUMERIC(5,2)  NOT NULL DEFAULT 1,

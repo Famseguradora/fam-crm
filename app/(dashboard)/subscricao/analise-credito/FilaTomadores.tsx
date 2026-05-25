@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
 
 export interface Tomador {
   id: string
@@ -14,9 +13,9 @@ export interface Tomador {
 
 interface Props {
   tomadores: Tomador[]
+  statusMap?: Record<string, string>
   selecionado: Tomador | null
   onSelect: (t: Tomador) => void
-  onRefresh: () => void
 }
 
 const c = {
@@ -35,6 +34,14 @@ const c = {
   success: '#4ade80',
 }
 
+const STATUS_BADGE: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  'Comitê':      { label: '🏛 Comitê',      color: '#e8b84b', bg: 'rgba(232,184,75,0.1)',   border: 'rgba(232,184,75,0.3)' },
+  'Subscrição':  { label: '📋 Subscrição',  color: '#a78bfa', bg: 'rgba(167,139,250,0.1)',  border: 'rgba(167,139,250,0.3)' },
+  'Em Análise':  { label: '🔍 Em Análise',  color: '#38bdf8', bg: 'rgba(56,189,248,0.1)',   border: 'rgba(56,189,248,0.3)' },
+  'Documentação':{ label: '📁 Documentação',color: '#fb923c', bg: 'rgba(251,146,60,0.1)',   border: 'rgba(251,146,60,0.3)' },
+  'Triagem':     { label: '🔍 Triagem',     color: '#94a3b8', bg: 'rgba(148,163,184,0.08)', border: 'rgba(148,163,184,0.2)' },
+}
+
 function prioBadge(p?: string | null) {
   if (p === 'Urgente') return { label: 'U', bg: c.dangerBg, color: c.danger, border: 'rgba(248,113,113,0.25)' }
   if (p === 'Prioridade') return { label: 'P', bg: c.warningBg, color: c.warning, border: 'rgba(251,146,60,0.25)' }
@@ -47,42 +54,18 @@ function prioOrder(p?: string | null) {
   return 3
 }
 
-export default function FilaTomadores({ tomadores, selecionado, onSelect, onRefresh }: Props) {
-  const supabase = createClient()
+export default function FilaTomadores({ tomadores, statusMap = {}, selecionado, onSelect }: Props) {
   const [busca, setBusca] = useState('')
-  const [modal, setModal] = useState(false)
-  const [form, setForm] = useState({ razao_social: '', cnpj: '', prioridade: 'Normal' })
-  const [salvando, setSalvando] = useState(false)
 
   const filtrados = tomadores
     .filter(t => t.razao_social.toLowerCase().includes(busca.toLowerCase()))
     .sort((a, b) => prioOrder(a.prioridade) - prioOrder(b.prioridade))
 
-  async function criarTomador() {
-    if (!form.razao_social.trim()) return
-    setSalvando(true)
-    await supabase.from('tomadores').insert({
-      razao_social: form.razao_social.trim(),
-      cnpj: form.cnpj.trim() || null,
-      prioridade: form.prioridade,
-    })
-    setModal(false)
-    setForm({ razao_social: '', cnpj: '', prioridade: 'Normal' })
-    setSalvando(false)
-    onRefresh()
-  }
-
   return (
     <div style={{ width: 220, minWidth: 220, display: 'flex', flexDirection: 'column', background: c.bg, borderRight: `1px solid ${c.border}`, height: '100%' }}>
       <div style={{ padding: '12px 10px 8px', borderBottom: `1px solid ${c.border}`, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ marginBottom: 8 }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: c.muted, letterSpacing: '1px', textTransform: 'uppercase' }}>Fila</span>
-          <button
-            onClick={() => setModal(true)}
-            style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, cursor: 'pointer', background: c.accentBg, color: c.accent, border: `0.5px solid ${c.accentBorder}` }}
-          >
-            + Novo
-          </button>
         </div>
         <input
           value={busca}
@@ -104,63 +87,48 @@ export default function FilaTomadores({ tomadores, selecionado, onSelect, onRefr
               key={t.id}
               onClick={() => onSelect(t)}
               style={{
-                width: '100%', textAlign: 'left', padding: '10px 10px',
+                width: '100%', textAlign: 'left', padding: '11px 10px',
                 background: ativo ? 'rgba(56,189,248,0.07)' : 'transparent',
                 borderLeft: ativo ? `3px solid ${c.accent}` : '3px solid transparent',
                 border: 'none', borderBottom: `0.5px solid ${c.border}`,
                 cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: 8,
               }}
             >
-              <div style={{ width: 18, height: 18, borderRadius: 4, background: badge.bg, color: badge.color, border: `0.5px solid ${badge.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, flexShrink: 0, marginTop: 1 }}>
+              <div style={{ width: 20, height: 20, borderRadius: 4, background: badge.bg, color: badge.color, border: `0.5px solid ${badge.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
                 {badge.label}
               </div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 500, color: ativo ? 'white' : c.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: ativo ? 'white' : c.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {t.razao_social}
                 </div>
-                {t.cnpj && (
-                  <div style={{ fontSize: 10, color: c.muted, marginTop: 2 }}>{t.cnpj}</div>
-                )}
+                {(() => {
+                  const st = statusMap[t.id]
+                  const badge = st ? STATUS_BADGE[st] : null
+                  if (!badge && !t.cnpj) return null
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                      {badge && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 700, letterSpacing: '0.6px',
+                          color: badge.color, background: badge.bg,
+                          border: `0.5px solid ${badge.border}`,
+                          borderRadius: 3, padding: '1px 5px', flexShrink: 0,
+                        }}>
+                          {badge.label}
+                        </span>
+                      )}
+                      {t.cnpj && (
+                        <span style={{ fontSize: 10, color: c.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.cnpj}</span>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             </button>
           )
         })}
       </div>
 
-      {modal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
-          <div style={{ background: '#0d1428', border: `1px solid ${c.border}`, borderRadius: 12, padding: 24, width: 360, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: c.text }}>Novo Tomador</div>
-            <input
-              value={form.razao_social}
-              onChange={e => setForm({ ...form, razao_social: e.target.value })}
-              placeholder="Razão Social *"
-              style={{ fontSize: 13, padding: '8px 12px', borderRadius: 6, background: 'rgba(255,255,255,0.05)', color: c.text, border: `0.5px solid rgba(255,255,255,0.15)`, outline: 'none' }}
-            />
-            <input
-              value={form.cnpj}
-              onChange={e => setForm({ ...form, cnpj: e.target.value })}
-              placeholder="CNPJ (opcional)"
-              style={{ fontSize: 13, padding: '8px 12px', borderRadius: 6, background: 'rgba(255,255,255,0.05)', color: c.text, border: `0.5px solid rgba(255,255,255,0.15)`, outline: 'none' }}
-            />
-            <select
-              value={form.prioridade}
-              onChange={e => setForm({ ...form, prioridade: e.target.value })}
-              style={{ fontSize: 13, padding: '8px 12px', borderRadius: 6, background: '#0d1428', color: c.text, border: `0.5px solid rgba(255,255,255,0.15)`, outline: 'none' }}
-            >
-              <option value="Normal">Normal</option>
-              <option value="Prioridade">Prioridade</option>
-              <option value="Urgente">Urgente</option>
-            </select>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setModal(false)} style={{ fontSize: 12, padding: '7px 14px', borderRadius: 6, cursor: 'pointer', background: 'rgba(255,255,255,0.05)', color: c.muted, border: `0.5px solid ${c.border}` }}>Cancelar</button>
-              <button onClick={criarTomador} disabled={salvando || !form.razao_social.trim()} style={{ fontSize: 12, padding: '7px 14px', borderRadius: 6, cursor: 'pointer', background: c.accentBg, color: c.accent, border: `0.5px solid ${c.accentBorder}`, opacity: salvando ? 0.6 : 1 }}>
-                {salvando ? 'Salvando...' : 'Criar'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

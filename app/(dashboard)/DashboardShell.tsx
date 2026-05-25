@@ -10,6 +10,7 @@ interface Props {
   nomeUsuario: string
   perfilUsuario: string
   proprietario: boolean
+  emailUsuario: string
   dataInicio: string | null
   children: React.ReactNode
 }
@@ -31,7 +32,7 @@ const TABS: Tab[] = [
 ]
 
 const SUBSCRICAO_ITEMS = [
-  { label: 'Análise de Crédito',    href: '/subscricao/analise-credito',    icon: '📈', disabled: true },
+  { label: 'Análise de Crédito',    href: '/subscricao/analise-credito',    icon: '📈' },
   { label: 'Análise de Subscrição', href: '/subscricao/analise-subscricao', icon: '📋', disabled: true },
 ]
 
@@ -40,11 +41,11 @@ const PERFORMANCE_ITEMS = [
 ]
 
 const CONFIG_ITEMS = [
-  { label: 'Skills de IA', href: '/configuracoes/skills',  icon: '🧠', proprietarioOnly: false },
+  { label: 'Skills de IA', href: '/configuracoes/skills',  icon: '🧠', proprietarioOnly: false, emailOnly: 'marcodragone@gmail.com' },
   { label: 'Sistema',      href: '/configuracoes/sistema', icon: '⚙️', proprietarioOnly: true },
 ]
 
-export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, dataInicio, children }: Props) {
+export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, emailUsuario, dataInicio, children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -395,7 +396,10 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
                 Configurações
               </div>
             )}
-            {CONFIG_ITEMS.filter(item => !item.proprietarioOnly || proprietario).map((item) => (
+            {CONFIG_ITEMS.filter(item =>
+              (!item.proprietarioOnly || proprietario) &&
+              (!item.emailOnly || item.emailOnly === emailUsuario)
+            ).map((item) => (
               <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} />
             ))}
           </div>

@@ -76,10 +76,16 @@ const PRIORIDADE_ORDEM: Record<string, number> = {
   'Urgente': 0, 'Prioridade': 1, 'Fluxo Normal': 2,
 }
 
+function autoTemp(novoStatus: string, tempAtual: string): string {
+  if (novoStatus === 'Perdido' || novoStatus === 'Recusado') return 'Frio'
+  if (novoStatus === 'Aprovado') return 'Quente'
+  return tempAtual
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OperacoesPage() {
-  const [aba, setAba] = useState<'operacoes' | 'status'>('operacoes')
+  const [aba, setAba] = useState<'operacoes' | 'status' | 'comite'>('operacoes')
 
   // ── Operações ──
   const [operacoes, setOperacoes] = useState<Operacao[]>([])
@@ -122,6 +128,10 @@ export default function OperacoesPage() {
   const [isProprietario, setIsProprietario] = useState(false)
   const [confirmExcluirOp, setConfirmExcluirOp] = useState<Operacao | null>(null)
   const [excluindoOp, setExcluindoOp] = useState(false)
+
+  // ── Modal Motivo (Perdido/Recusado) ──
+  const [motivoModal, setMotivoModal] = useState<'form' | { op: Operacao; novoStatus: string } | null>(null)
+  const [motivoInput, setMotivoInput] = useState('')
 
   // ── Sorting ──
   const [sortField, setSortField] = useState<string | null>(null)
@@ -331,10 +341,24 @@ export default function OperacoesPage() {
 
   async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault()
+    const encerrandoNeg = form.status === 'Perdido' || form.status === 'Recusado'
+    const statusMudou = !editando || editando.status !== form.status
+    if (encerrandoNeg && statusMudou) {
+      setMotivoModal('form')
+      setMotivoInput('')
+      return
+    }
+    await executarSalvarForm('')
+  }
+
+  async function executarSalvarForm(motivo: string) {
     setEnviando(true)
     setMensagem(null)
     const lmgNum = form.lmg ? parseFloat(form.lmg.replace(/\./g, '').replace(',', '.')) : null
     const taxaNum = form.taxa ? parseFloat(form.taxa.replace(',', '.')) : null
+    const obsComMotivo = motivo
+      ? `Motivo: ${motivo}${form.observacao ? '\n\n' + form.observacao : ''}`
+      : form.observacao || null
     const payload = {
       tomador_id: form.tomador_id || null,
       corretora_id: form.corretora_id || null,
@@ -345,10 +369,10 @@ export default function OperacoesPage() {
       taxa: taxaNum,
       vigencia_anos: form.vigencia_anos ? parseInt(form.vigencia_anos) : null,
       periodicidade_vigencia: form.periodicidade_vigencia,
-      temperatura: form.temperatura || null,
+      temperatura: autoTemp(form.status, form.temperatura || 'Frio'),
       prioridade: form.prioridade,
       estado: form.estado || null,
-      observacao: form.observacao || null,
+      observacao: obsComMotivo,
       status: form.status,
       ativo: form.ativo,
       data_entrada: form.data_entrada || null,
@@ -358,10 +382,16 @@ export default function OperacoesPage() {
       if (editando) {
         const { error } = await supabase.from('operacoes').update(payload).eq('id', editando.id)
         if (error) throw new Error(error.message)
+        if ((form.status === 'Emitido' || form.status === 'Fechado') && form.tomador_id) {
+          await supabase.from('tomadores').update({ status: 'Fechado' }).eq('id', form.tomador_id)
+        }
         setMensagem({ tipo: 'sucesso', texto: 'Operação atualizada com sucesso.' })
       } else {
         const { error } = await supabase.from('operacoes').insert(payload)
         if (error) throw new Error(error.message)
+        if ((form.status === 'Emitido' || form.status === 'Fechado') && form.tomador_id) {
+          await supabase.from('tomadores').update({ status: 'Fechado' }).eq('id', form.tomador_id)
+        }
         setMensagem({ tipo: 'sucesso', texto: 'Operação cadastrada com sucesso.' })
         setForm(FORM_OP_INICIAL)
       }
@@ -373,11 +403,40 @@ export default function OperacoesPage() {
     }
   }
 
-  // Atualização rápida de status direto da tabela
-  async function mudarStatus(op: Operacao, novoStatus: string) {
+  function mudarStatus(op: Operacao, novoStatus: string) {
+    if (novoStatus === 'Perdido' || novoStatus === 'Recusado') {
+      setMotivoModal({ op, novoStatus })
+      setMotivoInput('')
+      return
+    }
+    _executarMudarStatus(op, novoStatus, '')
+  }
+
+  async function _executarMudarStatus(op: Operacao, novoStatus: string, motivo: string) {
     const supabase = createClient()
-    const { error } = await supabase.from('operacoes').update({ status: novoStatus }).eq('id', op.id)
-    if (!error) await carregarOperacoes()
+    const novaTemp = autoTemp(novoStatus, op.temperatura ?? 'Frio')
+    const updateData: Record<string, unknown> = { status: novoStatus, temperatura: novaTemp }
+    if (motivo) updateData.observacao = `Motivo: ${motivo}${op.observacao ? '\n\n' + op.observacao : ''}`
+    const { error } = await supabase.from('operacoes').update(updateData).eq('id', op.id)
+    if (!error) {
+      if ((novoStatus === 'Emitido' || novoStatus === 'Fechado') && op.tomador_id) {
+        await supabase.from('tomadores').update({ status: 'Fechado' }).eq('id', op.tomador_id)
+      }
+      await carregarOperacoes()
+    }
+  }
+
+  async function confirmarMotivo() {
+    if (motivoModal === 'form') {
+      setMotivoModal(null)
+      await executarSalvarForm(motivoInput)
+      setMotivoInput('')
+    } else if (motivoModal && typeof motivoModal === 'object') {
+      const { op, novoStatus } = motivoModal
+      setMotivoModal(null)
+      await _executarMudarStatus(op, novoStatus, motivoInput)
+      setMotivoInput('')
+    }
   }
 
   // ─── Status CRUD ────────────────────────────────────────────────────────────
@@ -505,13 +564,33 @@ export default function OperacoesPage() {
   }, [operacoes, busca, filtroStatus, filtroPrioridade, filtroTemperatura, filtroCorretora, filtroProduto, sortField, sortDir])
 
   const kpis = useMemo(() => {
-    const lmgTotal = operacoes.reduce((acc, op) => acc + (op.lmg ?? 0), 0)
+    const CAP = 80_000_000
+    const lmgTotal = operacoes.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const naoNegadas = operacoes.filter(op => op.status !== 'Perdido' && op.status !== 'Recusado')
+    const lmgLiquido = naoNegadas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const lmgCapeadoTotal = operacoes.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
+    const premioTotal = naoNegadas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+    const corretoras = new Set(operacoes.map(op => op.corretora_id).filter(Boolean)).size
+    const tomadores = new Set(operacoes.map(op => op.tomador_id).filter(Boolean)).size
+    const qtdQuente = operacoes.filter(op => op.temperatura === 'Quente').length
+    const qtdMorno  = operacoes.filter(op => op.temperatura === 'Morno').length
+    const qtdFrio   = operacoes.filter(op => op.temperatura === 'Frio').length
+    const quente = operacoes.filter(op => op.temperatura === 'Quente')
+    const morno  = operacoes.filter(op => op.temperatura === 'Morno')
+    const frio   = operacoes.filter(op => op.temperatura === 'Frio')
+    const lmgQuente    = quente.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const lmgMorno     = morno.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const lmgFrio      = frio.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const premioQuente = quente.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+    const premioMorno  = morno.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+    const premioFrio   = frio.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     return {
       total: operacoes.length,
-      emTriagem: operacoes.filter((op) => op.status === 'Triagem').length,
-      emAnalise: operacoes.filter((op) => op.status === 'Em Análise').length,
-      aprovados: operacoes.filter((op) => op.status === 'Aprovado' || op.status === 'Emitido').length,
-      lmgTotal,
+      lmgTotal, lmgLiquido, lmgCapeadoTotal, premioTotal,
+      corretoras, tomadores,
+      qtdQuente: quente.length, qtdMorno: morno.length, qtdFrio: frio.length,
+      lmgQuente, lmgMorno, lmgFrio,
+      premioQuente, premioMorno, premioFrio,
     }
   }, [operacoes])
 
@@ -691,6 +770,66 @@ export default function OperacoesPage() {
     setExportando(false)
   }
 
+  async function exportarPDF() {
+    setExportando(true)
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable'),
+    ])
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+
+    // Cabeçalho FAM
+    doc.setFillColor(16, 32, 64)
+    doc.rect(0, 0, 297, 22, 'F')
+    doc.setTextColor(232, 184, 75)
+    doc.setFontSize(14)
+    doc.text('FAM Seguradora — Operações / Subscrição', 14, 14)
+    doc.setTextColor(180, 200, 220)
+    doc.setFontSize(9)
+    const dataHoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
+    doc.text(dataHoje, 230, 14)
+
+    // Linha de KPIs
+    doc.setTextColor(40, 80, 120)
+    doc.setFontSize(8)
+    doc.text(
+      `Operações: ${operacoesFiltradas.length}  |  LMG Total: ${fmtMoeda(kpis.lmgTotal)}  |  LMG Líquido: ${fmtMoeda(kpis.lmgLiquido)}  |  Prêmio Total: ${fmtMoeda(kpis.premioTotal)}  |  🔥 ${kpis.qtdQuente}  🌤 ${kpis.qtdMorno}  ❄ ${kpis.qtdFrio}`,
+      14, 30
+    )
+
+    // Tabela principal
+    autoTable(doc, {
+      startY: 35,
+      head: [['#', 'Tomador', 'Corretora', 'Cobertura', 'LMG', 'Taxa', 'Vigência', 'Temp.', 'Status', 'Data Entrada']],
+      body: operacoesFiltradas.map((op, i) => [
+        i + 1,
+        op.tomador?.razao_social ?? '—',
+        op.corretora?.razao_social ?? '—',
+        op.produto?.nome ? `${op.produto.nome}${op.modalidade ? ' / ' + op.modalidade : ''}` : '—',
+        op.lmg ? fmtMoeda(op.lmg) : '—',
+        op.taxa ? fmtPercent(op.taxa / 100) : '—',
+        op.vigencia_anos ? `${op.vigencia_anos} ${op.periodicidade_vigencia === 'Meses' ? 'meses' : 'anos'}` : '—',
+        op.temperatura ?? '—',
+        op.status,
+        op.data_entrada ? fmtData(op.data_entrada) : '—',
+      ]),
+      styles: { fontSize: 7, cellPadding: 2, font: 'helvetica' },
+      headStyles: { fillColor: [16, 32, 64], textColor: [232, 184, 75], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [240, 246, 255] },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 8 },
+        4: { halign: 'right', cellWidth: 26 },
+        5: { halign: 'right', cellWidth: 14 },
+        6: { halign: 'center', cellWidth: 18 },
+        7: { halign: 'center', cellWidth: 14 },
+        9: { halign: 'center', cellWidth: 22 },
+      },
+    })
+
+    doc.save(`FAM_Operacoes_${new Date().toISOString().slice(0, 10)}.pdf`)
+    setExportando(false)
+  }
+
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
   function corDoStatus(status: string) {
@@ -722,39 +861,166 @@ export default function OperacoesPage() {
   return (
     <>
       {/* Cabeçalho */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: '#102040' }}>Operações</div>
-          <div style={{ fontSize: 13, color: '#6080a0' }}>Gestão completa das operações de garantia</div>
-        </div>
-        {aba === 'operacoes' ? (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importarCSV} />
-            <button className="btn-export" onClick={exportarExcel} disabled={exportando || operacoesFiltradas.length === 0}>⬇ Excel</button>
-            <button className="btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={importando}>
-              {importando ? 'Importando...' : '⬆ Importar Planilha'}
-            </button>
-            <button className="btn-primary" onClick={abrirNovo}>+ Nova Operação</button>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 4 }}>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#102040' }}>Operações / Subscrição</div>
+            <div style={{ fontSize: 12, color: '#6080a0' }}>
+              Aba: Operações · Subscrição · {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
+            </div>
           </div>
-        ) : (
-          <button className="btn-primary" onClick={abrirNovoStatus}>+ Novo Status</button>
-        )}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importarCSV} />
+            {aba === 'operacoes' && (
+              <>
+                <button className="btn-export" onClick={exportarExcel} disabled={exportando || operacoesFiltradas.length === 0} style={{ fontSize: 13 }}>⬇ Excel</button>
+                <button className="btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={importando} style={{ fontSize: 13 }}>
+                  {importando ? 'Importando...' : '⬆ Importar Planilha'}
+                </button>
+                <button className="btn-primary" onClick={() => exportarPDF()} disabled={exportando || operacoesFiltradas.length === 0} style={{ fontSize: 13 }}>
+                  📄 Exportar PDF
+                </button>
+                <button className="btn-primary" onClick={abrirNovo} style={{ fontSize: 13 }}>+ Nova Operação</button>
+              </>
+            )}
+            {aba === 'status' && (
+              <button className="btn-primary" onClick={abrirNovoStatus}>+ Novo Status</button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+        {/* Card: Corretoras */}
+        <div className="kpi-card" style={{ flex: '1 1 120px', minWidth: 100 }}>
+          <div className="kpi-label" style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase' }}>Corretoras</div>
+          <div className="kpi-value" style={{ fontSize: 22, fontWeight: 800 }}>{kpis.corretoras}</div>
+          <div className="kpi-sub">Únicos</div>
+        </div>
+        {/* Card: Tomadores */}
+        <div className="kpi-card" style={{ flex: '1 1 120px', minWidth: 100 }}>
+          <div className="kpi-label" style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase' }}>Tomadores</div>
+          <div className="kpi-value" style={{ fontSize: 22, fontWeight: 800, color: '#1a5fa0' }}>{kpis.tomadores}</div>
+          <div className="kpi-sub">Únicos</div>
+        </div>
+        {/* Card: Operações */}
+        <div className="kpi-card" style={{ flex: '1 1 120px', minWidth: 100 }}>
+          <div className="kpi-label" style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase' }}>Operações</div>
+          <div className="kpi-value" style={{ fontSize: 22, fontWeight: 800 }}>{operacoesFiltradas.length}</div>
+          <div className="kpi-sub">Conforme filtros</div>
+        </div>
+        {/* Card: LMG Total */}
+        <div className="kpi-card" style={{ flex: '2 1 180px', minWidth: 160, borderColor: '#b0d0f0' }}>
+          <div className="kpi-label" style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase' }}>LMG Total</div>
+          <div className="kpi-value" style={{ fontSize: 17, fontWeight: 800 }}>{fmtMoeda(kpis.lmgTotal)}</div>
+          <div className="kpi-sub">Soma total LMG</div>
+        </div>
+        {/* Card: LMG Total Líquido */}
+        <div style={{
+          flex: '2 1 180px', minWidth: 160, padding: '14px 16px', borderRadius: 10,
+          background: '#0d2040', border: '1px solid rgba(56,120,200,0.3)',
+        }}>
+          <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: 'rgba(180,200,220,0.7)', marginBottom: 6 }}>LMG Total Líquido</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpis.lmgLiquido)}</div>
+          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>LMG Total − Negados/Perdidos</div>
+        </div>
+        {/* Card: Prêmio Previsto Total */}
+        <div style={{
+          flex: '2 1 180px', minWidth: 160, padding: '14px 16px', borderRadius: 10,
+          background: '#0d2040', border: '1px solid rgba(56,120,200,0.3)',
+        }}>
+          <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: 'rgba(180,200,220,0.7)', marginBottom: 6 }}>Prêmio Previsto Total</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpis.premioTotal)}</div>
+          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>Soma prêmios previstos</div>
+        </div>
+      </div>
+
+      {/* Temperatura */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+        {/* Quente */}
+        <div
+          onClick={() => setFiltroTemperatura(filtroTemperatura === 'Quente' ? '' : 'Quente')}
+          style={{
+            padding: '12px 20px', borderRadius: 10, minWidth: 200, flex: '1 1 200px', cursor: 'pointer', transition: 'all 0.15s',
+            background: filtroTemperatura === 'Quente' ? '#ffd6d6' : '#fff5f5',
+            border: filtroTemperatura === 'Quente' ? '2px solid #d64545' : '1.5px solid #f5b8b8',
+            boxShadow: filtroTemperatura === 'Quente' ? '0 2px 8px rgba(214,69,69,0.18)' : 'none',
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#a03030', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
+            🔥 Quente {filtroTemperatura === 'Quente' && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <span style={{ fontSize: 26, fontWeight: 800, color: '#d64545', lineHeight: 1 }}>{kpis.qtdQuente}</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: '#d64545' }}>{fmtMoeda(kpis.lmgQuente)}</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#a05050', marginTop: 4 }}>
+            ops · LMG · Prêmio: {fmtMoeda(kpis.premioQuente)}
+          </div>
+        </div>
+        {/* Morno */}
+        <div
+          onClick={() => setFiltroTemperatura(filtroTemperatura === 'Morno' ? '' : 'Morno')}
+          style={{
+            padding: '12px 20px', borderRadius: 10, minWidth: 200, flex: '1 1 200px', cursor: 'pointer', transition: 'all 0.15s',
+            background: filtroTemperatura === 'Morno' ? '#ffe8c0' : '#fff8f0',
+            border: filtroTemperatura === 'Morno' ? '2px solid #d07830' : '1.5px solid #f5d090',
+            boxShadow: filtroTemperatura === 'Morno' ? '0 2px 8px rgba(208,120,48,0.18)' : 'none',
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#a06010', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
+            🌤 Morno {filtroTemperatura === 'Morno' && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <span style={{ fontSize: 26, fontWeight: 800, color: '#d07830', lineHeight: 1 }}>{kpis.qtdMorno}</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: '#d07830' }}>{fmtMoeda(kpis.lmgMorno)}</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#a07030', marginTop: 4 }}>
+            ops · LMG · Prêmio: {fmtMoeda(kpis.premioMorno)}
+          </div>
+        </div>
+        {/* Frio */}
+        <div
+          onClick={() => setFiltroTemperatura(filtroTemperatura === 'Frio' ? '' : 'Frio')}
+          style={{
+            padding: '12px 20px', borderRadius: 10, minWidth: 200, flex: '1 1 200px', cursor: 'pointer', transition: 'all 0.15s',
+            background: filtroTemperatura === 'Frio' ? '#c8deff' : '#f0f6ff',
+            border: filtroTemperatura === 'Frio' ? '2px solid #3070c8' : '1.5px solid #b0d0f0',
+            boxShadow: filtroTemperatura === 'Frio' ? '0 2px 8px rgba(48,112,200,0.18)' : 'none',
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#1a4080', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
+            ❄ Frio {filtroTemperatura === 'Frio' && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <span style={{ fontSize: 26, fontWeight: 800, color: '#3070c8', lineHeight: 1 }}>{kpis.qtdFrio}</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: '#3070c8' }}>{fmtMoeda(kpis.lmgFrio)}</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#4060a0', marginTop: 4 }}>
+            ops · LMG · Prêmio: {fmtMoeda(kpis.premioFrio)}
+          </div>
+        </div>
       </div>
 
       {/* Abas internas */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: '2px solid #d0e4f5' }}>
-        {(['operacoes', 'status'] as const).map((a) => (
-          <button key={a} onClick={() => setAba(a)} style={{
+        {([
+          { id: 'operacoes', label: '📋 Operações' },
+          { id: 'comite', label: '🏛 Comitê' },
+          { id: 'status', label: '⚙️ Status' },
+        ] as const).map(({ id, label }) => (
+          <button key={id} onClick={() => setAba(id)} style={{
             padding: '9px 22px 8px',
-            background: aba === a ? 'white' : 'transparent',
-            border: aba === a ? '1.5px solid #d0e4f5' : '1.5px solid transparent',
-            borderBottom: aba === a ? '2px solid white' : '2px solid transparent',
+            background: aba === id ? 'white' : 'transparent',
+            border: aba === id ? '1.5px solid #d0e4f5' : '1.5px solid transparent',
+            borderBottom: aba === id ? '2px solid white' : '2px solid transparent',
             borderRadius: '8px 8px 0 0', marginBottom: -2,
-            color: aba === a ? '#1e4080' : '#6080a0',
+            color: aba === id ? '#1e4080' : '#6080a0',
             fontFamily: "'Calibri','Segoe UI',sans-serif",
             fontSize: 14, fontWeight: 600, cursor: 'pointer', transition: 'color 0.15s',
           }}>
-            {a === 'operacoes' ? '📋 Operações' : '⚙️ Status'}
+            {label}
           </button>
         ))}
       </div>
@@ -798,39 +1064,7 @@ export default function OperacoesPage() {
         </div>
       )}
 
-      {/* ══════════ ABA OPERAÇÕES ══════════ */}
-      {aba === 'operacoes' && (
-        <>
-          {/* KPIs */}
-          <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-            <div className="kpi-card highlight" style={{ flex: '1 1 150px' }}>
-              <div className="kpi-label">Total</div>
-              <div className="kpi-value">{kpis.total}</div>
-              <div className="kpi-sub">operações ativas</div>
-            </div>
-            <div className="kpi-card accent" style={{ flex: '1 1 150px' }}>
-              <div className="kpi-label">Em Triagem</div>
-              <div className="kpi-value">{kpis.emTriagem}</div>
-              <div className="kpi-sub">aguardando avanço</div>
-            </div>
-            <div className="kpi-card" style={{ flex: '1 1 150px' }}>
-              <div className="kpi-label">Em Análise</div>
-              <div className="kpi-value">{kpis.emAnalise}</div>
-              <div className="kpi-sub">em processamento</div>
-            </div>
-            <div className="kpi-card green" style={{ flex: '1 1 150px' }}>
-              <div className="kpi-label">Aprovadas / Emitidas</div>
-              <div className="kpi-value">{kpis.aprovados}</div>
-              <div className="kpi-sub">concluídas</div>
-            </div>
-            <div className="kpi-card accent" style={{ flex: '2 1 200px' }}>
-              <div className="kpi-label">LMG Total</div>
-              <div className="kpi-value" style={{ fontSize: 18 }}>{fmtMoeda(kpis.lmgTotal)}</div>
-              <div className="kpi-sub">limite total em carteira</div>
-            </div>
-          </div>
-
-          {/* Modal Edição / Cadastro */}
+      {/* Modal Edição / Cadastro (fora da condição de aba para funcionar no Comitê) */}
           {mostrarForm && (
             <div className="modal-overlay">
               <div className="modal-box" style={{ maxWidth: 760 }}>
@@ -1173,6 +1407,9 @@ export default function OperacoesPage() {
             </div>
           )}
 
+      {/* ══════════ ABA OPERAÇÕES ══════════ */}
+      {aba === 'operacoes' && (
+        <>
           {/* Filtros */}
           <div className="filter-row">
             <div className="filter-group" style={{ flex: '2 1 220px' }}>
@@ -1245,22 +1482,19 @@ export default function OperacoesPage() {
                   <th style={thSort} onClick={() => handleSort('prioridade')}>Prioridade{sortIcon('prioridade')}</th>
                   <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
                   <th style={thSort} onClick={() => handleSort('data_entrada')}>Data Entrada{sortIcon('data_entrada')}</th>
-                  <th>Avançar</th>
                   <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {carregando ? (
-                  <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : operacoesFiltradas.length === 0 ? (
-                  <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                  <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                     {busca || filtroStatus || filtroPrioridade || filtroTemperatura || filtroCorretora || filtroProduto
                       ? 'Nenhuma operação encontrada para os filtros selecionados.'
                       : 'Nenhuma operação registrada ainda.'}
                   </td></tr>
                 ) : operacoesFiltradas.map((op, i) => {
-                  const statusIdx = statusOpcoes.findIndex((s) => s.nome === op.status)
-                  const proximoStatus = statusOpcoes[statusIdx + 1] ?? null
                   return (
                     <tr key={op.id} onClick={() => abrirEditar(op)} style={{ cursor: 'pointer' }}>
                       <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
@@ -1302,25 +1536,6 @@ export default function OperacoesPage() {
                         {op.data_entrada ? fmtData(op.data_entrada) : '—'}
                       </td>
                       <td>
-                        {proximoStatus ? (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); mudarStatus(op, proximoStatus.nome); }}
-                            title={`Avançar para: ${proximoStatus.nome}`}
-                            style={{
-                              padding: '4px 10px', borderRadius: 6, border: 'none',
-                              background: proximoStatus.cor + '22',
-                              color: proximoStatus.cor,
-                              cursor: 'pointer', fontSize: 11, fontWeight: 700,
-                              fontFamily: "'Calibri','Segoe UI',sans-serif",
-                              whiteSpace: 'nowrap',
-                            }}>
-                            → {proximoStatus.nome}
-                          </button>
-                        ) : (
-                          <span style={{ color: '#6080a0', fontSize: 12 }}>—</span>
-                        )}
-                      </td>
-                      <td>
                         <button onClick={() => abrirEditar(op)}
                           style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
                           Editar
@@ -1334,6 +1549,88 @@ export default function OperacoesPage() {
           </div>
         </>
       )}
+
+      {/* ══════════ ABA COMITÊ ══════════ */}
+      {aba === 'comite' && (() => {
+        const emComite = operacoes.filter(op => op.status === 'Comitê')
+        return (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: '#6080a0' }}>
+                {emComite.length} operaç{emComite.length !== 1 ? 'ões' : 'ão'} aguardando decisão do Comitê
+              </div>
+            </div>
+            {emComite.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 48, color: '#6080a0', fontSize: 15, background: '#f8fafc', borderRadius: 10, border: '1.5px dashed #c5d5e8' }}>
+                🏛 Nenhuma operação aguardando decisão do Comitê.
+              </div>
+            ) : (
+              <div className="fam-table-wrap">
+                <table className="fam-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Tomador</th>
+                      <th>Corretora</th>
+                      <th>Cobertura / Modalidade</th>
+                      <th>LMG</th>
+                      <th>Taxa</th>
+                      <th>Temp.</th>
+                      <th>Data Entrada</th>
+                      <th>Decisão</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {emComite.map((op, i) => (
+                      <tr key={op.id} onClick={() => abrirEditar(op)} style={{ cursor: 'pointer' }}>
+                        <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
+                        <td>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{op.tomador?.razao_social ?? '—'}</div>
+                          {op.tomador?.cnpj && <div style={{ fontSize: 11, color: '#6080a0' }}>{maskCNPJ(op.tomador.cnpj)}</div>}
+                        </td>
+                        <td style={{ fontSize: 13, color: '#6080a0' }}>{op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'}</td>
+                        <td style={{ fontSize: 13 }}>
+                          <div>{op.produto?.nome ?? '—'}</div>
+                          {op.modalidade && <div style={{ fontSize: 11, color: '#6080a0' }}>{op.modalidade}</div>}
+                        </td>
+                        <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>{op.lmg ? fmtMoeda(op.lmg) : '—'}</td>
+                        <td style={{ fontSize: 13 }}>{op.taxa ? fmtPercent(op.taxa / 100) : '—'}</td>
+                        <td>
+                          {op.temperatura
+                            ? <span className={`badge ${badgeTemperatura(op.temperatura)}`}>{op.temperatura}</span>
+                            : <span style={{ color: '#6080a0', fontSize: 13 }}>—</span>}
+                        </td>
+                        <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
+                          {op.data_entrada ? fmtData(op.data_entrada) : '—'}
+                        </td>
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); mudarStatus(op, 'Aprovado') }}
+                              style={{ padding: '5px 10px', borderRadius: 6, border: 'none', background: '#d4f4e4', color: '#1a6a40', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                              ✅ Aprovar
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); mudarStatus(op, 'Recusado') }}
+                              style={{ padding: '5px 10px', borderRadius: 6, border: 'none', background: '#fbeaea', color: '#a02020', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                              ❌ Recusar
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); mudarStatus(op, 'Em Análise') }}
+                              style={{ padding: '5px 10px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                              ↩ Devolver
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )
+      })()}
 
       {/* ══════════ ABA STATUS ══════════ */}
       {aba === 'status' && (
@@ -1499,6 +1796,41 @@ export default function OperacoesPage() {
             </table>
           </div>
         </>
+      )}
+      {/* ── Modal Motivo (Perdido / Recusado) ── */}
+      {motivoModal && (
+        <div className="modal-overlay" style={{ zIndex: 1200 }} onClick={(e) => { if (e.target === e.currentTarget) { setMotivoModal(null); setMotivoInput('') } }}>
+          <div className="modal-box" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <div className="modal-title">
+                {typeof motivoModal === 'object' && motivoModal.novoStatus === 'Perdido' && '❌ Operação Perdida'}
+                {typeof motivoModal === 'object' && motivoModal.novoStatus === 'Recusado' && '🚫 Operação Recusada'}
+                {motivoModal === 'form' && (form.status === 'Perdido' ? '❌ Operação Perdida' : '🚫 Operação Recusada')}
+              </div>
+              <button onClick={() => { setMotivoModal(null); setMotivoInput('') }} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
+            </div>
+            <p style={{ fontSize: 13, color: '#6080a0', margin: '0 0 14px' }}>
+              Informe o motivo para registro. Este texto será salvo no campo de observação da operação.
+            </p>
+            <textarea
+              autoFocus
+              value={motivoInput}
+              onChange={(e) => setMotivoInput(e.target.value)}
+              placeholder="Descreva o motivo..."
+              rows={4}
+              style={{ width: '100%', resize: 'vertical', padding: '10px 12px', borderRadius: 8, border: '1.5px solid #c5d5e8', fontSize: 13, fontFamily: "'Calibri','Segoe UI',sans-serif", boxSizing: 'border-box', outline: 'none', color: '#1a2a3a' }}
+            />
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn-secondary" onClick={() => { setMotivoModal(null); setMotivoInput('') }}>Cancelar</button>
+              <button
+                onClick={confirmarMotivo}
+                disabled={!motivoInput.trim()}
+                style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: '#d64545', color: 'white', fontWeight: 700, cursor: motivoInput.trim() ? 'pointer' : 'not-allowed', opacity: motivoInput.trim() ? 1 : 0.5, fontSize: 14 }}>
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   )
