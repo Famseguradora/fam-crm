@@ -107,6 +107,7 @@ export default function OperacoesPage() {
   const [filtroCorretora, setFiltroCorretora] = useState('')
   const [filtroProduto, setFiltroProduto] = useState('')
   const [exportando, setExportando] = useState(false)
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
   const [importando, setImportando] = useState(false)
   const [resultadoImport, setResultadoImport] = useState<{
     inseridos: number
@@ -772,62 +773,211 @@ export default function OperacoesPage() {
 
   async function exportarPDF() {
     setExportando(true)
+    try {
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
       import('jspdf'),
       import('jspdf-autotable'),
     ])
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const W = 297, H = 210, M = 14
 
-    // Cabeçalho FAM
-    doc.setFillColor(16, 32, 64)
-    doc.rect(0, 0, 297, 22, 'F')
-    doc.setTextColor(232, 184, 75)
-    doc.setFontSize(14)
-    doc.text('FAM Seguradora — Operações / Subscrição', 14, 14)
-    doc.setTextColor(180, 200, 220)
-    doc.setFontSize(9)
     const dataHoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
-    doc.text(dataHoje, 230, 14)
+    const horaAgora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 
-    // Linha de KPIs
-    doc.setTextColor(40, 80, 120)
+    // ── 1. HEADER ──────────────────────────────────────────────────────────
+    doc.setFillColor(10, 22, 40)
+    doc.rect(0, 0, W, 34, 'F')
+    doc.setFillColor(232, 184, 75)
+    doc.rect(0, 0, W, 2.5, 'F')
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(22)
+    doc.setTextColor(255, 255, 255)
+    doc.text('FAM', M, 22)
+
+    doc.setDrawColor(232, 184, 75)
+    doc.setLineWidth(0.3)
+    doc.line(48, 9, 48, 30)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(232, 184, 75)
+    doc.text('S E G U R A D O R A', 52, 16)
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(13)
+    doc.setTextColor(255, 255, 255)
+    doc.text('Operações / Subscrição', 52, 24)
+
+    doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
-    doc.text(
-      `Operações: ${operacoesFiltradas.length}  |  LMG Total: ${fmtMoeda(kpis.lmgTotal)}  |  LMG Líquido: ${fmtMoeda(kpis.lmgLiquido)}  |  Prêmio Total: ${fmtMoeda(kpis.premioTotal)}  |  🔥 ${kpis.qtdQuente}  🌤 ${kpis.qtdMorno}  ❄ ${kpis.qtdFrio}`,
-      14, 30
-    )
+    doc.setTextColor(160, 192, 232)
+    doc.text('Relatório Completo', 52, 30)
 
-    // Tabela principal
+    doc.setFontSize(8)
+    doc.setTextColor(160, 192, 232)
+    doc.text(`Emitido em: ${dataHoje} às ${horaAgora}`, W - M, 16, { align: 'right' })
+
+    doc.setFontSize(6)
+    doc.setTextColor(120, 140, 160)
+    doc.text('Documento Confidencial · Gerado automaticamente pelo FAM CRM', W - M, 23, { align: 'right' })
+
+    // ── 2. KPI CARDS ───────────────────────────────────────────────────────
+    const cardTop = 38, cardH = 22
+    const cardW = (W - M * 2 - 16) / 5
+
+    const cards = [
+      { label: 'OPERAÇÕES', value: String(operacoesFiltradas.length), sub: 'Conforme filtros', ar: [30, 64, 120] },
+      { label: 'LMG TOTAL', value: fmtMoeda(kpis.lmgTotal), sub: 'Soma total carteira', ar: [16, 32, 64] },
+      { label: 'LMG LÍQUIDO', value: fmtMoeda(kpis.lmgLiquido), sub: 'Excl. negadas/perdidas', ar: [30, 64, 120] },
+      { label: 'PRÊMIO TOTAL', value: fmtMoeda(kpis.premioTotal), sub: 'Prêmios previstos', ar: [232, 184, 75] },
+      { label: 'TEMPERATURA', value: `Q ${kpis.qtdQuente}  M ${kpis.qtdMorno}  F ${kpis.qtdFrio}`, sub: 'Quente · Morno · Frio', ar: [214, 69, 69] },
+    ]
+
+    cards.forEach((card, idx) => {
+      const cx = M + idx * (cardW + 4)
+      doc.setFillColor(248, 251, 255)
+      doc.roundedRect(cx, cardTop, cardW, cardH, 2, 2, 'F')
+      doc.setDrawColor(197, 213, 232)
+      doc.setLineWidth(0.3)
+      doc.roundedRect(cx, cardTop, cardW, cardH, 2, 2, 'S')
+      doc.setFillColor(card.ar[0], card.ar[1], card.ar[2])
+      doc.rect(cx, cardTop, cardW, 1.5, 'F')
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(6.5)
+      doc.setTextColor(96, 128, 160)
+      doc.text(card.label, cx + cardW / 2, cardTop + 7.5, { align: 'center' })
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(idx === 0 ? 15 : 8.5)
+      doc.setTextColor(10, 22, 40)
+      doc.text(card.value, cx + cardW / 2, cardTop + 14.5, { align: 'center' })
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(6)
+      doc.setTextColor(120, 140, 160)
+      doc.text(card.sub, cx + cardW / 2, cardTop + 20, { align: 'center' })
+    })
+
+    // ── 3. FILTROS ATIVOS ──────────────────────────────────────────────────
+    let startY = cardTop + cardH + 5
+
+    const filtrosAtivos: string[] = []
+    if (busca) filtrosAtivos.push(`Busca: "${busca}"`)
+    if (filtroStatus) filtrosAtivos.push(`Status: ${filtroStatus}`)
+    if (filtroPrioridade) filtrosAtivos.push(`Prioridade: ${filtroPrioridade}`)
+    if (filtroTemperatura) filtrosAtivos.push(`Temperatura: ${filtroTemperatura}`)
+    if (filtroCorretora) {
+      const cor = corretoras.find(c => c.id === filtroCorretora)
+      filtrosAtivos.push(`Corretora: ${cor?.razao_social ?? filtroCorretora}`)
+    }
+    if (filtroProduto) {
+      const prod = produtos.find(p => p.id === filtroProduto)
+      filtrosAtivos.push(`Cobertura: ${prod?.nome ?? filtroProduto}`)
+    }
+
+    if (filtrosAtivos.length > 0) {
+      doc.setFillColor(232, 240, 250)
+      doc.rect(M, startY, W - M * 2, 8, 'F')
+      doc.setDrawColor(160, 192, 232)
+      doc.setLineWidth(0.3)
+      doc.rect(M, startY, W - M * 2, 8, 'S')
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(6.5)
+      doc.setTextColor(26, 53, 96)
+      doc.text('Filtros aplicados:', M + 3, startY + 5.2)
+      doc.setFont('helvetica', 'normal')
+      doc.text(filtrosAtivos.join('  ·  '), M + 33, startY + 5.2)
+      startY += 12
+    }
+
+    // ── 4. TABELA PRINCIPAL ────────────────────────────────────────────────
+    const lmgFiltrado = operacoesFiltradas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const premioFiltrado = operacoesFiltradas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+
     autoTable(doc, {
-      startY: 35,
-      head: [['#', 'Tomador', 'Corretora', 'Cobertura', 'LMG', 'Taxa', 'Vigência', 'Temp.', 'Status', 'Data Entrada']],
+      startY,
+      margin: { left: M, right: M, bottom: 14 },
+      head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'Temp.', 'LMG', 'Taxa', 'Vig.', 'Prêmio']],
       body: operacoesFiltradas.map((op, i) => [
         i + 1,
+        op.status,
         op.tomador?.razao_social ?? '—',
         op.corretora?.razao_social ?? '—',
-        op.produto?.nome ? `${op.produto.nome}${op.modalidade ? ' / ' + op.modalidade : ''}` : '—',
+        op.estado ?? '—',
+        op.produto?.nome ? `${op.produto.nome}${op.modalidade ? ' / ' + op.modalidade : ''}` : (op.modalidade ?? '—'),
+        op.temperatura ?? '—',
         op.lmg ? fmtMoeda(op.lmg) : '—',
         op.taxa ? fmtPercent(op.taxa / 100) : '—',
-        op.vigencia_anos ? `${op.vigencia_anos} ${op.periodicidade_vigencia === 'Meses' ? 'meses' : 'anos'}` : '—',
-        op.temperatura ?? '—',
-        op.status,
-        op.data_entrada ? fmtData(op.data_entrada) : '—',
+        op.vigencia_anos ? `${op.vigencia_anos}${op.periodicidade_vigencia === 'Meses' ? 'm' : 'a'}` : '—',
+        op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
       ]),
-      styles: { fontSize: 7, cellPadding: 2, font: 'helvetica' },
-      headStyles: { fillColor: [16, 32, 64], textColor: [232, 184, 75], fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [240, 246, 255] },
+      foot: [['', '', '', '', '', '', 'TOTAL', fmtMoeda(lmgFiltrado), '', '', fmtMoeda(premioFiltrado)]],
+      styles: {
+        fontSize: 7.5,
+        cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
+        font: 'helvetica',
+        textColor: [30, 40, 60],
+        lineColor: [210, 220, 235],
+        lineWidth: 0.15,
+      },
+      headStyles: {
+        fillColor: [10, 22, 40],
+        textColor: [232, 184, 75],
+        fontStyle: 'bold',
+        fontSize: 7.5,
+        cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 },
+      },
+      footStyles: {
+        fillColor: [10, 22, 40],
+        textColor: [232, 184, 75],
+        fontStyle: 'bold',
+        fontSize: 7.5,
+      },
+      alternateRowStyles: { fillColor: [245, 247, 252] },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 8 },
-        4: { halign: 'right', cellWidth: 26 },
-        5: { halign: 'right', cellWidth: 14 },
-        6: { halign: 'center', cellWidth: 18 },
-        7: { halign: 'center', cellWidth: 14 },
-        9: { halign: 'center', cellWidth: 22 },
+        0: { halign: 'center', cellWidth: 8, textColor: [100, 110, 130] },
+        1: { halign: 'center', cellWidth: 24 },
+        2: { cellWidth: 52 },
+        3: { cellWidth: 32 },
+        4: { halign: 'center', cellWidth: 10, textColor: [60, 80, 120] },
+        5: { cellWidth: 38 },
+        6: { halign: 'center', cellWidth: 14 },
+        7: { halign: 'right', cellWidth: 26, fontStyle: 'bold' },
+        8: { halign: 'right', cellWidth: 12 },
+        9: { halign: 'center', cellWidth: 12 },
+        10: { halign: 'right', cellWidth: 27, fontStyle: 'bold', textColor: [16, 64, 120] },
+      },
+      didDrawPage: () => {
+        doc.setDrawColor(232, 184, 75)
+        doc.setLineWidth(0.5)
+        doc.line(M, H - 8, W - M, H - 8)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(6)
+        doc.setTextColor(120, 140, 160)
+        doc.text('FAM Seguradora — Relatório Confidencial', M, H - 4)
+        doc.text(`${dataHoje} às ${horaAgora}`, W - M, H - 4, { align: 'right' })
       },
     })
 
-    doc.save(`FAM_Operacoes_${new Date().toISOString().slice(0, 10)}.pdf`)
-    setExportando(false)
+    // Paginação com total de páginas (conhecido após autoTable)
+    const totalPags = (doc as any).internal.getNumberOfPages()
+    for (let i = 1; i <= totalPags; i++) {
+      doc.setPage(i)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(6)
+      doc.setTextColor(120, 140, 160)
+      doc.text(`Página ${i} de ${totalPags}`, W / 2, H - 4, { align: 'center' })
+    }
+
+    const dataUri = doc.output('datauristring')
+    setPdfPreviewUrl(dataUri)
+    } catch (err) {
+      console.error('Erro ao gerar PDF:', err)
+    } finally {
+      setExportando(false)
+    }
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -958,6 +1108,9 @@ export default function OperacoesPage() {
           <div style={{ fontSize: 11, color: '#a05050', marginTop: 4 }}>
             ops · LMG · Prêmio: {fmtMoeda(kpis.premioQuente)}
           </div>
+          <div style={{ fontSize: 12, color: '#a03030', marginTop: 6, fontStyle: 'italic', borderTop: '1px dashed #f5b8b8', paddingTop: 6 }}>
+            Entrada prevista dentro do mês corrente
+          </div>
         </div>
         {/* Morno */}
         <div
@@ -979,6 +1132,9 @@ export default function OperacoesPage() {
           <div style={{ fontSize: 11, color: '#a07030', marginTop: 4 }}>
             ops · LMG · Prêmio: {fmtMoeda(kpis.premioMorno)}
           </div>
+          <div style={{ fontSize: 12, color: '#a06010', marginTop: 6, fontStyle: 'italic', borderTop: '1px dashed #f5d090', paddingTop: 6 }}>
+            Aprovado sem previsão de entrada
+          </div>
         </div>
         {/* Frio */}
         <div
@@ -999,6 +1155,9 @@ export default function OperacoesPage() {
           </div>
           <div style={{ fontSize: 11, color: '#4060a0', marginTop: 4 }}>
             ops · LMG · Prêmio: {fmtMoeda(kpis.premioFrio)}
+          </div>
+          <div style={{ fontSize: 12, color: '#1a4080', marginTop: 6, fontStyle: 'italic', borderTop: '1px dashed #b0d0f0', paddingTop: 6 }}>
+            Não aprovado / Perdido / Recusado
           </div>
         </div>
       </div>
@@ -1797,6 +1956,79 @@ export default function OperacoesPage() {
           </div>
         </>
       )}
+      {/* ── Modal Preview PDF ── */}
+      {pdfPreviewUrl && (
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.82)',
+          zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: 12,
+        }}>
+          <div style={{
+            display: 'flex', flexDirection: 'column',
+            width: '95vw', height: '95vh',
+            background: '#0a1628',
+            borderRadius: 14,
+            overflow: 'hidden',
+            boxShadow: '0 24px 80px rgba(0,0,0,0.7)',
+            border: '1px solid rgba(232,184,75,0.25)',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '10px 20px',
+              background: '#102040',
+              borderBottom: '2px solid #e8b84b',
+              flexShrink: 0,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div>
+                  <span style={{ color: '#e8b84b', fontWeight: 800, fontSize: 15 }}>FAM</span>
+                  <span style={{ color: 'rgba(232,184,75,0.5)', fontWeight: 400, fontSize: 9, marginLeft: 5, letterSpacing: 2 }}>SEGURADORA</span>
+                </div>
+                <div style={{ width: 1, height: 24, background: 'rgba(255,255,255,0.12)' }} />
+                <div>
+                  <div style={{ color: '#ffffff', fontWeight: 600, fontSize: 13 }}>Pré-visualização do Relatório</div>
+                  <div style={{ color: '#6080a0', fontSize: 11 }}>
+                    Operações / Subscrição — {operacoesFiltradas.length} registro{operacoesFiltradas.length !== 1 ? 's' : ''}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <a
+                  href={pdfPreviewUrl}
+                  download={`FAM_Operacoes_${new Date().toISOString().slice(0, 10)}.pdf`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '8px 20px', borderRadius: 8, textDecoration: 'none',
+                    background: '#e8b84b', color: '#102040',
+                    fontWeight: 700, fontSize: 13,
+                  }}
+                >
+                  ⬇ Baixar PDF
+                </a>
+                <button
+                  onClick={() => setPdfPreviewUrl(null)}
+                  style={{
+                    padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 13,
+                    background: 'rgba(255,255,255,0.07)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    color: '#a0c0e8', fontWeight: 500,
+                  }}
+                >
+                  ✕ Fechar
+                </button>
+              </div>
+            </div>
+            <iframe
+              src={pdfPreviewUrl}
+              style={{ flex: 1, border: 'none', background: '#f0f0f0' }}
+              title="Pré-visualização PDF"
+            />
+          </div>
+        </div>
+      )}
+
       {/* ── Modal Motivo (Perdido / Recusado) ── */}
       {motivoModal && (
         <div className="modal-overlay" style={{ zIndex: 1200 }} onClick={(e) => { if (e.target === e.currentTarget) { setMotivoModal(null); setMotivoInput('') } }}>
