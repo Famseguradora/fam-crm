@@ -368,7 +368,7 @@ export default function OperacoesPage() {
       codigo_cobertura: form.codigo_cobertura || null,
       lmg: lmgNum,
       taxa: taxaNum,
-      vigencia_anos: form.vigencia_anos ? parseInt(form.vigencia_anos) : null,
+      vigencia_anos: form.vigencia_anos ? parseFloat(form.vigencia_anos) : null,
       periodicidade_vigencia: form.periodicidade_vigencia,
       temperatura: autoTemp(form.status, form.temperatura || 'Frio'),
       prioridade: form.prioridade,
@@ -1398,6 +1398,7 @@ export default function OperacoesPage() {
                     <div className="form-field">
                       <label className="form-label">Vigência ({form.periodicidade_vigencia === 'Meses' ? 'meses' : 'anos'})</label>
                       <input className="fam-input" type="number"
+                        step="any"
                         placeholder={form.periodicidade_vigencia === 'Meses' ? 'Ex: 18' : 'Ex: 2'}
                         min={1} max={form.periodicidade_vigencia === 'Meses' ? 360 : 30}
                         value={form.vigencia_anos}
