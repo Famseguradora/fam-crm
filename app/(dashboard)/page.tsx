@@ -202,7 +202,9 @@ export default function DashboardPage() {
   const lmgLiquido = operacoes
     .filter(o => !['Recusado', 'Perdido'].includes(o.status ?? ''))
     .reduce((s, o) => s + (o.lmg ?? 0), 0)
-  const premioTotal = operacoes.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
+  const premioTotal = operacoes
+    .filter(o => !['Recusado', 'Perdido'].includes(o.status ?? ''))
+    .reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
 
   // ── chart data ────────────────────────────────────────────────────────────
 
@@ -440,7 +442,7 @@ export default function DashboardPage() {
               { label: 'Total de Operações', value: fmtNum(operacoes.length), sub: 'Todas as operações', dark: false },
               { label: 'LMG Total', value: fmtBRL(lmgTotal), sub: 'Soma total LMG', dark: false },
               { label: 'LMG Total em Potencial', value: fmtBRL(lmgLiquido), sub: 'LMG Total – Negados/Perdidos', dark: true },
-              { label: 'Prêmio Previsto Total', value: fmtBRL(premioTotal), sub: 'Soma prêmios previstos', dark: false },
+              { label: 'Prêmio Previsto Total', value: fmtBRL(premioTotal), sub: 'Soma prêmios previstos − Negados/Perdidos', dark: false },
             ].map((k, i) => (
               <div key={i} style={{
                 ...cardBase,
@@ -601,7 +603,7 @@ export default function DashboardPage() {
                 <Tooltip formatter={(v) => [fmtBRL(Number(v ?? 0)), 'Prêmio Previsto']} />
                 <Bar dataKey="valor" radius={[4, 4, 0, 0]}>
                   {topModalidades.map((_, idx) => (
-                    <Cell key={idx} fill={AZUIS[idx % AZUIS.length]} />
+                    <Cell key={idx} fill={AZUIS[idx % AZUIS.length]} fillOpacity={0.5} stroke={AZUIS[idx % AZUIS.length]} strokeOpacity={0.5} />
                   ))}
                 </Bar>
               </BarChart>

@@ -105,7 +105,7 @@ export default function OperacoesPage() {
   const [filtroPrioridade, setFiltroPrioridade] = useState('')
   const [filtroTemperatura, setFiltroTemperatura] = useState('')
   const [filtroCorretora, setFiltroCorretora] = useState('')
-  const [filtroProduto, setFiltroProduto] = useState('')
+  const [filtroModalidade, setFiltroModalidade] = useState('')
   const [exportando, setExportando] = useState(false)
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
   const [importando, setImportando] = useState(false)
@@ -171,7 +171,7 @@ export default function OperacoesPage() {
     const supabase = createClient()
     const [{ data: tom }, { data: cor }, { data: prod }, { data: mod }] = await Promise.all([
       supabase.from('tomadores').select('id,razao_social,cnpj,corretora_id').eq('ativo', true).order('razao_social'),
-      supabase.from('corretoras').select('id,razao_social').eq('status', 'ativo').order('razao_social'),
+      supabase.from('corretoras').select('id,razao_social,nome_fantasia').eq('status', 'ativo').order('razao_social'),
       supabase.from('produtos').select('id,nome,codigo').eq('status', 'ativo').order('codigo'),
       supabase.from('modalidades').select('id,nome,codigo_cobertura,produto_id').eq('status', 'ativo').order('codigo_cobertura'),
     ])
@@ -527,7 +527,7 @@ export default function OperacoesPage() {
       const priorMatch = !filtroPrioridade || op.prioridade === filtroPrioridade
       const tempMatch = !filtroTemperatura || op.temperatura === filtroTemperatura
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
-      const prodMatch = !filtroProduto || op.produto_id === filtroProduto
+      const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
       return textMatch && statusMatch && priorMatch && tempMatch && corrMatch && prodMatch
     })
     if (sortField) {
@@ -562,23 +562,20 @@ export default function OperacoesPage() {
       if (pa !== pb) return pa - pb
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     })
-  }, [operacoes, busca, filtroStatus, filtroPrioridade, filtroTemperatura, filtroCorretora, filtroProduto, sortField, sortDir])
+  }, [operacoes, busca, filtroStatus, filtroPrioridade, filtroTemperatura, filtroCorretora, filtroModalidade, sortField, sortDir])
 
   const kpis = useMemo(() => {
     const CAP = 80_000_000
-    const lmgTotal = operacoes.reduce((s, op) => s + (op.lmg ?? 0), 0)
-    const naoNegadas = operacoes.filter(op => op.status !== 'Perdido' && op.status !== 'Recusado')
+    const lmgTotal = operacoesFiltradas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const naoNegadas = operacoesFiltradas.filter(op => op.status !== 'Perdido' && op.status !== 'Recusado')
     const lmgLiquido = naoNegadas.reduce((s, op) => s + (op.lmg ?? 0), 0)
-    const lmgCapeadoTotal = operacoes.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
+    const lmgCapeadoTotal = operacoesFiltradas.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
     const premioTotal = naoNegadas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
-    const corretoras = new Set(operacoes.map(op => op.corretora_id).filter(Boolean)).size
-    const tomadores = new Set(operacoes.map(op => op.tomador_id).filter(Boolean)).size
-    const qtdQuente = operacoes.filter(op => op.temperatura === 'Quente').length
-    const qtdMorno  = operacoes.filter(op => op.temperatura === 'Morno').length
-    const qtdFrio   = operacoes.filter(op => op.temperatura === 'Frio').length
-    const quente = operacoes.filter(op => op.temperatura === 'Quente')
-    const morno  = operacoes.filter(op => op.temperatura === 'Morno')
-    const frio   = operacoes.filter(op => op.temperatura === 'Frio')
+    const corretoras = new Set(operacoesFiltradas.map(op => op.corretora_id).filter(Boolean)).size
+    const tomadores = new Set(operacoesFiltradas.map(op => op.tomador_id).filter(Boolean)).size
+    const quente = operacoesFiltradas.filter(op => op.temperatura === 'Quente')
+    const morno  = operacoesFiltradas.filter(op => op.temperatura === 'Morno')
+    const frio   = operacoesFiltradas.filter(op => op.temperatura === 'Frio')
     const lmgQuente    = quente.reduce((s, op) => s + (op.lmg ?? 0), 0)
     const lmgMorno     = morno.reduce((s, op) => s + (op.lmg ?? 0), 0)
     const lmgFrio      = frio.reduce((s, op) => s + (op.lmg ?? 0), 0)
@@ -586,14 +583,14 @@ export default function OperacoesPage() {
     const premioMorno  = morno.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     const premioFrio   = frio.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     return {
-      total: operacoes.length,
+      total: operacoesFiltradas.length,
       lmgTotal, lmgLiquido, lmgCapeadoTotal, premioTotal,
       corretoras, tomadores,
       qtdQuente: quente.length, qtdMorno: morno.length, qtdFrio: frio.length,
       lmgQuente, lmgMorno, lmgFrio,
       premioQuente, premioMorno, premioFrio,
     }
-  }, [operacoes])
+  }, [operacoesFiltradas])
 
   // ─── Import CSV ─────────────────────────────────────────────────────────────
 
@@ -779,7 +776,7 @@ export default function OperacoesPage() {
       import('jspdf-autotable'),
     ])
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
-    const W = 297, H = 210, M = 14
+    const W = 297, H = 210, M = 8
 
     const dataHoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
     const horaAgora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -809,10 +806,23 @@ export default function OperacoesPage() {
     doc.setTextColor(255, 255, 255)
     doc.text('Operações / Subscrição', 52, 24)
 
+    const tituloFiltros: string[] = []
+    if (filtroStatus) tituloFiltros.push(filtroStatus)
+    if (filtroTemperatura) tituloFiltros.push(filtroTemperatura)
+    if (filtroPrioridade) tituloFiltros.push(filtroPrioridade)
+    if (filtroModalidade) tituloFiltros.push(filtroModalidade)
+    if (filtroCorretora) {
+      const corrObj = corretoras.find(c => c.id === filtroCorretora)
+      if (corrObj) tituloFiltros.push(corrObj.nome_fantasia ?? corrObj.razao_social)
+    }
+    const tituloRelatorio = tituloFiltros.length > 0
+      ? `Relatório: ${tituloFiltros.map(f => `"${f}"`).join(' | ')}`
+      : 'Relatório Completo'
+
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8)
-    doc.setTextColor(160, 192, 232)
-    doc.text('Relatório Completo', 52, 30)
+    doc.setFontSize(tituloFiltros.length > 0 ? 8 : 9)
+    doc.setTextColor(tituloFiltros.length > 0 ? 232 : 160, tituloFiltros.length > 0 ? 184 : 192, tituloFiltros.length > 0 ? 75 : 232)
+    doc.text(tituloRelatorio, 52, 30)
 
     doc.setFontSize(8)
     doc.setTextColor(160, 192, 232)
@@ -824,14 +834,13 @@ export default function OperacoesPage() {
 
     // ── 2. KPI CARDS ───────────────────────────────────────────────────────
     const cardTop = 38, cardH = 22
-    const cardW = (W - M * 2 - 16) / 5
+    const cardW = (W - M * 2 - 12) / 4
 
     const cards = [
       { label: 'OPERAÇÕES', value: String(operacoesFiltradas.length), sub: 'Conforme filtros', ar: [30, 64, 120] },
       { label: 'LMG TOTAL', value: fmtMoeda(kpis.lmgTotal), sub: 'Soma total carteira', ar: [16, 32, 64] },
-      { label: 'LMG LÍQUIDO', value: fmtMoeda(kpis.lmgLiquido), sub: 'Excl. negadas/perdidas', ar: [30, 64, 120] },
+      { label: 'LMG EM POTENCIAL', value: fmtMoeda(kpis.lmgLiquido), sub: 'Excl. negadas/perdidas', ar: [30, 64, 120] },
       { label: 'PRÊMIO TOTAL', value: fmtMoeda(kpis.premioTotal), sub: 'Prêmios previstos', ar: [232, 184, 75] },
-      { label: 'TEMPERATURA', value: `Q ${kpis.qtdQuente}  M ${kpis.qtdMorno}  F ${kpis.qtdFrio}`, sub: 'Quente · Morno · Frio', ar: [214, 69, 69] },
     ]
 
     cards.forEach((card, idx) => {
@@ -845,17 +854,17 @@ export default function OperacoesPage() {
       doc.rect(cx, cardTop, cardW, 1.5, 'F')
 
       doc.setFont('helvetica', 'normal')
-      doc.setFontSize(6.5)
+      doc.setFontSize(7.5)
       doc.setTextColor(96, 128, 160)
       doc.text(card.label, cx + cardW / 2, cardTop + 7.5, { align: 'center' })
 
       doc.setFont('helvetica', 'bold')
-      doc.setFontSize(idx === 0 ? 15 : 8.5)
+      doc.setFontSize(idx === 0 ? 16 : 9.5)
       doc.setTextColor(10, 22, 40)
       doc.text(card.value, cx + cardW / 2, cardTop + 14.5, { align: 'center' })
 
       doc.setFont('helvetica', 'normal')
-      doc.setFontSize(6)
+      doc.setFontSize(7)
       doc.setTextColor(120, 140, 160)
       doc.text(card.sub, cx + cardW / 2, cardTop + 20, { align: 'center' })
     })
@@ -870,26 +879,25 @@ export default function OperacoesPage() {
     if (filtroTemperatura) filtrosAtivos.push(`Temperatura: ${filtroTemperatura}`)
     if (filtroCorretora) {
       const cor = corretoras.find(c => c.id === filtroCorretora)
-      filtrosAtivos.push(`Corretora: ${cor?.razao_social ?? filtroCorretora}`)
+      filtrosAtivos.push(`Corretora: ${cor?.nome_fantasia ?? cor?.razao_social ?? filtroCorretora}`)
     }
-    if (filtroProduto) {
-      const prod = produtos.find(p => p.id === filtroProduto)
-      filtrosAtivos.push(`Cobertura: ${prod?.nome ?? filtroProduto}`)
+    if (filtroModalidade) {
+      filtrosAtivos.push(`Modalidade: ${filtroModalidade}`)
     }
 
     if (filtrosAtivos.length > 0) {
       doc.setFillColor(232, 240, 250)
-      doc.rect(M, startY, W - M * 2, 8, 'F')
+      doc.rect(M, startY, W - M * 2, 10, 'F')
       doc.setDrawColor(160, 192, 232)
       doc.setLineWidth(0.3)
-      doc.rect(M, startY, W - M * 2, 8, 'S')
+      doc.rect(M, startY, W - M * 2, 10, 'S')
       doc.setFont('helvetica', 'bold')
-      doc.setFontSize(6.5)
+      doc.setFontSize(7.5)
       doc.setTextColor(26, 53, 96)
-      doc.text('Filtros aplicados:', M + 3, startY + 5.2)
+      doc.text('Filtros aplicados:', M + 3, startY + 6.5)
       doc.setFont('helvetica', 'normal')
-      doc.text(filtrosAtivos.join('  ·  '), M + 33, startY + 5.2)
-      startY += 12
+      doc.text(filtrosAtivos.join('  ·  '), M + 40, startY + 6.5)
+      startY += 14
     }
 
     // ── 4. TABELA PRINCIPAL ────────────────────────────────────────────────
@@ -904,9 +912,9 @@ export default function OperacoesPage() {
         i + 1,
         op.status,
         op.tomador?.razao_social ?? '—',
-        op.corretora?.razao_social ?? '—',
+        op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—',
         op.estado ?? '—',
-        op.produto?.nome ? `${op.produto.nome}${op.modalidade ? ' / ' + op.modalidade : ''}` : (op.modalidade ?? '—'),
+        op.modalidade ?? '—',
         op.temperatura ?? '—',
         op.lmg ? fmtMoeda(op.lmg) : '—',
         op.taxa ? fmtPercent(op.taxa / 100) : '—',
@@ -939,12 +947,12 @@ export default function OperacoesPage() {
       columnStyles: {
         0: { halign: 'center', cellWidth: 8, textColor: [100, 110, 130] },
         1: { halign: 'center', cellWidth: 24 },
-        2: { cellWidth: 52 },
-        3: { cellWidth: 32 },
+        2: { cellWidth: 58 },
+        3: { cellWidth: 36 },
         4: { halign: 'center', cellWidth: 10, textColor: [60, 80, 120] },
-        5: { cellWidth: 38 },
-        6: { halign: 'center', cellWidth: 14 },
-        7: { halign: 'right', cellWidth: 26, fontStyle: 'bold' },
+        5: { cellWidth: 44 },
+        6: { halign: 'center', cellWidth: 20 },
+        7: { halign: 'right', cellWidth: 30, fontStyle: 'bold' },
         8: { halign: 'right', cellWidth: 12 },
         9: { halign: 'center', cellWidth: 12 },
         10: { halign: 'right', cellWidth: 27, fontStyle: 'bold', textColor: [16, 64, 120] },
@@ -1071,7 +1079,7 @@ export default function OperacoesPage() {
           flex: '2 1 180px', minWidth: 160, padding: '14px 16px', borderRadius: 10,
           background: '#0d2040', border: '1px solid rgba(56,120,200,0.3)',
         }}>
-          <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: 'rgba(180,200,220,0.7)', marginBottom: 6 }}>LMG Total Líquido</div>
+          <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: 'rgba(180,200,220,0.7)', marginBottom: 6 }}>LMG Total em Potencial</div>
           <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpis.lmgLiquido)}</div>
           <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>LMG Total − Negados/Perdidos</div>
         </div>
@@ -1592,33 +1600,24 @@ export default function OperacoesPage() {
                 <option value="Fluxo Normal">Normal</option>
               </select>
             </div>
-            <div className="filter-group" style={{ flex: '1 1 130px' }}>
-              <label className="filter-label">Temperatura</label>
-              <select className="fam-input" value={filtroTemperatura} onChange={(e) => setFiltroTemperatura(e.target.value)}>
-                <option value="">Todas</option>
-                <option value="Quente">🔥 Quente</option>
-                <option value="Morno">🌤 Morno</option>
-                <option value="Frio">❄ Frio</option>
-              </select>
-            </div>
             <div className="filter-group" style={{ flex: '1 1 160px' }}>
               <label className="filter-label">Corretora</label>
               <select className="fam-input" value={filtroCorretora} onChange={(e) => setFiltroCorretora(e.target.value)}>
                 <option value="">Todas</option>
-                {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
+                {corretoras.map((c) => <option key={c.id} value={c.id}>{c.nome_fantasia ?? c.razao_social}</option>)}
               </select>
             </div>
             <div className="filter-group" style={{ flex: '1 1 160px' }}>
-              <label className="filter-label">Cobertura</label>
-              <select className="fam-input" value={filtroProduto} onChange={(e) => setFiltroProduto(e.target.value)}>
+              <label className="filter-label">Modalidade</label>
+              <select className="fam-input" value={filtroModalidade} onChange={(e) => setFiltroModalidade(e.target.value)}>
                 <option value="">Todas</option>
-                {produtos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                {modalidades.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
               </select>
             </div>
-            {(busca || filtroStatus || filtroPrioridade || filtroTemperatura || filtroCorretora || filtroProduto) && (
+            {(busca || filtroStatus || filtroPrioridade || filtroTemperatura || filtroCorretora || filtroModalidade) && (
               <div className="filter-group" style={{ justifyContent: 'flex-end' }}>
                 <label className="filter-label">&nbsp;</label>
-                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus(''); setFiltroPrioridade(''); setFiltroTemperatura(''); setFiltroCorretora(''); setFiltroProduto('') }}>Limpar</button>
+                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus(''); setFiltroPrioridade(''); setFiltroTemperatura(''); setFiltroCorretora(''); setFiltroModalidade('') }}>Limpar</button>
               </div>
             )}
             <div style={{ marginLeft: 'auto', fontSize: 13, color: '#6080a0', alignSelf: 'flex-end', paddingBottom: 2 }}>
@@ -1649,7 +1648,7 @@ export default function OperacoesPage() {
                   <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : operacoesFiltradas.length === 0 ? (
                   <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
-                    {busca || filtroStatus || filtroPrioridade || filtroTemperatura || filtroCorretora || filtroProduto
+                    {busca || filtroStatus || filtroPrioridade || filtroTemperatura || filtroCorretora || filtroModalidade
                       ? 'Nenhuma operação encontrada para os filtros selecionados.'
                       : 'Nenhuma operação registrada ainda.'}
                   </td></tr>
