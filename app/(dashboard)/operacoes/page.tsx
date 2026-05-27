@@ -103,7 +103,7 @@ export default function OperacoesPage() {
   const [busca, setBusca] = useState('')
   const [filtroStatus, setFiltroStatus] = useState('')
   const [filtroPrioridade, setFiltroPrioridade] = useState('')
-  const [filtroTemperatura, setFiltroTemperatura] = useState('')
+  const [filtroTemperatura, setFiltroTemperatura] = useState<string[]>([])
   const [filtroCorretora, setFiltroCorretora] = useState('')
   const [filtroModalidade, setFiltroModalidade] = useState('')
   const [exportando, setExportando] = useState(false)
@@ -331,7 +331,7 @@ export default function OperacoesPage() {
   function calcPremio(lmg: string, taxa: string, vigencia: string, periodo: string): string {
     const l = parseFloat(lmg.replace(/\./g, '').replace(',', '.'))
     const t = parseFloat(taxa.replace(',', '.'))
-    const v = parseFloat(vigencia)
+    const v = parseFloat(vigencia.replace(',', '.'))
     if (!isNaN(l) && !isNaN(t) && !isNaN(v) && t > 0 && v > 0) {
       const premioAnual = l * t / 100
       const total = periodo === 'Meses' ? (premioAnual / 12) * v : premioAnual * v
@@ -368,7 +368,7 @@ export default function OperacoesPage() {
       codigo_cobertura: form.codigo_cobertura || null,
       lmg: lmgNum,
       taxa: taxaNum,
-      vigencia_anos: form.vigencia_anos ? parseFloat(form.vigencia_anos) : null,
+      vigencia_anos: form.vigencia_anos ? parseFloat(form.vigencia_anos.replace(',', '.')) : null,
       periodicidade_vigencia: form.periodicidade_vigencia,
       temperatura: autoTemp(form.status, form.temperatura || 'Frio'),
       prioridade: form.prioridade,
@@ -525,7 +525,7 @@ export default function OperacoesPage() {
         (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
       const statusMatch = !filtroStatus || op.status === filtroStatus
       const priorMatch = !filtroPrioridade || op.prioridade === filtroPrioridade
-      const tempMatch = !filtroTemperatura || op.temperatura === filtroTemperatura
+      const tempMatch = filtroTemperatura.length === 0 || filtroTemperatura.includes(op.temperatura ?? '')
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
       const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
       return textMatch && statusMatch && priorMatch && tempMatch && corrMatch && prodMatch
@@ -808,7 +808,7 @@ export default function OperacoesPage() {
 
     const tituloFiltros: string[] = []
     if (filtroStatus) tituloFiltros.push(filtroStatus)
-    if (filtroTemperatura) tituloFiltros.push(filtroTemperatura)
+    if (filtroTemperatura.length > 0) tituloFiltros.push(filtroTemperatura.join('+'))
     if (filtroPrioridade) tituloFiltros.push(filtroPrioridade)
     if (filtroModalidade) tituloFiltros.push(filtroModalidade)
     if (filtroCorretora) {
@@ -876,7 +876,7 @@ export default function OperacoesPage() {
     if (busca) filtrosAtivos.push(`Busca: "${busca}"`)
     if (filtroStatus) filtrosAtivos.push(`Status: ${filtroStatus}`)
     if (filtroPrioridade) filtrosAtivos.push(`Prioridade: ${filtroPrioridade}`)
-    if (filtroTemperatura) filtrosAtivos.push(`Temperatura: ${filtroTemperatura}`)
+    if (filtroTemperatura.length > 0) filtrosAtivos.push(`Temperatura: ${filtroTemperatura.join(' + ')}`)
     if (filtroCorretora) {
       const cor = corretoras.find(c => c.id === filtroCorretora)
       filtrosAtivos.push(`Corretora: ${cor?.nome_fantasia ?? cor?.razao_social ?? filtroCorretora}`)
@@ -1098,16 +1098,20 @@ export default function OperacoesPage() {
       <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
         {/* Quente */}
         <div
-          onClick={() => setFiltroTemperatura(filtroTemperatura === 'Quente' ? '' : 'Quente')}
+          onClick={(e) => setFiltroTemperatura(prev => {
+            const sel = prev.includes('Quente')
+            if (e.ctrlKey || e.metaKey) return sel ? prev.filter(t => t !== 'Quente') : [...prev, 'Quente']
+            return sel && prev.length === 1 ? [] : ['Quente']
+          })}
           style={{
             padding: '12px 20px', borderRadius: 10, minWidth: 200, flex: '1 1 200px', cursor: 'pointer', transition: 'all 0.15s',
-            background: filtroTemperatura === 'Quente' ? '#ffd6d6' : '#fff5f5',
-            border: filtroTemperatura === 'Quente' ? '2px solid #d64545' : '1.5px solid #f5b8b8',
-            boxShadow: filtroTemperatura === 'Quente' ? '0 2px 8px rgba(214,69,69,0.18)' : 'none',
+            background: filtroTemperatura.includes('Quente') ? '#ffd6d6' : '#fff5f5',
+            border: filtroTemperatura.includes('Quente') ? '2px solid #d64545' : '1.5px solid #f5b8b8',
+            boxShadow: filtroTemperatura.includes('Quente') ? '0 2px 8px rgba(214,69,69,0.18)' : 'none',
           }}
         >
           <div style={{ fontSize: 11, fontWeight: 700, color: '#a03030', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
-            🔥 Quente {filtroTemperatura === 'Quente' && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
+            🔥 Quente {filtroTemperatura.includes('Quente') && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
             <span style={{ fontSize: 26, fontWeight: 800, color: '#d64545', lineHeight: 1 }}>{kpis.qtdQuente}</span>
@@ -1122,16 +1126,20 @@ export default function OperacoesPage() {
         </div>
         {/* Morno */}
         <div
-          onClick={() => setFiltroTemperatura(filtroTemperatura === 'Morno' ? '' : 'Morno')}
+          onClick={(e) => setFiltroTemperatura(prev => {
+            const sel = prev.includes('Morno')
+            if (e.ctrlKey || e.metaKey) return sel ? prev.filter(t => t !== 'Morno') : [...prev, 'Morno']
+            return sel && prev.length === 1 ? [] : ['Morno']
+          })}
           style={{
             padding: '12px 20px', borderRadius: 10, minWidth: 200, flex: '1 1 200px', cursor: 'pointer', transition: 'all 0.15s',
-            background: filtroTemperatura === 'Morno' ? '#ffe8c0' : '#fff8f0',
-            border: filtroTemperatura === 'Morno' ? '2px solid #d07830' : '1.5px solid #f5d090',
-            boxShadow: filtroTemperatura === 'Morno' ? '0 2px 8px rgba(208,120,48,0.18)' : 'none',
+            background: filtroTemperatura.includes('Morno') ? '#ffe8c0' : '#fff8f0',
+            border: filtroTemperatura.includes('Morno') ? '2px solid #d07830' : '1.5px solid #f5d090',
+            boxShadow: filtroTemperatura.includes('Morno') ? '0 2px 8px rgba(208,120,48,0.18)' : 'none',
           }}
         >
           <div style={{ fontSize: 11, fontWeight: 700, color: '#a06010', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
-            🌤 Morno {filtroTemperatura === 'Morno' && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
+            🌤 Morno {filtroTemperatura.includes('Morno') && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
             <span style={{ fontSize: 26, fontWeight: 800, color: '#d07830', lineHeight: 1 }}>{kpis.qtdMorno}</span>
@@ -1146,16 +1154,20 @@ export default function OperacoesPage() {
         </div>
         {/* Frio */}
         <div
-          onClick={() => setFiltroTemperatura(filtroTemperatura === 'Frio' ? '' : 'Frio')}
+          onClick={(e) => setFiltroTemperatura(prev => {
+            const sel = prev.includes('Frio')
+            if (e.ctrlKey || e.metaKey) return sel ? prev.filter(t => t !== 'Frio') : [...prev, 'Frio']
+            return sel && prev.length === 1 ? [] : ['Frio']
+          })}
           style={{
             padding: '12px 20px', borderRadius: 10, minWidth: 200, flex: '1 1 200px', cursor: 'pointer', transition: 'all 0.15s',
-            background: filtroTemperatura === 'Frio' ? '#c8deff' : '#f0f6ff',
-            border: filtroTemperatura === 'Frio' ? '2px solid #3070c8' : '1.5px solid #b0d0f0',
-            boxShadow: filtroTemperatura === 'Frio' ? '0 2px 8px rgba(48,112,200,0.18)' : 'none',
+            background: filtroTemperatura.includes('Frio') ? '#c8deff' : '#f0f6ff',
+            border: filtroTemperatura.includes('Frio') ? '2px solid #3070c8' : '1.5px solid #b0d0f0',
+            boxShadow: filtroTemperatura.includes('Frio') ? '0 2px 8px rgba(48,112,200,0.18)' : 'none',
           }}
         >
           <div style={{ fontSize: 11, fontWeight: 700, color: '#1a4080', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
-            ❄ Frio {filtroTemperatura === 'Frio' && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
+            ❄ Frio {filtroTemperatura.includes('Frio') && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
             <span style={{ fontSize: 26, fontWeight: 800, color: '#3070c8', lineHeight: 1 }}>{kpis.qtdFrio}</span>
@@ -1397,14 +1409,16 @@ export default function OperacoesPage() {
                     </div>
                     <div className="form-field">
                       <label className="form-label">Vigência ({form.periodicidade_vigencia === 'Meses' ? 'meses' : 'anos'})</label>
-                      <input className="fam-input" type="number"
-                        step="any"
-                        placeholder={form.periodicidade_vigencia === 'Meses' ? 'Ex: 18' : 'Ex: 2'}
-                        min={1} max={form.periodicidade_vigencia === 'Meses' ? 360 : 30}
+                      <input className="fam-input" type="text"
+                        inputMode="decimal"
+                        placeholder={form.periodicidade_vigencia === 'Meses' ? 'Ex: 18' : 'Ex: 0,6'}
                         value={form.vigencia_anos}
                         onChange={(e) => {
-                          const vigencia_anos = e.target.value
-                          setForm((f) => ({ ...f, vigencia_anos, premio_previsto: calcPremio(f.lmg, f.taxa, vigencia_anos, f.periodicidade_vigencia) }))
+                          const raw = e.target.value
+                          if (raw === '' || /^[\d.,]*$/.test(raw)) {
+                            const vigencia_anos = raw
+                            setForm((f) => ({ ...f, vigencia_anos, premio_previsto: calcPremio(f.lmg, f.taxa, vigencia_anos, f.periodicidade_vigencia) }))
+                          }
                         }} />
                     </div>
                     <div className="form-field">
@@ -1615,10 +1629,10 @@ export default function OperacoesPage() {
                 {modalidades.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
               </select>
             </div>
-            {(busca || filtroStatus || filtroPrioridade || filtroTemperatura || filtroCorretora || filtroModalidade) && (
+            {(busca || filtroStatus || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade) && (
               <div className="filter-group" style={{ justifyContent: 'flex-end' }}>
                 <label className="filter-label">&nbsp;</label>
-                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus(''); setFiltroPrioridade(''); setFiltroTemperatura(''); setFiltroCorretora(''); setFiltroModalidade('') }}>Limpar</button>
+                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus(''); setFiltroPrioridade(''); setFiltroTemperatura([]); setFiltroCorretora(''); setFiltroModalidade('') }}>Limpar</button>
               </div>
             )}
             <div style={{ marginLeft: 'auto', fontSize: 13, color: '#6080a0', alignSelf: 'flex-end', paddingBottom: 2 }}>
@@ -1649,7 +1663,7 @@ export default function OperacoesPage() {
                   <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : operacoesFiltradas.length === 0 ? (
                   <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
-                    {busca || filtroStatus || filtroPrioridade || filtroTemperatura || filtroCorretora || filtroModalidade
+                    {busca || filtroStatus || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade
                       ? 'Nenhuma operação encontrada para os filtros selecionados.'
                       : 'Nenhuma operação registrada ainda.'}
                   </td></tr>
