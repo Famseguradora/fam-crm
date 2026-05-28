@@ -24,17 +24,13 @@ interface Tab {
 
 const TABS: Tab[] = [
   { label: '📊 Dashboard',  href: '/' },
-  { label: '🔍 Triagem',    href: '/triagem',   disabled: true },
   { label: '👥 Tomadores',  href: '/tomadores' },
   { label: '📋 Operações',  href: '/operacoes' },
   { label: '🏢 Corretoras', href: '/corretoras', adminOnly: true },
   { label: '📦 Produtos',   href: '/produtos',   adminOnly: true },
 ]
 
-const SUBSCRICAO_ITEMS = [
-  { label: 'Análise de Crédito',    href: '/subscricao/analise-credito',    icon: '📈' },
-  { label: 'Análise de Subscrição', href: '/subscricao/analise-subscricao', icon: '📋', disabled: true },
-]
+const SUBSCRICAO_ITEMS: { label: string; href: string; icon: string; disabled?: boolean }[] = []
 
 const PERFORMANCE_ITEMS = [
   { label: 'Performance', href: '/performance', icon: '📊' },
@@ -351,21 +347,6 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
           </button>
 
           {/* Subscrição */}
-          <div style={{ paddingTop: 16 }}>
-            {sidebarOpen && (
-              <div style={{
-                fontSize: 10, fontWeight: 700, color: '#4a7ab5',
-                letterSpacing: '1.5px', textTransform: 'uppercase',
-                padding: '0 16px 8px',
-                whiteSpace: 'nowrap',
-              }}>
-                Subscrição
-              </div>
-            )}
-            {SUBSCRICAO_ITEMS.map((item) => (
-              <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} disabled={item.disabled} />
-            ))}
-          </div>
 
           {/* Performance */}
           <div style={{ paddingTop: 8 }}>

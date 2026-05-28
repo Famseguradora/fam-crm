@@ -223,6 +223,34 @@ CREATE POLICY "Autenticados — escrita" ON public.dashboard_config
 -- 'status_operacoes'        → Status das Operações
 -- 'premio_modalidade'       → Prêmio Previsto por Modalidade
 
+-- ── Tabela: anexos ───────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.anexos (
+  id             UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  entidade_tipo  TEXT        NOT NULL CHECK (entidade_tipo IN ('tomador', 'operacao', 'corretora')),
+  entidade_id    UUID        NOT NULL,
+  tomador_id     UUID        REFERENCES public.tomadores(id) ON DELETE SET NULL,
+  nome_original  TEXT        NOT NULL,
+  storage_path   TEXT        NOT NULL,
+  tipo_mime      TEXT,
+  tamanho_bytes  NUMERIC,
+  created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.anexos ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Autenticados podem ler anexos"
+  ON public.anexos FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Autenticados podem inserir anexos"
+  ON public.anexos FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Autenticados podem deletar anexos"
+  ON public.anexos FOR DELETE TO authenticated USING (true);
+
+-- Storage bucket: fam-anexos (privado, 5 MB por arquivo)
+-- Criar manualmente no Supabase Dashboard → Storage → New Bucket
+-- Nome: fam-anexos | Public: false | File size limit: 5242880
+
 -- ============================================================
 --  FIM DO SCHEMA — FAM SEGURADORA CRM v1.0
 -- ============================================================

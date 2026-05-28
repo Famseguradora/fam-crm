@@ -4,7 +4,6 @@ interface SystemPromptOptions {
   tomadorId?: string
   tomadorNome?: string
   operacaoValor?: string
-  incluirContextoCRM?: boolean
 }
 
 export async function buildSystemPrompt(options: SystemPromptOptions = {}): Promise<string> {
@@ -56,34 +55,8 @@ export async function buildSystemPrompt(options: SystemPromptOptions = {}): Prom
     if (options.operacaoValor) partes.push(`Valor da operacao: ${options.operacaoValor}`)
   }
 
-  if (options.incluirContextoCRM && options.tomadorId) {
-    const contexto = await buscarContextoCRM(supabase, options.tomadorId)
-    if (contexto) {
-      partes.push('\n=== HISTORICO DO TOMADOR NO CRM ===')
-      partes.push(contexto)
-    }
-  }
-
   partes.push('\n=== FORMATO DE RESPOSTA ===')
   partes.push('Retorne EXCLUSIVAMENTE JSON valido. Sem texto antes ou apos. Sem markdown. Sem comentarios.')
 
   return partes.join('\n')
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function buscarContextoCRM(supabase: any, tomadorId: string): Promise<string | null> {
-  const { data } = await supabase
-    .from('analise_sessoes')
-    .select('tipo, conteudo, criado_em')
-    .eq('tomador_id', tomadorId)
-    .order('criado_em', { ascending: false })
-    .limit(5)
-
-  if (!data || data.length === 0) return null
-
-  return data.map((s: { tipo: string; criado_em: string; conteudo: string }) => {
-    const dt = new Date(s.criado_em).toLocaleDateString('pt-BR')
-    const preview = typeof s.conteudo === 'string' ? s.conteudo.slice(0, 300) : JSON.stringify(s.conteudo).slice(0, 300)
-    return `[${s.tipo.toUpperCase()} - ${dt}]: ${preview}...`
-  }).join('\n\n')
 }

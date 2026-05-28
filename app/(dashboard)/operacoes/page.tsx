@@ -5,8 +5,9 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskMoeda, fmtMoeda, fmtData, fmtPercent } from '@/lib/utils'
-import type { Operacao, Tomador, Corretora, Produto, StatusFluxo } from '@/types'
+import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario } from '@/types'
 import AnexosSection from '@/components/AnexosSection'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Line, AreaChart, Area, CartesianGrid, Cell } from 'recharts'
 
 interface ModalidadeBasica {
   id: string
@@ -76,9 +77,11 @@ const PRIORIDADE_ORDEM: Record<string, number> = {
   'Urgente': 0, 'Prioridade': 1, 'Fluxo Normal': 2,
 }
 
-function autoTemp(novoStatus: string, tempAtual: string): string {
+const STATUS_PROTEGIDOS = ['Aprovado', 'Emitido', 'Perdido', 'Recusado', 'Comitê']
+
+function autoTemp(novoStatus: string, tempAtual: string | null): string | null {
   if (novoStatus === 'Perdido' || novoStatus === 'Recusado') return 'Frio'
-  if (novoStatus === 'Aprovado') return 'Quente'
+  if (novoStatus === 'Emitido') return null
   return tempAtual
 }
 
@@ -101,7 +104,9 @@ export default function OperacoesPage() {
   const [enviando, setEnviando] = useState(false)
   const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
   const [busca, setBusca] = useState('')
-  const [filtroStatus, setFiltroStatus] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState<string[]>([])
+  const [incluirEmitidas, setIncluirEmitidas] = useState(false)
+  const [incluirPerdidas, setIncluirPerdidas] = useState(false)
   const [filtroPrioridade, setFiltroPrioridade] = useState('')
   const [filtroTemperatura, setFiltroTemperatura] = useState<string[]>([])
   const [filtroCorretora, setFiltroCorretora] = useState('')
@@ -137,6 +142,19 @@ export default function OperacoesPage() {
   // ── Sorting ──
   const [sortField, setSortField] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  // ── Comitê Cockpit ──
+  const [expandidoComiteId, setExpandidoComiteId] = useState<string | null>(null)
+  const [abaSimulador, setAbaSimulador] = useState<Record<string, number>>({})
+  const [simInputs, setSimInputs] = useState<Record<string, { sinistralidade: number; carregamento: number; margem: number }>>({})
+  const [metaMensal, setMetaMensal] = useState<MetaNegocio | null>(null)
+  const [metaAnual, setMetaAnual] = useState<MetaNegocio | null>(null)
+  const [mostrarConfigurarMetas, setMostrarConfigurarMetas] = useState(false)
+  const [formMeta, setFormMeta] = useState({ premio_mensal: '', premio_anual: '', taxa_ponderada: '', lmg_meta: '', risco_judicial: '', sinistralidade: '', observacao: '' })
+  const [salvandoMeta, setSalvandoMeta] = useState(false)
+  const [comentariosComite, setComentariosComite] = useState<Record<string, ComiteComentario[]>>({})
+  const [novoComentarioForm, setNovoComentarioForm] = useState<Record<string, { autor: string; comentario: string; tipo: string }>>({})
+  const [salvandoComentario, setSalvandoComentario] = useState(false)
 
   // ── Cadastro Básico Tomador ──
   const [mostrarFormTomador, setMostrarFormTomador] = useState(false)
@@ -181,11 +199,35 @@ export default function OperacoesPage() {
     setModalidades((mod as ModalidadeBasica[]) ?? [])
   }, [])
 
+  const carregarMetas = useCallback(async () => {
+    const supabase = createClient()
+    const agora = new Date()
+    const periodoMes = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`
+    const periodoAno = `${agora.getFullYear()}`
+    const { data } = await supabase.from('metas_negocio').select('*').in('periodo', [periodoMes, periodoAno])
+    const lista = (data as MetaNegocio[]) ?? []
+    setMetaMensal(lista.find(m => m.tipo === 'mensal') ?? null)
+    setMetaAnual(lista.find(m => m.tipo === 'anual') ?? null)
+  }, [])
+
+  const carregarComentariosComite = useCallback(async (opIds: string[]) => {
+    if (opIds.length === 0) return
+    const supabase = createClient()
+    const { data } = await supabase.from('comite_comentarios').select('*').in('operacao_id', opIds).order('created_at', { ascending: true })
+    const mapa: Record<string, ComiteComentario[]> = {}
+    for (const c of (data as ComiteComentario[]) ?? []) {
+      if (!mapa[c.operacao_id]) mapa[c.operacao_id] = []
+      mapa[c.operacao_id].push(c)
+    }
+    setComentariosComite(prev => ({ ...prev, ...mapa }))
+  }, [])
+
   useEffect(() => {
     carregarOperacoes()
     carregarStatusLista()
     carregarAuxiliares()
-  }, [carregarOperacoes, carregarStatusLista, carregarAuxiliares])
+    carregarMetas()
+  }, [carregarOperacoes, carregarStatusLista, carregarAuxiliares, carregarMetas])
 
   useEffect(() => {
     const supabase = createClient()
@@ -370,7 +412,7 @@ export default function OperacoesPage() {
       taxa: taxaNum,
       vigencia_anos: form.vigencia_anos ? parseFloat(form.vigencia_anos.replace(',', '.')) : null,
       periodicidade_vigencia: form.periodicidade_vigencia,
-      temperatura: autoTemp(form.status, form.temperatura || 'Frio'),
+      temperatura: autoTemp(form.status, form.temperatura || null),
       prioridade: form.prioridade,
       estado: form.estado || null,
       observacao: obsComMotivo,
@@ -415,7 +457,7 @@ export default function OperacoesPage() {
 
   async function _executarMudarStatus(op: Operacao, novoStatus: string, motivo: string) {
     const supabase = createClient()
-    const novaTemp = autoTemp(novoStatus, op.temperatura ?? 'Frio')
+    const novaTemp = autoTemp(novoStatus, op.temperatura ?? null)
     const updateData: Record<string, unknown> = { status: novoStatus, temperatura: novaTemp }
     if (motivo) updateData.observacao = `Motivo: ${motivo}${op.observacao ? '\n\n' + op.observacao : ''}`
     const { error } = await supabase.from('operacoes').update(updateData).eq('id', op.id)
@@ -515,15 +557,58 @@ export default function OperacoesPage() {
 
   const thSort: React.CSSProperties = { cursor: 'pointer', userSelect: 'none' }
 
-  const operacoesFiltradas = useMemo(() => {
-    const filtered = operacoes.filter((op) => {
+  const operacoesEmitidas = useMemo(() => {
+    return operacoes.filter((op) => {
+      if (op.status !== 'Emitido') return false
       const buscaLow = busca.toLowerCase()
       const textMatch = !busca ||
         (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
         (op.tomador?.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
         (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
         (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
-      const statusMatch = !filtroStatus || op.status === filtroStatus
+      const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
+      const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
+      return textMatch && corrMatch && prodMatch
+    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  }, [operacoes, busca, filtroCorretora, filtroModalidade])
+
+  const kpisEmitido = useMemo(() => {
+    const lmg = operacoesEmitidas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const premio = operacoesEmitidas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+    return { count: operacoesEmitidas.length, lmg, premio }
+  }, [operacoesEmitidas])
+
+  const operacoesPerdidas = useMemo(() => {
+    return operacoes.filter((op) => {
+      if (op.status !== 'Perdido' && op.status !== 'Recusado') return false
+      const buscaLow = busca.toLowerCase()
+      const textMatch = !busca ||
+        (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.tomador?.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
+        (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
+      const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
+      const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
+      return textMatch && corrMatch && prodMatch
+    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  }, [operacoes, busca, filtroCorretora, filtroModalidade])
+
+  const kpisPerdido = useMemo(() => {
+    const lmg = operacoesPerdidas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const premio = operacoesPerdidas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+    return { count: operacoesPerdidas.length, lmg, premio }
+  }, [operacoesPerdidas])
+
+  const operacoesFiltradas = useMemo(() => {
+    const filtered = operacoes.filter((op) => {
+      if (op.status === 'Emitido' || op.status === 'Perdido' || op.status === 'Recusado') return false
+      const buscaLow = busca.toLowerCase()
+      const textMatch = !busca ||
+        (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.tomador?.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
+        (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
+      const statusMatch = filtroStatus.length === 0 || filtroStatus.includes(op.status ?? '')
       const priorMatch = !filtroPrioridade || op.prioridade === filtroPrioridade
       const tempMatch = filtroTemperatura.length === 0 || filtroTemperatura.includes(op.temperatura ?? '')
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
@@ -564,13 +649,36 @@ export default function OperacoesPage() {
     })
   }, [operacoes, busca, filtroStatus, filtroPrioridade, filtroTemperatura, filtroCorretora, filtroModalidade, sortField, sortDir])
 
+  const kpisPerStatus = useMemo(() => {
+    const map: Record<string, { count: number; lmg: number; premio: number }> = {}
+    operacoes.forEach((op) => {
+      if (op.status === 'Emitido' || op.status === 'Perdido' || op.status === 'Recusado') return
+      const buscaLow = busca.toLowerCase()
+      const textMatch = !busca ||
+        (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.tomador?.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
+        (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
+      const tempMatch = filtroTemperatura.length === 0 || filtroTemperatura.includes(op.temperatura ?? '')
+      const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
+      const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
+      const priorMatch = !filtroPrioridade || op.prioridade === filtroPrioridade
+      if (!textMatch || !tempMatch || !corrMatch || !prodMatch || !priorMatch) return
+      const s = op.status ?? ''
+      if (!map[s]) map[s] = { count: 0, lmg: 0, premio: 0 }
+      map[s].count++
+      map[s].lmg += op.lmg ?? 0
+      map[s].premio += op.premio_previsto ?? 0
+    })
+    return map
+  }, [operacoes, busca, filtroTemperatura, filtroCorretora, filtroModalidade, filtroPrioridade])
+
   const kpis = useMemo(() => {
     const CAP = 80_000_000
     const lmgTotal = operacoesFiltradas.reduce((s, op) => s + (op.lmg ?? 0), 0)
-    const naoNegadas = operacoesFiltradas.filter(op => op.status !== 'Perdido' && op.status !== 'Recusado')
-    const lmgLiquido = naoNegadas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const lmgLiquido = operacoesFiltradas.reduce((s, op) => s + (op.lmg ?? 0), 0)
     const lmgCapeadoTotal = operacoesFiltradas.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
-    const premioTotal = naoNegadas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+    const premioTotal = operacoesFiltradas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     const corretoras = new Set(operacoesFiltradas.map(op => op.corretora_id).filter(Boolean)).size
     const tomadores = new Set(operacoesFiltradas.map(op => op.tomador_id).filter(Boolean)).size
     const quente = operacoesFiltradas.filter(op => op.temperatura === 'Quente')
@@ -591,6 +699,109 @@ export default function OperacoesPage() {
       premioQuente, premioMorno, premioFrio,
     }
   }, [operacoesFiltradas])
+
+  const kpisFiltroAtivo = useMemo(() => {
+    const anyFilter = filtroTemperatura.length > 0 || incluirEmitidas || incluirPerdidas
+    if (!anyFilter) return null
+    let lmg = 0, premio = 0, count = 0
+    if (filtroTemperatura.includes('Quente'))  { lmg += kpis.lmgQuente;  premio += kpis.premioQuente;  count += kpis.qtdQuente }
+    if (filtroTemperatura.includes('Morno'))   { lmg += kpis.lmgMorno;   premio += kpis.premioMorno;   count += kpis.qtdMorno }
+    if (filtroTemperatura.includes('Frio'))    { lmg += kpis.lmgFrio;    premio += kpis.premioFrio;    count += kpis.qtdFrio }
+    if (incluirEmitidas) { lmg += kpisEmitido.lmg;  premio += kpisEmitido.premio;  count += kpisEmitido.count }
+    if (incluirPerdidas) { lmg += kpisPerdido.lmg;  premio += kpisPerdido.premio;  count += kpisPerdido.count }
+    return { lmg, premio, count }
+  }, [filtroTemperatura, incluirEmitidas, incluirPerdidas, kpis, kpisEmitido, kpisPerdido])
+
+  // ─── Comitê — Book & Portfolio Memos ────────────────────────────────────────
+
+  const periodoMesAtual = useMemo(() => {
+    const a = new Date(); return `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, '0')}`
+  }, [])
+
+  const bookOps = useMemo(() =>
+    operacoes.filter(op => op.status === 'Aprovado' || op.status === 'Emitido'),
+    [operacoes])
+
+  const bookLmgTotal = useMemo(() => bookOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookOps])
+  const bookPremioTotal = useMemo(() => bookOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookOps])
+  const bookTmpTotal = useMemo(() => {
+    const wSum = bookOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0), 0)
+    return bookLmgTotal > 0 ? wSum / bookLmgTotal : 0
+  }, [bookOps, bookLmgTotal])
+
+  const emitidosOps = useMemo(() =>
+    operacoes.filter(op => op.status === 'Emitido'),
+    [operacoes])
+
+  const emitidosLmgTotal = useMemo(() => emitidosOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [emitidosOps])
+  const emitidosPremioTotal = useMemo(() => emitidosOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [emitidosOps])
+  const emitidosTmpTotal = useMemo(() => {
+    const wSum = emitidosOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0), 0)
+    return emitidosLmgTotal > 0 ? wSum / emitidosLmgTotal : 0
+  }, [emitidosOps, emitidosLmgTotal])
+
+  const premioRealizadoMes = useMemo(() =>
+    operacoes
+      .filter(op => op.status === 'Emitido' && (op.data_entrada ?? '').startsWith(periodoMesAtual))
+      .reduce((s, op) => s + (op.premio_previsto ?? 0), 0),
+    [operacoes, periodoMesAtual])
+
+  const premioRealizadoAno = useMemo(() => {
+    const ano = new Date().getFullYear().toString()
+    return operacoes
+      .filter(op => op.status === 'Emitido' && (op.data_entrada ?? '').startsWith(ano))
+      .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+  }, [operacoes])
+
+  const exposicaoPorModalidade = useMemo(() => {
+    const map: Record<string, { qtd: number; lmg: number; premio: number; taxaMin: number; taxaMax: number; taxaLmg: number }> = {}
+    for (const op of bookOps) {
+      const m = op.modalidade ?? 'Não informada'
+      if (!map[m]) map[m] = { qtd: 0, lmg: 0, premio: 0, taxaMin: Infinity, taxaMax: -Infinity, taxaLmg: 0 }
+      map[m].qtd++
+      map[m].lmg += op.lmg ?? 0
+      map[m].premio += op.premio_previsto ?? 0
+      if (op.taxa != null) {
+        map[m].taxaMin = Math.min(map[m].taxaMin, op.taxa)
+        map[m].taxaMax = Math.max(map[m].taxaMax, op.taxa)
+        map[m].taxaLmg += op.taxa * (op.lmg ?? 0)
+      }
+    }
+    return Object.entries(map).map(([modalidade, d]) => ({
+      modalidade,
+      qtd: d.qtd,
+      lmg: d.lmg,
+      pctLmg: bookLmgTotal > 0 ? d.lmg / bookLmgTotal * 100 : 0,
+      premio: d.premio,
+      pctPremio: bookPremioTotal > 0 ? d.premio / bookPremioTotal * 100 : 0,
+      taxaMin: d.taxaMin === Infinity ? 0 : d.taxaMin,
+      taxaMax: d.taxaMax === -Infinity ? 0 : d.taxaMax,
+      tmp: d.lmg > 0 ? d.taxaLmg / d.lmg : 0,
+    })).sort((a, b) => b.premio - a.premio)
+  }, [bookOps, bookLmgTotal, bookPremioTotal])
+
+  const exposicaoPorTomador = useMemo(() => {
+    const map: Record<string, { nome: string; qtd: number; lmg: number; premio: number; taxaLmg: number; limiteAprovado: number | null }> = {}
+    for (const op of bookOps) {
+      const tid = op.tomador_id ?? '__sem__'
+      if (!map[tid]) map[tid] = { nome: op.tomador?.razao_social ?? 'Não informado', qtd: 0, lmg: 0, premio: 0, taxaLmg: 0, limiteAprovado: op.tomador?.limite_aprovado ?? null }
+      map[tid].qtd++
+      map[tid].lmg += op.lmg ?? 0
+      map[tid].premio += op.premio_previsto ?? 0
+      if (op.taxa != null) map[tid].taxaLmg += op.taxa * (op.lmg ?? 0)
+    }
+    return Object.values(map).map(d => ({
+      nome: d.nome.length > 22 ? d.nome.slice(0, 20) + '…' : d.nome,
+      nomeCompleto: d.nome,
+      qtd: d.qtd,
+      lmg: d.lmg,
+      pctLmg: bookLmgTotal > 0 ? d.lmg / bookLmgTotal * 100 : 0,
+      premio: d.premio,
+      pctPremio: bookPremioTotal > 0 ? d.premio / bookPremioTotal * 100 : 0,
+      tmp: d.lmg > 0 ? d.taxaLmg / d.lmg : 0,
+      limiteAprovado: d.limiteAprovado,
+    })).sort((a, b) => b.premio - a.premio).slice(0, 10)
+  }, [bookOps, bookLmgTotal, bookPremioTotal])
 
   // ─── Import CSV ─────────────────────────────────────────────────────────────
 
@@ -807,7 +1018,7 @@ export default function OperacoesPage() {
     doc.text('Operações / Subscrição', 52, 24)
 
     const tituloFiltros: string[] = []
-    if (filtroStatus) tituloFiltros.push(filtroStatus)
+    if (filtroStatus.length > 0) tituloFiltros.push(filtroStatus.join('/'))
     if (filtroTemperatura.length > 0) tituloFiltros.push(filtroTemperatura.join('+'))
     if (filtroPrioridade) tituloFiltros.push(filtroPrioridade)
     if (filtroModalidade) tituloFiltros.push(filtroModalidade)
@@ -874,7 +1085,7 @@ export default function OperacoesPage() {
 
     const filtrosAtivos: string[] = []
     if (busca) filtrosAtivos.push(`Busca: "${busca}"`)
-    if (filtroStatus) filtrosAtivos.push(`Status: ${filtroStatus}`)
+    if (filtroStatus.length > 0) filtrosAtivos.push(`Status: ${filtroStatus.join(', ')}`)
     if (filtroPrioridade) filtrosAtivos.push(`Prioridade: ${filtroPrioridade}`)
     if (filtroTemperatura.length > 0) filtrosAtivos.push(`Temperatura: ${filtroTemperatura.join(' + ')}`)
     if (filtroCorretora) {
@@ -1006,6 +1217,34 @@ export default function OperacoesPage() {
     return 'badge-blue'
   }
 
+  async function salvarMeta() {
+    setSalvandoMeta(true)
+    const supabase = createClient()
+    const agora = new Date()
+    const periodoMes = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`
+    const periodoAno = `${agora.getFullYear()}`
+    const payloadMes = { periodo: periodoMes, tipo: 'mensal', premio_meta: parseFloat(formMeta.premio_mensal) || null, taxa_media_ponderada_meta: parseFloat(formMeta.taxa_ponderada) || null, lmg_meta: parseFloat(formMeta.lmg_meta) || null, risco_judicial: parseFloat(formMeta.risco_judicial) || null, sinistralidade_aceitavel: parseFloat(formMeta.sinistralidade) || null, observacao: formMeta.observacao || null }
+    const payloadAno = { periodo: periodoAno, tipo: 'anual', premio_meta: parseFloat(formMeta.premio_anual) || null, taxa_media_ponderada_meta: parseFloat(formMeta.taxa_ponderada) || null, lmg_meta: parseFloat(formMeta.lmg_meta) || null, risco_judicial: parseFloat(formMeta.risco_judicial) || null, sinistralidade_aceitavel: parseFloat(formMeta.sinistralidade) || null, observacao: formMeta.observacao || null }
+    if (metaMensal) await supabase.from('metas_negocio').update(payloadMes).eq('id', metaMensal.id)
+    else await supabase.from('metas_negocio').insert(payloadMes)
+    if (metaAnual) await supabase.from('metas_negocio').update(payloadAno).eq('id', metaAnual.id)
+    else await supabase.from('metas_negocio').insert(payloadAno)
+    await carregarMetas()
+    setSalvandoMeta(false)
+    setMostrarConfigurarMetas(false)
+  }
+
+  async function adicionarComentario(opId: string) {
+    const f = novoComentarioForm[opId]
+    if (!f?.autor || !f?.comentario) return
+    setSalvandoComentario(true)
+    const supabase = createClient()
+    await supabase.from('comite_comentarios').insert({ operacao_id: opId, autor: f.autor, comentario: f.comentario, tipo: f.tipo ?? 'geral' })
+    setNovoComentarioForm(prev => ({ ...prev, [opId]: { autor: f.autor, comentario: '', tipo: 'geral' } }))
+    await carregarComentariosComite([opId])
+    setSalvandoComentario(false)
+  }
+
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   const modalidadesDoSetor = form.produto_id
@@ -1080,8 +1319,8 @@ export default function OperacoesPage() {
           background: '#0d2040', border: '1px solid rgba(56,120,200,0.3)',
         }}>
           <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: 'rgba(180,200,220,0.7)', marginBottom: 6 }}>LMG Total em Potencial</div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpis.lmgLiquido)}</div>
-          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>LMG Total − Negados/Perdidos</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpisFiltroAtivo ? kpisFiltroAtivo.lmg : kpis.lmgTotal)}</div>
+          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>{kpisFiltroAtivo ? 'LMG da seleção ativa' : 'LMG Total − Negados/Perdidos'}</div>
         </div>
         {/* Card: Prêmio Previsto Total */}
         <div style={{
@@ -1089,13 +1328,13 @@ export default function OperacoesPage() {
           background: '#0d2040', border: '1px solid rgba(56,120,200,0.3)',
         }}>
           <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: 'rgba(180,200,220,0.7)', marginBottom: 6 }}>Prêmio Previsto Total</div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpis.premioTotal)}</div>
-          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>Soma prêmios previstos</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpisFiltroAtivo ? kpisFiltroAtivo.premio : kpis.premioTotal)}</div>
+          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>{kpisFiltroAtivo ? 'Prêmio da seleção ativa' : 'Soma prêmios previstos'}</div>
         </div>
       </div>
 
-      {/* Temperatura */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+      {/* Temperatura + Emitidas */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'stretch' }}>
         {/* Quente */}
         <div
           onClick={(e) => setFiltroTemperatura(prev => {
@@ -1104,24 +1343,29 @@ export default function OperacoesPage() {
             return sel && prev.length === 1 ? [] : ['Quente']
           })}
           style={{
-            padding: '12px 20px', borderRadius: 10, minWidth: 200, flex: '1 1 200px', cursor: 'pointer', transition: 'all 0.15s',
+            padding: '10px 16px', borderRadius: 10, minWidth: 160, flex: '1 1 160px', cursor: 'pointer', transition: 'all 0.15s',
             background: filtroTemperatura.includes('Quente') ? '#ffd6d6' : '#fff5f5',
-            border: filtroTemperatura.includes('Quente') ? '2px solid #d64545' : '1.5px solid #f5b8b8',
-            boxShadow: filtroTemperatura.includes('Quente') ? '0 2px 8px rgba(214,69,69,0.18)' : 'none',
+            border: filtroTemperatura.includes('Quente') ? '2px solid #d64545' : '2px solid #f5b8b8',
+            borderLeft: '4px solid #d64545',
+            boxShadow: filtroTemperatura.includes('Quente') ? '0 3px 10px rgba(214,69,69,0.22)' : '0 1px 4px rgba(214,69,69,0.08)',
           }}
         >
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#a03030', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
-            🔥 Quente {filtroTemperatura.includes('Quente') && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#a03030', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
+            🔥 Quente {filtroTemperatura.includes('Quente') && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
           </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-            <span style={{ fontSize: 26, fontWeight: 800, color: '#d64545', lineHeight: 1 }}>{kpis.qtdQuente}</span>
-            <span style={{ fontSize: 15, fontWeight: 600, color: '#d64545' }}>{fmtMoeda(kpis.lmgQuente)}</span>
+          <div style={{ marginBottom: 3 }}>
+            <span style={{ fontSize: 30, fontWeight: 900, color: '#d64545', lineHeight: 1 }}>{kpis.qtdQuente}</span>
           </div>
-          <div style={{ fontSize: 11, color: '#a05050', marginTop: 4 }}>
-            ops · LMG · Prêmio: {fmtMoeda(kpis.premioQuente)}
+          <div style={{ marginBottom: 1 }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: '#b03030' }}>{fmtMoeda(kpis.premioQuente)}</span>
+            <span style={{ fontSize: 10, color: '#a05050', marginLeft: 3 }}>Prêmio</span>
           </div>
-          <div style={{ fontSize: 12, color: '#a03030', marginTop: 6, fontStyle: 'italic', borderTop: '1px dashed #f5b8b8', paddingTop: 6 }}>
-            Entrada prevista dentro do mês corrente
+          <div>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#d64545' }}>{fmtMoeda(kpis.lmgQuente)}</span>
+            <span style={{ fontSize: 10, color: '#a05050', marginLeft: 3 }}>LMG</span>
+          </div>
+          <div style={{ fontSize: 10, color: '#a03030', marginTop: 5, fontStyle: 'italic', borderTop: '1px dashed #f5b8b8', paddingTop: 4 }}>
+            Entrada prevista no mês
           </div>
         </div>
         {/* Morno */}
@@ -1132,24 +1376,28 @@ export default function OperacoesPage() {
             return sel && prev.length === 1 ? [] : ['Morno']
           })}
           style={{
-            padding: '12px 20px', borderRadius: 10, minWidth: 200, flex: '1 1 200px', cursor: 'pointer', transition: 'all 0.15s',
+            padding: '10px 14px', borderRadius: 10, minWidth: 148, flex: '1 1 148px', cursor: 'pointer', transition: 'all 0.15s',
             background: filtroTemperatura.includes('Morno') ? '#ffe8c0' : '#fff8f0',
             border: filtroTemperatura.includes('Morno') ? '2px solid #d07830' : '1.5px solid #f5d090',
-            boxShadow: filtroTemperatura.includes('Morno') ? '0 2px 8px rgba(208,120,48,0.18)' : 'none',
+            boxShadow: filtroTemperatura.includes('Morno') ? '0 2px 6px rgba(208,120,48,0.18)' : 'none',
           }}
         >
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#a06010', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
-            🌤 Morno {filtroTemperatura.includes('Morno') && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#a06010', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 5 }}>
+            🌤 Morno {filtroTemperatura.includes('Morno') && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
           </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-            <span style={{ fontSize: 26, fontWeight: 800, color: '#d07830', lineHeight: 1 }}>{kpis.qtdMorno}</span>
-            <span style={{ fontSize: 15, fontWeight: 600, color: '#d07830' }}>{fmtMoeda(kpis.lmgMorno)}</span>
+          <div style={{ marginBottom: 3 }}>
+            <span style={{ fontSize: 28, fontWeight: 800, color: '#d07830', lineHeight: 1 }}>{kpis.qtdMorno}</span>
           </div>
-          <div style={{ fontSize: 11, color: '#a07030', marginTop: 4 }}>
-            ops · LMG · Prêmio: {fmtMoeda(kpis.premioMorno)}
+          <div style={{ marginBottom: 1 }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: '#a06010' }}>{fmtMoeda(kpis.premioMorno)}</span>
+            <span style={{ fontSize: 10, color: '#a07030', marginLeft: 3 }}>Prêmio</span>
           </div>
-          <div style={{ fontSize: 12, color: '#a06010', marginTop: 6, fontStyle: 'italic', borderTop: '1px dashed #f5d090', paddingTop: 6 }}>
-            Aprovado sem previsão de entrada
+          <div>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#d07830' }}>{fmtMoeda(kpis.lmgMorno)}</span>
+            <span style={{ fontSize: 10, color: '#a07030', marginLeft: 3 }}>LMG</span>
+          </div>
+          <div style={{ fontSize: 10, color: '#a06010', marginTop: 5, fontStyle: 'italic', borderTop: '1px dashed #f5d090', paddingTop: 4 }}>
+            Sem previsão de entrada
           </div>
         </div>
         {/* Frio */}
@@ -1160,27 +1408,163 @@ export default function OperacoesPage() {
             return sel && prev.length === 1 ? [] : ['Frio']
           })}
           style={{
-            padding: '12px 20px', borderRadius: 10, minWidth: 200, flex: '1 1 200px', cursor: 'pointer', transition: 'all 0.15s',
+            padding: '10px 14px', borderRadius: 10, minWidth: 148, flex: '1 1 148px', cursor: 'pointer', transition: 'all 0.15s',
             background: filtroTemperatura.includes('Frio') ? '#c8deff' : '#f0f6ff',
             border: filtroTemperatura.includes('Frio') ? '2px solid #3070c8' : '1.5px solid #b0d0f0',
-            boxShadow: filtroTemperatura.includes('Frio') ? '0 2px 8px rgba(48,112,200,0.18)' : 'none',
+            boxShadow: filtroTemperatura.includes('Frio') ? '0 2px 6px rgba(48,112,200,0.18)' : 'none',
           }}
         >
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#1a4080', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
-            ❄ Frio {filtroTemperatura.includes('Frio') && <span style={{ fontWeight: 400, fontSize: 10 }}>— clique para limpar</span>}
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#1a4080', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 5 }}>
+            ❄ Frio {filtroTemperatura.includes('Frio') && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
           </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-            <span style={{ fontSize: 26, fontWeight: 800, color: '#3070c8', lineHeight: 1 }}>{kpis.qtdFrio}</span>
-            <span style={{ fontSize: 15, fontWeight: 600, color: '#3070c8' }}>{fmtMoeda(kpis.lmgFrio)}</span>
+          <div style={{ marginBottom: 3 }}>
+            <span style={{ fontSize: 28, fontWeight: 800, color: '#3070c8', lineHeight: 1 }}>{kpis.qtdFrio}</span>
           </div>
-          <div style={{ fontSize: 11, color: '#4060a0', marginTop: 4 }}>
-            ops · LMG · Prêmio: {fmtMoeda(kpis.premioFrio)}
+          <div style={{ marginBottom: 1 }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: '#1a4080' }}>{fmtMoeda(kpis.premioFrio)}</span>
+            <span style={{ fontSize: 10, color: '#4060a0', marginLeft: 3 }}>Prêmio</span>
           </div>
-          <div style={{ fontSize: 12, color: '#1a4080', marginTop: 6, fontStyle: 'italic', borderTop: '1px dashed #b0d0f0', paddingTop: 6 }}>
-            Não aprovado / Perdido / Recusado
+          <div>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#3070c8' }}>{fmtMoeda(kpis.lmgFrio)}</span>
+            <span style={{ fontSize: 10, color: '#4060a0', marginLeft: 3 }}>LMG</span>
+          </div>
+          <div style={{ fontSize: 10, color: '#1a4080', marginTop: 5, fontStyle: 'italic', borderTop: '1px dashed #b0d0f0', paddingTop: 4 }}>
+            Fora do funil ativo
+          </div>
+        </div>
+        {/* Divisor + Card Emitidas */}
+        <div style={{ borderLeft: '1.5px solid #d0e4f5', margin: '4px 4px', alignSelf: 'stretch' }} />
+        <div
+          onClick={() => setIncluirEmitidas(prev => !prev)}
+          style={{
+            padding: '10px 14px', borderRadius: 10, minWidth: 148, flex: '1 1 148px', cursor: 'pointer', transition: 'all 0.15s',
+            background: incluirEmitidas ? '#b8f0d4' : '#f0faf4',
+            border: incluirEmitidas ? '2px solid #27a96c' : '1.5px solid #a8d8b8',
+            boxShadow: incluirEmitidas ? '0 2px 6px rgba(39,169,108,0.20)' : '0 1px 3px rgba(39,169,108,0.08)',
+          }}
+        >
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#1a6040', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 5 }}>
+            ✅ Emitidas {incluirEmitidas && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
+          </div>
+          <div style={{ marginBottom: 3 }}>
+            <span style={{ fontSize: 28, fontWeight: 800, color: '#27a96c', lineHeight: 1 }}>{kpisEmitido.count}</span>
+          </div>
+          <div style={{ marginBottom: 1 }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: '#1a6040' }}>{fmtMoeda(kpisEmitido.premio)}</span>
+            <span style={{ fontSize: 10, color: '#3a8060', marginLeft: 3 }}>Prêmio</span>
+          </div>
+          <div>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#27a96c' }}>{fmtMoeda(kpisEmitido.lmg)}</span>
+            <span style={{ fontSize: 10, color: '#3a8060', marginLeft: 3 }}>LMG</span>
+          </div>
+          <div style={{ fontSize: 10, color: '#1a6040', marginTop: 5, fontStyle: 'italic', borderTop: '1px dashed #a8d8b8', paddingTop: 4 }}>
+            Fora do funil
+          </div>
+        </div>
+        {/* Divisor + Card Perdidas/Recusadas — visual acinzentado */}
+        <div style={{ borderLeft: '1.5px solid #d8d8e0', margin: '4px 4px', alignSelf: 'stretch' }} />
+        <div
+          onClick={() => setIncluirPerdidas(prev => !prev)}
+          style={{
+            padding: '10px 14px', borderRadius: 10, minWidth: 148, flex: '1 1 148px', cursor: 'pointer', transition: 'all 0.15s',
+            background: incluirPerdidas ? '#e2e2e6' : '#f2f2f4',
+            border: incluirPerdidas ? '1.5px solid #aaaaaa' : '1.5px solid #d0d0d4',
+            boxShadow: 'none',
+            opacity: incluirPerdidas ? 1 : 0.85,
+          }}
+        >
+          <div style={{ fontSize: 10, fontWeight: 600, color: '#777788', letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 5 }}>
+            ✕ Perdidas {incluirPerdidas && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
+          </div>
+          <div style={{ marginBottom: 3 }}>
+            <span style={{ fontSize: 28, fontWeight: 700, color: '#aaaaaa', lineHeight: 1 }}>{kpisPerdido.count}</span>
+          </div>
+          <div style={{ marginBottom: 1 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#888888' }}>{fmtMoeda(kpisPerdido.premio)}</span>
+            <span style={{ fontSize: 10, color: '#aaaaaa', marginLeft: 3 }}>Prêmio</span>
+          </div>
+          <div>
+            <span style={{ fontSize: 11, fontWeight: 500, color: '#aaaaaa' }}>{fmtMoeda(kpisPerdido.lmg)}</span>
+            <span style={{ fontSize: 10, color: '#aaaaaa', marginLeft: 3 }}>LMG</span>
+          </div>
+          <div style={{ fontSize: 10, color: '#aaaaaa', marginTop: 5, fontStyle: 'italic', borderTop: '1px dashed #cccccc', paddingTop: 4 }}>
+            Encerrados
           </div>
         </div>
       </div>
+
+      {/* Banner de totais — aparece quando qualquer seleção especial está ativa */}
+      {(filtroTemperatura.length > 0 || incluirEmitidas || incluirPerdidas) && (() => {
+        const partes: { label: string; count: number; lmg: number; premio: number }[] = []
+        if (filtroTemperatura.includes('Quente')) partes.push({ label: '🔥 Quente', count: kpis.qtdQuente, lmg: kpis.lmgQuente, premio: kpis.premioQuente })
+        if (filtroTemperatura.includes('Morno')) partes.push({ label: '🌤 Morno', count: kpis.qtdMorno, lmg: kpis.lmgMorno, premio: kpis.premioMorno })
+        if (filtroTemperatura.includes('Frio')) partes.push({ label: '❄ Frio', count: kpis.qtdFrio, lmg: kpis.lmgFrio, premio: kpis.premioFrio })
+        if (incluirEmitidas) partes.push({ label: '✅ Emitidas', count: kpisEmitido.count, lmg: kpisEmitido.lmg, premio: kpisEmitido.premio })
+        if (incluirPerdidas) partes.push({ label: '✕ Perdidas/Recusadas', count: kpisPerdido.count, lmg: kpisPerdido.lmg, premio: kpisPerdido.premio })
+        if (partes.length === 0) return null
+        const totalCount = partes.reduce((s, p) => s + p.count, 0)
+        const totalLmg = partes.reduce((s, p) => s + p.lmg, 0)
+        const totalPremio = partes.reduce((s, p) => s + p.premio, 0)
+        return (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+            background: '#f0f6ff', border: '1.5px solid #b0c8e8', borderRadius: 10,
+            padding: '10px 18px', marginBottom: 16, fontSize: 13,
+          }}>
+            <span style={{ fontSize: 12, color: '#4060a0', fontWeight: 700 }}>{partes.length > 1 ? 'Seleção combinada:' : 'Resumo:'}</span>
+            <span style={{ color: '#3050a0' }}>{partes.map(p => `${p.label} (${p.count})`).join(' + ')}</span>
+            <span style={{ color: '#6080a0' }}>→</span>
+            <span style={{ fontWeight: 800, color: '#1a3070' }}>{totalCount} operações</span>
+            <span style={{ color: '#6080a0' }}>|</span>
+            <span style={{ color: '#3050a0' }}>LMG <strong>{fmtMoeda(totalLmg)}</strong></span>
+            <span style={{ color: '#6080a0' }}>|</span>
+            <span style={{ color: '#3050a0' }}>Prêmio <strong>{fmtMoeda(totalPremio)}</strong></span>
+          </div>
+        )
+      })()}
+
+      {/* Status pills */}
+      {statusOpcoes.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#6080a0', letterSpacing: '0.5px', textTransform: 'uppercase', marginRight: 4 }}>Status:</span>
+          {statusOpcoes.filter(s => s.ativo && s.nome !== 'Perdido' && s.nome !== 'Recusado').map((s) => {
+            const stats = kpisPerStatus[s.nome]
+            const sel = filtroStatus.includes(s.nome)
+            return (
+              <button
+                key={s.id}
+                onClick={() => setFiltroStatus(prev => sel ? prev.filter(x => x !== s.nome) : [...prev, s.nome])}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '4px 10px', borderRadius: 20, cursor: 'pointer', transition: 'all 0.12s',
+                  background: sel ? s.cor + '33' : s.cor + '11',
+                  border: sel ? `2px solid ${s.cor}` : `1.5px solid ${s.cor}55`,
+                  color: s.cor, fontWeight: sel ? 800 : 600, fontSize: 12,
+                  fontFamily: "'Calibri','Segoe UI',sans-serif",
+                  boxShadow: sel ? `0 2px 6px ${s.cor}44` : 'none',
+                }}
+              >
+                {s.nome}
+                <span style={{
+                  background: sel ? s.cor : s.cor + '33',
+                  color: sel ? 'white' : s.cor,
+                  borderRadius: 10, padding: '1px 6px', fontSize: 11, fontWeight: 700,
+                }}>
+                  {stats?.count ?? 0}
+                </span>
+              </button>
+            )
+          })}
+          {filtroStatus.length > 0 && (
+            <button
+              onClick={() => setFiltroStatus([])}
+              style={{ padding: '3px 8px', borderRadius: 12, border: '1px solid #c5d5e8', background: 'white', color: '#6080a0', fontSize: 11, cursor: 'pointer', fontFamily: "'Calibri','Segoe UI',sans-serif" }}
+            >
+              ✕ limpar
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Abas internas */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: '2px solid #d0e4f5' }}>
@@ -1599,13 +1983,6 @@ export default function OperacoesPage() {
               <input className="fam-input" type="text" placeholder="Tomador, CNPJ, corretora, produto..."
                 value={busca} onChange={(e) => setBusca(e.target.value)} />
             </div>
-            <div className="filter-group" style={{ flex: '1 1 160px' }}>
-              <label className="filter-label">Status</label>
-              <select className="fam-input" value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)}>
-                <option value="">Todos</option>
-                {statusOpcoes.map((s) => <option key={s.id} value={s.nome}>{s.nome}</option>)}
-              </select>
-            </div>
             <div className="filter-group" style={{ flex: '1 1 130px' }}>
               <label className="filter-label">Prioridade</label>
               <select className="fam-input" value={filtroPrioridade} onChange={(e) => setFiltroPrioridade(e.target.value)}>
@@ -1629,10 +2006,10 @@ export default function OperacoesPage() {
                 {modalidades.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
               </select>
             </div>
-            {(busca || filtroStatus || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade) && (
+            {(busca || filtroStatus.length > 0 || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade || incluirEmitidas) && (
               <div className="filter-group" style={{ justifyContent: 'flex-end' }}>
                 <label className="filter-label">&nbsp;</label>
-                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus(''); setFiltroPrioridade(''); setFiltroTemperatura([]); setFiltroCorretora(''); setFiltroModalidade('') }}>Limpar</button>
+                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus([]); setFiltroPrioridade(''); setFiltroTemperatura([]); setFiltroCorretora(''); setFiltroModalidade(''); setIncluirEmitidas(false) }}>Limpar</button>
               </div>
             )}
             <div style={{ marginLeft: 'auto', fontSize: 13, color: '#6080a0', alignSelf: 'flex-end', paddingBottom: 2 }}>
@@ -1663,7 +2040,7 @@ export default function OperacoesPage() {
                   <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : operacoesFiltradas.length === 0 ? (
                   <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
-                    {busca || filtroStatus || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade
+                    {busca || filtroStatus.length > 0 || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade
                       ? 'Nenhuma operação encontrada para os filtros selecionados.'
                       : 'Nenhuma operação registrada ainda.'}
                   </td></tr>
@@ -1720,22 +2097,24 @@ export default function OperacoesPage() {
               </tbody>
             </table>
           </div>
-        </>
-      )}
 
-      {/* ══════════ ABA COMITÊ ══════════ */}
-      {aba === 'comite' && (() => {
-        const emComite = operacoes.filter(op => op.status === 'Comitê')
-        return (
-          <>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 14, color: '#6080a0' }}>
-                {emComite.length} operaç{emComite.length !== 1 ? 'ões' : 'ão'} aguardando decisão do Comitê
+          {/* ── Seção Operações Emitidas (sempre visível) ── */}
+          <div style={{ marginTop: 32, borderTop: '2px solid #a8d8b8', paddingTop: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#1a6040' }}>
+                ✅ Operações Emitidas
               </div>
+              <span style={{
+                background: '#e8f5e9', color: '#1a6040', border: '1.5px solid #a8d8b8',
+                borderRadius: 12, padding: '2px 10px', fontSize: 13, fontWeight: 700,
+              }}>{kpisEmitido.count}</span>
+              <span style={{ fontSize: 12, color: '#6080a0', fontStyle: 'italic' }}>
+                Fora do funil de temperatura — negócios concluídos
+              </span>
             </div>
-            {emComite.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 48, color: '#6080a0', fontSize: 15, background: '#f8fafc', borderRadius: 10, border: '1.5px dashed #c5d5e8' }}>
-                🏛 Nenhuma operação aguardando decisão do Comitê.
+            {operacoesEmitidas.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 32, color: '#6080a0', fontSize: 14, background: '#f8fdf9', borderRadius: 10, border: '1.5px dashed #a8d8b8' }}>
+                ✅ Nenhuma operação emitida registrada.
               </div>
             ) : (
               <div className="fam-table-wrap">
@@ -1748,13 +2127,13 @@ export default function OperacoesPage() {
                       <th>Cobertura / Modalidade</th>
                       <th>LMG</th>
                       <th>Taxa</th>
-                      <th>Temp.</th>
+                      <th>Prêmio Previsto</th>
                       <th>Data Entrada</th>
-                      <th>Decisão</th>
+                      <th>Ações</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {emComite.map((op, i) => (
+                    {operacoesEmitidas.map((op, i) => (
                       <tr key={op.id} onClick={() => abrirEditar(op)} style={{ cursor: 'pointer' }}>
                         <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
                         <td>
@@ -1766,34 +2145,23 @@ export default function OperacoesPage() {
                           <div>{op.produto?.nome ?? '—'}</div>
                           {op.modalidade && <div style={{ fontSize: 11, color: '#6080a0' }}>{op.modalidade}</div>}
                         </td>
-                        <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>{op.lmg ? fmtMoeda(op.lmg) : '—'}</td>
-                        <td style={{ fontSize: 13 }}>{op.taxa ? fmtPercent(op.taxa / 100) : '—'}</td>
-                        <td>
-                          {op.temperatura
-                            ? <span className={`badge ${badgeTemperatura(op.temperatura)}`}>{op.temperatura}</span>
-                            : <span style={{ color: '#6080a0', fontSize: 13 }}>—</span>}
+                        <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: '#27a96c' }}>
+                          {op.lmg ? fmtMoeda(op.lmg) : '—'}
+                        </td>
+                        <td style={{ fontSize: 13 }}>
+                          {op.taxa ? fmtPercent(op.taxa / 100) : '—'}
+                        </td>
+                        <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: '#1a6040' }}>
+                          {op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—'}
                         </td>
                         <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
                           {op.data_entrada ? fmtData(op.data_entrada) : '—'}
                         </td>
-                        <td onClick={(e) => e.stopPropagation()}>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); mudarStatus(op, 'Aprovado') }}
-                              style={{ padding: '5px 10px', borderRadius: 6, border: 'none', background: '#d4f4e4', color: '#1a6a40', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
-                              ✅ Aprovar
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); mudarStatus(op, 'Recusado') }}
-                              style={{ padding: '5px 10px', borderRadius: 6, border: 'none', background: '#fbeaea', color: '#a02020', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
-                              ❌ Recusar
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); mudarStatus(op, 'Em Análise') }}
-                              style={{ padding: '5px 10px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
-                              ↩ Devolver
-                            </button>
-                          </div>
+                        <td>
+                          <button onClick={() => abrirEditar(op)}
+                            style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #a8d8b8', background: '#f0faf4', color: '#1a6040', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
+                            Editar
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1801,6 +2169,581 @@ export default function OperacoesPage() {
                 </table>
               </div>
             )}
+          </div>
+
+          {/* ── Seção Operações Perdidas / Recusadas (sempre visível) ── */}
+          <div style={{ marginTop: 32, borderTop: '2px solid #c5c5d0', paddingTop: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#666677' }}>
+                ⚫ Operações Perdidas / Recusadas
+              </div>
+              <span style={{
+                background: '#f0f0f4', color: '#666677', border: '1.5px solid #c5c5d0',
+                borderRadius: 12, padding: '2px 10px', fontSize: 13, fontWeight: 700,
+              }}>{kpisPerdido.count}</span>
+              <span style={{ fontSize: 12, color: '#888899', fontStyle: 'italic' }}>
+                Fora do funil — negócios encerrados
+              </span>
+            </div>
+            {operacoesPerdidas.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 32, color: '#888899', fontSize: 14, background: '#f4f4f6', borderRadius: 10, border: '1.5px dashed #c5c5d0' }}>
+                ⚫ Nenhuma operação perdida ou recusada registrada.
+              </div>
+            ) : (
+              <div className="fam-table-wrap">
+                <table className="fam-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Tomador</th>
+                      <th>Corretora</th>
+                      <th>Cobertura / Modalidade</th>
+                      <th>Status</th>
+                      <th>LMG</th>
+                      <th>Taxa</th>
+                      <th>Prêmio Previsto</th>
+                      <th>Data Entrada</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {operacoesPerdidas.map((op, i) => (
+                      <tr key={op.id} onClick={() => abrirEditar(op)} style={{ cursor: 'pointer', opacity: 0.82 }}>
+                        <td style={{ color: '#888899', fontSize: 13 }}>{i + 1}</td>
+                        <td>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: '#555566' }}>{op.tomador?.razao_social ?? '—'}</div>
+                          {op.tomador?.cnpj && <div style={{ fontSize: 11, color: '#888899' }}>{maskCNPJ(op.tomador.cnpj)}</div>}
+                        </td>
+                        <td style={{ fontSize: 13, color: '#888899' }}>{op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'}</td>
+                        <td style={{ fontSize: 13, color: '#666677' }}>
+                          <div>{op.produto?.nome ?? '—'}</div>
+                          {op.modalidade && <div style={{ fontSize: 11, color: '#888899' }}>{op.modalidade}</div>}
+                        </td>
+                        <td>
+                          <span style={{
+                            display: 'inline-block', padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 700,
+                            background: op.status === 'Perdido' ? '#fde8e8' : '#fdf0e0',
+                            color: op.status === 'Perdido' ? '#b03030' : '#a06010',
+                            border: op.status === 'Perdido' ? '1px solid #f5b8b8' : '1px solid #f5d090',
+                          }}>
+                            {op.status}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: '#888899' }}>
+                          {op.lmg ? fmtMoeda(op.lmg) : '—'}
+                        </td>
+                        <td style={{ fontSize: 13, color: '#888899' }}>
+                          {op.taxa ? fmtPercent(op.taxa / 100) : '—'}
+                        </td>
+                        <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: '#888899' }}>
+                          {op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—'}
+                        </td>
+                        <td style={{ fontSize: 13, color: '#888899', whiteSpace: 'nowrap' }}>
+                          {op.data_entrada ? fmtData(op.data_entrada) : '—'}
+                        </td>
+                        <td>
+                          <button onClick={() => abrirEditar(op)}
+                            style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5c5d0', background: '#f4f4f6', color: '#666677', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
+                            Editar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ══════════ ABA COMITÊ ══════════ */}
+      {aba === 'comite' && (() => {
+        const emComite = operacoes.filter(op => op.status === 'Comitê')
+        const agora = new Date()
+        const mesAnoLabel = agora.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+        const CC = ['#3070c8','#27a96c','#e8b84b','#d64545','#a05010','#6030a0','#1a7a50','#d07830']
+        return (
+          <>
+            {/* ── PAINEL META vs REALIZADO ── */}
+            <div style={{ background: '#0d2040', borderRadius: 12, padding: '16px 20px', marginBottom: 16, border: '1px solid rgba(56,120,200,0.3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ color: 'rgba(180,200,220,0.9)', fontSize: 13, fontWeight: 700, letterSpacing: 1 }}>🎯 PAINEL DE METAS — {mesAnoLabel.toUpperCase()}</div>
+                <button onClick={() => setMostrarConfigurarMetas(v => !v)}
+                  style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(56,120,200,0.5)', background: 'rgba(56,120,200,0.15)', color: 'rgba(180,200,220,0.9)', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                  ⚙ {mostrarConfigurarMetas ? 'Fechar' : 'Configurar Metas'}
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                {/* Meta Mês */}
+                {(() => { const meta = metaMensal?.premio_meta ?? 0; const pct = meta > 0 ? Math.min(100, premioRealizadoMes / meta * 100) : 0; const gap = meta > 0 ? Math.max(0, meta - premioRealizadoMes) : 0; const cor = pct >= 80 ? '#27a96c' : pct >= 50 ? '#e8b84b' : '#d64545'; return (
+                  <div style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)' }}>
+                    <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>🎯 Meta Mês</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: 'white' }}>{fmtMoeda(premioRealizadoMes)}</div>
+                    <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginBottom: 7 }}>de {meta > 0 ? fmtMoeda(meta) : 'Não definida'}</div>
+                    <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 4, height: 6 }}><div style={{ height: '100%', borderRadius: 4, background: cor, width: `${pct}%`, transition: 'width 0.4s' }} /></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 11 }}>
+                      <span style={{ color: cor, fontWeight: 700 }}>{pct.toFixed(1)}%</span>
+                      {gap > 0 && <span style={{ color: 'rgba(180,200,220,0.4)' }}>Gap {fmtMoeda(gap)}</span>}
+                    </div>
+                  </div>
+                )})()}
+                {/* Meta Ano */}
+                {(() => { const meta = metaAnual?.premio_meta ?? 0; const pct = meta > 0 ? Math.min(100, premioRealizadoAno / meta * 100) : 0; const gap = meta > 0 ? Math.max(0, meta - premioRealizadoAno) : 0; const cor = pct >= 80 ? '#27a96c' : pct >= 50 ? '#e8b84b' : '#d64545'; return (
+                  <div style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)' }}>
+                    <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>📅 Meta Ano</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: 'white' }}>{fmtMoeda(premioRealizadoAno)}</div>
+                    <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginBottom: 7 }}>de {meta > 0 ? fmtMoeda(meta) : 'Não definida'}</div>
+                    <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 4, height: 6 }}><div style={{ height: '100%', borderRadius: 4, background: cor, width: `${pct}%`, transition: 'width 0.4s' }} /></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 11 }}>
+                      <span style={{ color: cor, fontWeight: 700 }}>{pct.toFixed(1)}%</span>
+                      {gap > 0 && <span style={{ color: 'rgba(180,200,220,0.4)' }}>Gap {fmtMoeda(gap)}</span>}
+                    </div>
+                  </div>
+                )})()}
+                {/* TMP */}
+                {(() => { const meta = metaMensal?.taxa_media_ponderada_meta ?? 0; const delta = meta > 0 ? emitidosTmpTotal - meta : 0; return (
+                  <div style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)' }}>
+                    <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>📐 Taxa Méd. Pond.</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: '#e8b84b' }}>{fmtPercent(emitidosTmpTotal / 100)}</div>
+                    {meta > 0 && <div style={{ fontSize: 12, color: delta >= 0 ? '#27a96c' : '#d64545', fontWeight: 700, marginTop: 4 }}>{delta >= 0 ? '▲' : '▼'} {delta >= 0 ? '+' : ''}{fmtPercent(delta / 100)} vs meta {fmtPercent(meta / 100)}</div>}
+                    {meta === 0 && <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 4 }}>Meta não definida</div>}
+                    <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 6 }}>{emitidosOps.length} ops emitidas</div>
+                  </div>
+                )})()}
+                {/* LMG Emitido */}
+                <div style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)' }}>
+                  <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>⚖️ LMG em Carteira</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: 'white' }}>{fmtMoeda(emitidosLmgTotal)}</div>
+                  <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 4 }}>Prêmio emitido: {fmtMoeda(emitidosPremioTotal)}</div>
+                  {(metaMensal?.risco_judicial ?? 0) > 0 && <div style={{ fontSize: 11, color: '#e8b84b', marginTop: 6 }}>⚖️ Risco Judicial: {fmtMoeda(metaMensal!.risco_judicial!)}</div>}
+                </div>
+              </div>
+              {/* Form Metas */}
+              {mostrarConfigurarMetas && (
+                <div style={{ marginTop: 16, background: 'rgba(255,255,255,0.04)', borderRadius: 10, padding: '16px 20px', border: '1px solid rgba(56,120,200,0.3)' }}>
+                  <div style={{ color: 'rgba(180,200,220,0.8)', fontWeight: 700, fontSize: 12, marginBottom: 12, letterSpacing: 1 }}>⚙ CONFIGURAÇÃO DE METAS</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10 }}>
+                    {([['Prêmio Meta Mês (R$)','premio_mensal','ex: 2000000'],['Prêmio Meta Ano (R$)','premio_anual','ex: 25000000'],['Taxa Méd. Pond. Meta (%)','taxa_ponderada','ex: 1.20'],['LMG em Carteira Meta (R$)','lmg_meta','ex: 500000000'],['Provisão Risco Judicial (R$)','risco_judicial','ex: 5000000'],['Sinistralidade Aceitável (%)','sinistralidade','ex: 0.5']] as const).map(([label, key, ph]) => (
+                      <div key={key}>
+                        <label style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', display: 'block', marginBottom: 3 }}>{label}</label>
+                        <input type="number" step="any" placeholder={ph} value={formMeta[key]}
+                          onChange={(e) => setFormMeta(prev => ({ ...prev, [key]: e.target.value }))}
+                          style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid rgba(56,120,200,0.4)', background: 'rgba(255,255,255,0.08)', color: 'white', fontSize: 13, boxSizing: 'border-box' }} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <label style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', display: 'block', marginBottom: 3 }}>Diretriz / Observação</label>
+                    <textarea value={formMeta.observacao} onChange={(e) => setFormMeta(prev => ({ ...prev, observacao: e.target.value }))} placeholder="Diretrizes estratégicas do período..."
+                      style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid rgba(56,120,200,0.4)', background: 'rgba(255,255,255,0.08)', color: 'white', fontSize: 13, minHeight: 52, resize: 'vertical', boxSizing: 'border-box' }} />
+                  </div>
+                  <button onClick={salvarMeta} disabled={salvandoMeta}
+                    style={{ marginTop: 10, padding: '8px 20px', borderRadius: 8, border: 'none', background: '#3070c8', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 13, opacity: salvandoMeta ? 0.6 : 1 }}>
+                    {salvandoMeta ? 'Salvando...' : '💾 Salvar Metas'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* ── EXPOSIÇÃO DO PORTFÓLIO ── */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#1a2a3a', marginBottom: 12 }}>📊 Exposição do Portfólio — Book Atual <span style={{ fontSize: 12, fontWeight: 400, color: '#6080a0' }}>(Aprovadas + Emitidas)</span></div>
+              {bookOps.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 28, color: '#6080a0', background: '#f8fafc', borderRadius: 10, border: '1.5px dashed #c5d5e8' }}>Nenhuma operação aprovada ou emitida no book ainda.</div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+                    {/* Tabela Modalidade */}
+                    <div style={{ flex: '1 1 420px', background: 'white', borderRadius: 10, border: '1.5px solid #d0e4f5', overflow: 'hidden' }}>
+                      <div style={{ background: '#0d2040', color: 'rgba(180,200,220,0.9)', padding: '9px 14px', fontSize: 11, fontWeight: 700, letterSpacing: 0.8 }}>EXPOSIÇÃO POR MODALIDADE</div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                        <thead><tr style={{ background: '#f0f6ff' }}>
+                          {['Modalidade','Qtd','Prêmio','% Book','LMG','TMP'].map(h => <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Modalidade' ? 'left' : 'right', color: '#1a4080', fontWeight: 700 }}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {exposicaoPorModalidade.map((m, i) => (
+                            <tr key={m.modalidade} style={{ borderBottom: '1px solid #e0ecff', background: m.pctPremio > 60 ? '#fff3e0' : m.pctPremio > 40 ? '#fffbe6' : i % 2 === 0 ? 'white' : '#f8fafc' }}>
+                              <td style={{ padding: '7px 10px', fontWeight: 600, color: '#1a2a3a' }}>{m.modalidade}</td>
+                              <td style={{ padding: '7px 8px', textAlign: 'right', color: '#6080a0' }}>{m.qtd}</td>
+                              <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700, color: '#e8b84b' }}>{fmtMoeda(m.premio)}</td>
+                              <td style={{ padding: '7px 8px', textAlign: 'right' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                                  <div style={{ width: 36, background: '#e0ecff', borderRadius: 3, height: 5 }}><div style={{ width: `${Math.min(100, m.pctPremio)}%`, height: '100%', borderRadius: 3, background: CC[i % CC.length] }} /></div>
+                                  <span style={{ fontWeight: 700, color: m.pctPremio > 60 ? '#d07830' : '#1a4080' }}>{m.pctPremio.toFixed(1)}%</span>
+                                </div>
+                              </td>
+                              <td style={{ padding: '7px 8px', textAlign: 'right', color: '#6080a0' }}>{fmtMoeda(m.lmg)}</td>
+                              <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 700, color: '#3070c8' }}>{fmtPercent(m.tmp / 100)}</td>
+                            </tr>
+                          ))}
+                          <tr style={{ background: '#0d2040', color: 'rgba(180,200,220,0.9)' }}>
+                            <td style={{ padding: '7px 10px', fontWeight: 700 }}>TOTAL</td>
+                            <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700 }}>{bookOps.length}</td>
+                            <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700, color: '#e8b84b' }}>{fmtMoeda(bookPremioTotal)}</td>
+                            <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700 }}>100%</td>
+                            <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700 }}>{fmtMoeda(bookLmgTotal)}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 700, color: '#e8b84b' }}>{fmtPercent(bookTmpTotal / 100)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    {/* Tabela Tomador */}
+                    <div style={{ flex: '1 1 380px', background: 'white', borderRadius: 10, border: '1.5px solid #d0e4f5', overflow: 'hidden' }}>
+                      <div style={{ background: '#0d2040', color: 'rgba(180,200,220,0.9)', padding: '9px 14px', fontSize: 11, fontWeight: 700, letterSpacing: 0.8 }}>TOP 10 TOMADORES POR PRÊMIO</div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                        <thead><tr style={{ background: '#f0f6ff' }}>
+                          {['Tomador','Prêmio','% Prêmio','LMG','TMP'].map(h => <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Tomador' ? 'left' : 'right', color: '#1a4080', fontWeight: 700 }}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {exposicaoPorTomador.map((t, i) => (
+                            <tr key={t.nome} style={{ borderBottom: '1px solid #e0ecff', background: i % 2 === 0 ? 'white' : '#f8fafc' }}>
+                              <td style={{ padding: '7px 10px', fontWeight: 600, color: '#1a2a3a', maxWidth: 150 }} title={t.nomeCompleto}>{t.nome}</td>
+                              <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700, color: '#e8b84b' }}>{fmtMoeda(t.premio)}</td>
+                              <td style={{ padding: '7px 8px', textAlign: 'right' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                                  <div style={{ width: 36, background: '#e0ecff', borderRadius: 3, height: 5 }}><div style={{ width: `${Math.min(100, t.pctPremio)}%`, height: '100%', borderRadius: 3, background: CC[i % CC.length] }} /></div>
+                                  <span style={{ fontWeight: 700, color: '#1a4080' }}>{t.pctPremio.toFixed(1)}%</span>
+                                </div>
+                              </td>
+                              <td style={{ padding: '7px 8px', textAlign: 'right', color: '#6080a0' }}>{fmtMoeda(t.lmg)}</td>
+                              <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 700, color: '#3070c8' }}>{fmtPercent(t.tmp / 100)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  {/* Gráficos */}
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                    <div style={{ flex: '2 1 380px', background: 'white', borderRadius: 10, border: '1.5px solid #d0e4f5', padding: '14px', minHeight: 240 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 8 }}>Prêmio e Taxa Média Ponderada por Modalidade</div>
+                      <ResponsiveContainer width="100%" height={195}>
+                        <ComposedChart data={exposicaoPorModalidade} margin={{ top: 4, right: 30, bottom: 36, left: 10 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e0ecff" />
+                          <XAxis dataKey="modalidade" tick={{ fontSize: 10, fill: '#6080a0' }} angle={-28} textAnchor="end" interval={0} />
+                          <YAxis yAxisId="l" tickFormatter={(v: number) => `${(v/1000).toFixed(0)}k`} tick={{ fontSize: 10, fill: '#6080a0' }} />
+                          <YAxis yAxisId="r" orientation="right" tickFormatter={(v: number) => `${v.toFixed(2)}%`} tick={{ fontSize: 10, fill: '#3070c8' }} />
+                          <Tooltip formatter={(value, name) => name === 'Prêmio' ? fmtMoeda(Number(value)) : `${Number(value).toFixed(4)}%`} />
+                          <Bar yAxisId="l" dataKey="premio" name="Prêmio" fill="#e8b84b" radius={[4,4,0,0]} />
+                          <Line yAxisId="r" type="monotone" dataKey="tmp" name="TMP" stroke="#3070c8" strokeWidth={2.5} dot={{ r: 4, fill: '#3070c8' }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div style={{ flex: '1 1 260px', background: 'white', borderRadius: 10, border: '1.5px solid #d0e4f5', padding: '14px', minHeight: 240 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 8 }}>Top Tomadores — Prêmio</div>
+                      <ResponsiveContainer width="100%" height={195}>
+                        <BarChart layout="vertical" data={exposicaoPorTomador} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+                          <XAxis type="number" tickFormatter={(v: number) => `${(v/1000).toFixed(0)}k`} tick={{ fontSize: 10, fill: '#6080a0' }} />
+                          <YAxis type="category" dataKey="nome" tick={{ fontSize: 10, fill: '#1a2a3a' }} width={88} />
+                          <Tooltip formatter={(v) => fmtMoeda(Number(v))} />
+                          <Bar dataKey="premio" name="Prêmio" radius={[0,4,4,0]}>
+                            {exposicaoPorTomador.map((_, idx) => <Cell key={idx} fill={CC[idx % CC.length]} />)}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* ── FILA DE DELIBERAÇÃO ── */}
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#1a2a3a', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+                🏛 Fila de Deliberação
+                <span style={{ background: emComite.length > 0 ? '#d64545' : '#27a96c', color: 'white', borderRadius: 20, padding: '2px 10px', fontSize: 13, fontWeight: 800 }}>{emComite.length}</span>
+                <span style={{ fontSize: 12, fontWeight: 400, color: '#6080a0' }}>operaç{emComite.length !== 1 ? 'ões' : 'ão'} aguardando decisão</span>
+              </div>
+              {emComite.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 48, color: '#6080a0', fontSize: 15, background: '#f8fafc', borderRadius: 10, border: '1.5px dashed #c5d5e8' }}>🏛 Nenhuma operação aguardando decisão do Comitê.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {emComite.map(op => {
+                    const isExp = expandidoComiteId === op.id
+                    const abaAt = abaSimulador[op.id] ?? 0
+                    const inp = simInputs[op.id] ?? { sinistralidade: 0.50, carregamento: 0.35, margem: 0.20 }
+                    const taxaMin = (inp.sinistralidade + inp.carregamento + inp.margem) / Math.max(op.vigencia_anos ?? 1, 0.001)
+                    const opL = op.lmg ?? 0; const opP = op.premio_previsto ?? 0; const opT = op.taxa ?? 0; const opV = op.vigencia_anos ?? 1
+                    const nBL = bookLmgTotal + opL; const nBP = bookPremioTotal + opP
+                    const nBT = nBL > 0 ? (bookOps.reduce((s,o) => s + (o.taxa ?? 0) * (o.lmg ?? 0), 0) + opT * opL) / nBL : 0
+                    const mM = metaMensal?.premio_meta ?? 0; const mA = metaAnual?.premio_meta ?? 0
+                    const pMAt = mM > 0 ? premioRealizadoMes / mM * 100 : 0
+                    const pMNv = mM > 0 ? (premioRealizadoMes + opP) / mM * 100 : 0
+                    const cMes = mM > 0 ? opP / mM * 100 : 0
+                    const gapM = mM > 0 ? Math.max(0, mM - premioRealizadoMes - opP) : 0
+                    const pMed = bookOps.length > 0 && bookPremioTotal > 0 ? bookPremioTotal / bookOps.length : 0
+                    const nOps = pMed > 0 && gapM > 0 ? Math.ceil(gapM / pMed) : 0
+                    const pANv = mA > 0 ? (premioRealizadoAno + opP) / mA * 100 : 0
+                    return (
+                      <div key={op.id} style={{ borderRadius: 12, border: `1.5px solid ${isExp ? '#3070c8' : '#c5d5e8'}`, background: 'white', overflow: 'hidden', boxShadow: isExp ? '0 2px 12px rgba(48,112,200,0.12)' : 'none' }}>
+                        {/* Header colapsado */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 20px', cursor: 'pointer', background: isExp ? '#f0f6ff' : 'white', flexWrap: 'wrap' }}
+                          onClick={() => { const o = !isExp; setExpandidoComiteId(o ? op.id : null); if (o) carregarComentariosComite([op.id]) }}>
+                          <div style={{ flex: '2 1 160px' }}>
+                            <div style={{ fontWeight: 700, fontSize: 14, color: '#1a2a3a' }}>{op.tomador?.razao_social ?? '—'}</div>
+                            <div style={{ fontSize: 12, color: '#6080a0', marginTop: 2 }}>{op.produto?.nome ?? '—'}{op.modalidade ? ` · ${op.modalidade}` : ''}</div>
+                          </div>
+                          <div style={{ textAlign: 'center', minWidth: 120 }}>
+                            <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 1 }}>Prêmio Previsto</div>
+                            <div style={{ fontSize: 21, fontWeight: 900, color: '#e8b84b', lineHeight: 1 }}>{opP > 0 ? fmtMoeda(opP) : '—'}</div>
+                          </div>
+                          <div style={{ textAlign: 'center', minWidth: 70 }}>
+                            <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 1 }}>Taxa</div>
+                            <div style={{ fontSize: 15, fontWeight: 700, color: '#1a4080' }}>{opT > 0 ? fmtPercent(opT / 100) : '—'}</div>
+                          </div>
+                          <div style={{ textAlign: 'center', minWidth: 70 }}>
+                            <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 1 }}>Vigência</div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: '#1a4080' }}>{opV > 0 ? `${opV}a` : '—'}</div>
+                          </div>
+                          <div style={{ textAlign: 'center', minWidth: 90 }}>
+                            <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 1 }}>LMG</div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#6080a0' }}>{opL > 0 ? fmtMoeda(opL) : '—'}</div>
+                          </div>
+                          {op.temperatura && <span className={`badge ${badgeTemperatura(op.temperatura)}`}>{op.temperatura}</span>}
+                          <div style={{ marginLeft: 'auto', fontSize: 13, color: '#3070c8', fontWeight: 700, whiteSpace: 'nowrap' }}>{isExp ? '▲ Fechar' : '▼ Analisar'}</div>
+                        </div>
+                        {/* Painel expandido */}
+                        {isExp && (
+                          <div style={{ borderTop: '1.5px solid #e0ecff' }}>
+                            {/* Abas */}
+                            <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #e0ecff', overflowX: 'auto' }}>
+                              {['📐 Cálculo','📊 Resultado','📈 Portfólio','💬 Deliberação','⚡ Dados'].map((lb, idx) => (
+                                <button key={idx} onClick={() => setAbaSimulador(prev => ({ ...prev, [op.id]: idx }))}
+                                  style={{ padding: '10px 16px', border: 'none', background: 'transparent', borderBottom: abaAt === idx ? '2.5px solid #3070c8' : '2.5px solid transparent', color: abaAt === idx ? '#1a4080' : '#6080a0', fontWeight: abaAt === idx ? 700 : 400, cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>
+                                  {lb}
+                                </button>
+                              ))}
+                            </div>
+                            <div style={{ padding: '20px 22px' }}>
+                              {/* ABA 0: Cálculo */}
+                              {abaAt === 0 && (
+                                <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                                  <div style={{ flex: '1 1 300px', background: '#0d2040', borderRadius: 10, padding: '18px 22px', fontFamily: 'monospace', lineHeight: 2.1, fontSize: 13 }}>
+                                    <div style={{ color: '#e8b84b', fontWeight: 700, marginBottom: 12, fontFamily: 'sans-serif', letterSpacing: 1 }}>DEMONSTRAÇÃO DO CÁLCULO</div>
+                                    <div style={{ color: 'rgba(180,200,220,0.7)' }}>LMG Solicitado ........ <span style={{ color: 'white', fontWeight: 700 }}>{opL > 0 ? fmtMoeda(opL) : '—'}</span></div>
+                                    <div style={{ color: 'rgba(180,200,220,0.7)' }}>× Taxa Aplicada ....... <span style={{ color: 'white', fontWeight: 700 }}>× {opT > 0 ? fmtPercent(opT / 100) : '—'}</span></div>
+                                    <div style={{ color: 'rgba(180,200,220,0.7)' }}>× Vigência ............ <span style={{ color: 'white', fontWeight: 700 }}>× {opV} anos</span></div>
+                                    <div style={{ borderTop: '1px solid rgba(56,120,200,0.4)', paddingTop: 8, marginTop: 2 }}>
+                                      <span style={{ color: 'rgba(180,200,220,0.7)' }}>Prêmio Previsto ....... </span>
+                                      <span style={{ color: '#e8b84b', fontWeight: 900, fontSize: 15 }}>{opP > 0 ? fmtMoeda(opP) : '—'}</span>
+                                    </div>
+                                    <div style={{ marginTop: 10, padding: '8px 10px', background: 'rgba(56,120,200,0.12)', borderRadius: 8, fontSize: 11, color: 'rgba(180,200,220,0.6)', lineHeight: 1.7 }}>
+                                      <div>Corretora: {op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'}</div>
+                                      <div>Estado: {op.estado ?? '—'} · Entrada: {op.data_entrada ? fmtData(op.data_entrada) : '—'}</div>
+                                    </div>
+                                  </div>
+                                  <div style={{ flex: '1 1 260px', background: '#f8fafc', borderRadius: 10, padding: '18px 22px', border: '1.5px solid #d0e4f5' }}>
+                                    <div style={{ fontWeight: 700, fontSize: 13, color: '#1a2a3a', marginBottom: 14, letterSpacing: 0.5 }}>COMPOSIÇÃO TÉCNICA DA TAXA</div>
+                                    {(['sinistralidade','carregamento','margem'] as const).map((k) => {
+                                      const lbs: Record<string,string> = { sinistralidade: 'Sinistralidade Esperada (%)', carregamento: 'Carregamento Operacional (%)', margem: 'Margem Técnica (%)' }
+                                      const cors: Record<string,string> = { sinistralidade: '#d64545', carregamento: '#d07830', margem: '#27a96c' }
+                                      return (
+                                        <div key={k} style={{ marginBottom: 12 }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: 12 }}>
+                                            <label style={{ color: '#1a2a3a' }}>{lbs[k]}</label>
+                                            <span style={{ color: cors[k], fontWeight: 700 }}>{inp[k].toFixed(2)}%</span>
+                                          </div>
+                                          <input type="range" min="0" max="5" step="0.05" value={inp[k]}
+                                            onChange={(e) => setSimInputs(prev => ({ ...prev, [op.id]: { ...inp, [k]: parseFloat(e.target.value) } }))}
+                                            style={{ width: '100%', accentColor: cors[k] }} />
+                                        </div>
+                                      )
+                                    })}
+                                    <div style={{ borderTop: '1.5px solid #d0e4f5', paddingTop: 12, marginTop: 4 }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
+                                        <span style={{ color: '#6080a0' }}>Taxa Técnica Mínima ({opV}a):</span>
+                                        <span style={{ fontWeight: 800, color: '#1a4080' }}>{fmtPercent(taxaMin / 100)}</span>
+                                      </div>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13 }}>
+                                        <span style={{ color: '#6080a0' }}>Taxa desta Operação:</span>
+                                        <span style={{ fontWeight: 800 }}>{opT > 0 ? fmtPercent(opT / 100) : '—'}</span>
+                                      </div>
+                                      {opT > 0 && (
+                                        <div style={{ padding: '9px 12px', borderRadius: 8, background: opT >= taxaMin ? '#d4f4e4' : '#fbeaea', border: `1.5px solid ${opT >= taxaMin ? '#27a96c' : '#d64545'}`, textAlign: 'center' }}>
+                                          <span style={{ fontWeight: 800, color: opT >= taxaMin ? '#1a6a40' : '#a02020', fontSize: 13 }}>
+                                            {opT >= taxaMin ? '✅ Taxa ADEQUADA' : '⚠️ Taxa ABAIXO do mínimo'}{' '}({opT >= taxaMin ? '+' : ''}{fmtPercent(Math.abs(opT - taxaMin) / 100)})
+                                          </span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              {/* ABA 1: Resultado */}
+                              {abaAt === 1 && (
+                                <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                                  <div style={{ flex: '1 1 320px', background: '#0d2040', borderRadius: 10, padding: '18px 22px', fontFamily: 'monospace', fontSize: 13, lineHeight: 2 }}>
+                                    <div style={{ color: '#e8b84b', fontWeight: 700, marginBottom: 10, fontFamily: 'sans-serif', letterSpacing: 1 }}>ANÁLISE DE RESULTADO — META MENSAL</div>
+                                    {mM === 0 ? <div style={{ color: '#6080a0' }}>Configure a Meta Mensal acima.</div> : (
+                                      <>
+                                        <div style={{ color: 'rgba(180,200,220,0.7)' }}>Meta Mensal .... <span style={{ color: 'white', fontWeight: 700 }}>{fmtMoeda(mM)}</span> <span style={{ color: '#6080a0' }}>100%</span></div>
+                                        <div style={{ color: 'rgba(180,200,220,0.7)' }}>Realizado Atual  <span style={{ color: 'white' }}>{fmtMoeda(premioRealizadoMes)}</span> <span style={{ color: pMAt >= 80 ? '#27a96c' : '#e8b84b' }}>{pMAt.toFixed(1)}%</span></div>
+                                        <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 4, height: 7, margin: '2px 0 4px' }}><div style={{ height: '100%', borderRadius: 4, background: pMAt >= 80 ? '#27a96c' : pMAt >= 50 ? '#e8b84b' : '#d64545', width: `${Math.min(100, pMAt)}%` }} /></div>
+                                        <div style={{ color: '#e8b84b', fontWeight: 700 }}>+ Esta Operação  +{fmtMoeda(opP)} <span style={{ fontSize: 12 }}>+{cMes.toFixed(1)}%</span></div>
+                                        <div style={{ borderTop: '1px solid rgba(56,120,200,0.3)', paddingTop: 6, marginTop: 2 }}>
+                                          <div style={{ color: 'rgba(180,200,220,0.8)' }}>Novo Patamar ... <span style={{ color: '#27a96c', fontWeight: 900 }}>{fmtMoeda(premioRealizadoMes + opP)}</span> <span style={{ color: '#27a96c' }}>{pMNv.toFixed(1)}%</span></div>
+                                          <div style={{ background: 'rgba(39,169,108,0.3)', borderRadius: 4, height: 7, margin: '3px 0' }}><div style={{ height: '100%', borderRadius: 4, background: '#27a96c', width: `${Math.min(100, pMNv)}%` }} /></div>
+                                          {gapM > 0 && <div style={{ color: '#d64545', fontWeight: 700 }}>Gap Restante ... {fmtMoeda(gapM)}</div>}
+                                          {nOps > 0 && pMed > 0 && <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 3 }}>~{nOps} ops no valor médio de {fmtMoeda(pMed)}</div>}
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                  <div style={{ flex: '1 1 240px', background: '#f8fafc', borderRadius: 10, padding: '18px 22px', border: '1.5px solid #d0e4f5', fontFamily: 'monospace', fontSize: 13, lineHeight: 1.9 }}>
+                                    <div style={{ fontWeight: 700, fontSize: 13, color: '#1a2a3a', marginBottom: 12, fontFamily: 'sans-serif' }}>META ANUAL</div>
+                                    {mA === 0 ? <div style={{ color: '#6080a0' }}>Meta anual não definida.</div> : (
+                                      <>
+                                        <div>Meta Ano: <strong>{fmtMoeda(mA)}</strong></div>
+                                        <div>Realizado: <span style={{ color: '#1a4080' }}>{fmtMoeda(premioRealizadoAno)}</span> ({(premioRealizadoAno / mA * 100).toFixed(1)}%)</div>
+                                        <div style={{ background: '#e0ecff', borderRadius: 4, height: 7, margin: '6px 0' }}><div style={{ height: '100%', borderRadius: 4, background: '#3070c8', width: `${Math.min(100, premioRealizadoAno / mA * 100)}%` }} /></div>
+                                        <div>+ Esta Op: <span style={{ color: '#e8b84b', fontWeight: 700 }}>+{fmtMoeda(opP)}</span></div>
+                                        <div style={{ borderTop: '1px dashed #d0e4f5', paddingTop: 8, marginTop: 8 }}>Novo: <strong style={{ color: '#27a96c' }}>{fmtMoeda(premioRealizadoAno + opP)}</strong> ({pANv.toFixed(1)}%)</div>
+                                        <div style={{ background: '#d4f4e4', borderRadius: 4, height: 7, marginTop: 6 }}><div style={{ height: '100%', borderRadius: 4, background: '#27a96c', width: `${Math.min(100, pANv)}%` }} /></div>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                              {/* ABA 2: Portfólio */}
+                              {abaAt === 2 && (
+                                <div>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1a2a3a', marginBottom: 12, letterSpacing: 0.5 }}>SIMULAÇÃO DE IMPACTO — SE APROVADA</div>
+                                  <div style={{ background: 'white', borderRadius: 10, overflow: 'hidden', border: '1.5px solid #d0e4f5', marginBottom: 16 }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                                      <thead><tr style={{ background: '#0d2040' }}>
+                                        {['Indicador','Atual','Após Aprovação','Variação'].map(h => <th key={h} style={{ padding: '9px 14px', textAlign: h === 'Indicador' ? 'left' : 'right', color: 'rgba(180,200,220,0.9)', fontWeight: 600 }}>{h}</th>)}
+                                      </tr></thead>
+                                      <tbody>
+                                        {[
+                                          { l: 'LMG Total em Carteira', a: fmtMoeda(bookLmgTotal), d: fmtMoeda(nBL), delta: bookLmgTotal > 0 ? `+${(opL / bookLmgTotal * 100).toFixed(2)}%` : '—', up: true },
+                                          { l: 'Prêmio Total em Carteira', a: fmtMoeda(bookPremioTotal), d: fmtMoeda(nBP), delta: bookPremioTotal > 0 ? `+${(opP / bookPremioTotal * 100).toFixed(2)}%` : '—', up: true },
+                                          { l: 'Taxa Média Ponderada', a: fmtPercent(bookTmpTotal / 100), d: fmtPercent(nBT / 100), delta: `${nBT >= bookTmpTotal ? '+' : ''}${fmtPercent(Math.abs(nBT - bookTmpTotal) / 100)}`, up: nBT >= bookTmpTotal },
+                                          { l: 'Operações no Book', a: `${bookOps.length}`, d: `${bookOps.length + 1}`, delta: '+1', up: true },
+                                        ].map((row, i) => (
+                                          <tr key={i} style={{ borderBottom: '1px solid #e0ecff', background: i % 2 === 0 ? 'white' : '#f8fafc' }}>
+                                            <td style={{ padding: '9px 14px', fontWeight: 600, color: '#1a2a3a' }}>{row.l}</td>
+                                            <td style={{ padding: '9px 14px', textAlign: 'right', color: '#6080a0' }}>{row.a}</td>
+                                            <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, color: '#1a4080' }}>{row.d}</td>
+                                            <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, color: row.up ? '#27a96c' : '#d64545' }}>{row.delta} {row.up ? '↑' : '↓'}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 10 }}>CONCENTRAÇÃO DE MODALIDADE (% Prêmio)</div>
+                                  {exposicaoPorModalidade.map(m => {
+                                    const add = op.modalidade === m.modalidade ? opP : 0
+                                    const nPct = nBP > 0 ? (m.premio + add) / nBP * 100 : 0
+                                    const dlt = nPct - (bookPremioTotal > 0 ? m.premio / bookPremioTotal * 100 : 0)
+                                    return (
+                                      <div key={m.modalidade} style={{ marginBottom: 9 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: 12 }}>
+                                          <span style={{ fontWeight: 600, color: '#1a2a3a' }}>{m.modalidade}</span>
+                                          <span style={{ fontWeight: 700, color: dlt > 2 ? '#d07830' : '#1a4080' }}>
+                                            {nPct.toFixed(1)}% {dlt !== 0 && <span style={{ fontSize: 11, color: dlt > 0 ? '#e8b84b' : '#6080a0' }}>({dlt > 0 ? '+' : ''}{dlt.toFixed(1)}%)</span>}
+                                          </span>
+                                        </div>
+                                        <div style={{ background: '#e0ecff', borderRadius: 5, height: 11, position: 'relative', overflow: 'hidden' }}>
+                                          <div style={{ position: 'absolute', height: '100%', background: '#3070c8', opacity: 0.3, width: `${Math.min(100, m.pctPremio)}%` }} />
+                                          <div style={{ position: 'absolute', height: '100%', borderRadius: 5, background: op.modalidade === m.modalidade ? '#27a96c' : '#3070c8', width: `${Math.min(100, nPct)}%`, transition: 'width 0.3s' }} />
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )}
+                              {/* ABA 3: Deliberação */}
+                              {abaAt === 3 && (() => {
+                                const coments = comentariosComite[op.id] ?? []
+                                const nf = novoComentarioForm[op.id] ?? { autor: '', comentario: '', tipo: 'geral' }
+                                const tCor: Record<string,string> = { restricao: '#d64545', condicao: '#d07830', aprovacao: '#27a96c', negacao: '#888', geral: '#3070c8' }
+                                return (
+                                  <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                                    <div style={{ flex: '1 1 260px' }}>
+                                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 7, letterSpacing: 0.5 }}>NOTAS DO ANALISTA</div>
+                                      <textarea placeholder="Análise técnica para o comitê..." defaultValue={op.comite_notas ?? ''}
+                                        onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_notas: e.target.value }).eq('id', op.id) }}
+                                        style={{ width: '100%', minHeight: 96, padding: '9px 11px', borderRadius: 8, border: '1.5px solid #c5d5e8', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' as const }} />
+                                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', margin: '12px 0 7px', letterSpacing: 0.5 }}>CAMPOS DE VARIAÇÃO / CONDIÇÕES</div>
+                                      {[['Taxa (%)', 'ex: +0.25'], ['LMG (R$)', 'ex: -500000']].map(([lb, ph]) => (
+                                        <div key={lb} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                                          <div style={{ width: 120 }}>
+                                            <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Variação {lb}</label>
+                                            <input type="number" step="any" placeholder={ph} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
+                                          </div>
+                                          <div style={{ flex: 1 }}>
+                                            <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Justificativa</label>
+                                            <input type="text" placeholder="ex: Mitigar concentração" style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    <div style={{ flex: '1 1 260px' }}>
+                                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 7, letterSpacing: 0.5 }}>COMENTÁRIOS DO COMITÊ</div>
+                                      <div style={{ display: 'flex', gap: 7, marginBottom: 7 }}>
+                                        <input placeholder="Nome do membro" value={nf.autor} onChange={(e) => setNovoComentarioForm(prev => ({ ...prev, [op.id]: { ...nf, autor: e.target.value } }))}
+                                          style={{ flex: 1, padding: '7px 9px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 13 }} />
+                                        <select value={nf.tipo} onChange={(e) => setNovoComentarioForm(prev => ({ ...prev, [op.id]: { ...nf, tipo: e.target.value } }))}
+                                          style={{ padding: '7px 9px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 13 }}>
+                                          <option value="geral">Geral</option><option value="restricao">Restrição</option>
+                                          <option value="condicao">Condição</option><option value="aprovacao">Aprovação</option><option value="negacao">Negação</option>
+                                        </select>
+                                      </div>
+                                      <textarea placeholder="Comentário..." value={nf.comentario} onChange={(e) => setNovoComentarioForm(prev => ({ ...prev, [op.id]: { ...nf, comentario: e.target.value } }))}
+                                        style={{ width: '100%', minHeight: 68, padding: '8px 9px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' as const }} />
+                                      <button onClick={() => adicionarComentario(op.id)} disabled={salvandoComentario || !nf.autor || !nf.comentario}
+                                        style={{ marginTop: 7, padding: '7px 14px', borderRadius: 6, border: 'none', background: '#3070c8', color: 'white', fontWeight: 700, fontSize: 13, cursor: 'pointer', opacity: (!nf.autor || !nf.comentario) ? 0.5 : 1 }}>
+                                        {salvandoComentario ? 'Salvando…' : '+ Comentário'}
+                                      </button>
+                                      <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 7, maxHeight: 210, overflowY: 'auto' }}>
+                                        {coments.length === 0
+                                          ? <div style={{ fontSize: 13, color: '#6080a0', fontStyle: 'italic' }}>Nenhum comentário ainda.</div>
+                                          : coments.map(c => (
+                                            <div key={c.id} style={{ background: '#f0f6ff', borderRadius: 8, padding: '9px 11px', border: '1px solid #d0e4f5' }}>
+                                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                                                <span style={{ fontWeight: 700, fontSize: 12, color: '#1a4080' }}>{c.autor}</span>
+                                                <span style={{ fontSize: 11, color: tCor[c.tipo] ?? '#6080a0', fontWeight: 700, textTransform: 'capitalize' as const }}>{c.tipo}</span>
+                                              </div>
+                                              <div style={{ fontSize: 13, color: '#1a2a3a' }}>{c.comentario}</div>
+                                              <div style={{ fontSize: 10, color: '#6080a0', marginTop: 3 }}>{new Date(c.created_at).toLocaleString('pt-BR')}</div>
+                                            </div>
+                                          ))
+                                        }
+                                      </div>
+                                    </div>
+                                  </div>
+                                )
+                              })()}
+                              {/* ABA 4: Dados */}
+                              {abaAt === 4 && (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(185px,1fr))', gap: 10 }}>
+                                  {[['Tomador', op.tomador?.razao_social ?? '—'],['CNPJ', op.tomador?.cnpj ? maskCNPJ(op.tomador.cnpj) : '—'],['Corretora', op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'],['Produto', op.produto?.nome ?? '—'],['Modalidade', op.modalidade ?? '—'],['Estado', op.estado ?? '—'],['LMG', opL > 0 ? fmtMoeda(opL) : '—'],['Taxa', opT > 0 ? fmtPercent(opT / 100) : '—'],['Vigência', `${opV} anos`],['Prêmio Previsto', opP > 0 ? fmtMoeda(opP) : '—'],['Temperatura', op.temperatura ?? '—'],['Data Entrada', op.data_entrada ? fmtData(op.data_entrada) : '—'],['Analista', op.comite_analista ?? '—'],['Observação', op.observacao ?? '—']].map(([lb, vl]) => (
+                                    <div key={lb} style={{ background: '#f8fafc', borderRadius: 8, padding: '9px 12px', border: '1px solid #e0ecff' }}>
+                                      <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginBottom: 3 }}>{lb}</div>
+                                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1a2a3a', wordBreak: 'break-word' as const }}>{vl}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            {/* Decisão Final */}
+                            <div style={{ borderTop: '1.5px solid #e0ecff', padding: '12px 22px', background: '#f8fafc', display: 'flex', gap: 9, flexWrap: 'wrap', alignItems: 'center' }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginRight: 4 }}>Decisão:</span>
+                              <button onClick={() => mudarStatus(op, 'Aprovado')} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#d4f4e4', color: '#1a6a40', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>✅ Aprovar</button>
+                              <button onClick={async () => { const sb = createClient(); await sb.from('operacoes').update({ comite_decisao: 'Aprovar com Restrições' }).eq('id', op.id); mudarStatus(op, 'Aprovado') }}
+                                style={{ padding: '7px 16px', borderRadius: 8, border: '1.5px solid #27a96c', background: 'white', color: '#27a96c', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>✅ Aprovar c/ Restrições</button>
+                              <button onClick={() => mudarStatus(op, 'Recusado')} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#fbeaea', color: '#a02020', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>❌ Negar</button>
+                              <button onClick={() => mudarStatus(op, 'Em Análise')} style={{ padding: '7px 16px', borderRadius: 8, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>↩ Devolver</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           </>
         )
       })()}
@@ -1904,6 +2847,17 @@ export default function OperacoesPage() {
             </div>
           )}
 
+          <div style={{
+            background: '#fffbea', border: '1.5px solid #e8d060', borderRadius: 10,
+            padding: '12px 16px', marginBottom: 16, fontSize: 13, color: '#7a5a00',
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+          }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>⚠️</span>
+            <div>
+              Os status <strong>Aprovado</strong>, <strong>Emitido</strong>, <strong>Perdido</strong>, <strong>Recusado</strong> e <strong>Comitê</strong> são parte do sistema central de qualificação das operações e <strong>não podem ser excluídos</strong>. Os demais status podem ser gerenciados livremente.
+            </div>
+          </div>
+
           <div className="fam-table-wrap">
             <table className="fam-table">
               <thead>
@@ -1955,7 +2909,7 @@ export default function OperacoesPage() {
                           style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
                           Editar
                         </button>
-                        {!s.base && (
+                        {!s.base && !STATUS_PROTEGIDOS.includes(s.nome) && (
                           <button onClick={() => setConfirmExcluir(s)}
                             style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: '#fbeaea', color: '#a02020', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
                             Excluir

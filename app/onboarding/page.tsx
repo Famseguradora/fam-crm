@@ -160,8 +160,8 @@ export default function OnboardingPage() {
       }, { onConflict: 'user_id' })
 
       setStatus('completo')
-      addBot('Configuração concluída! Seu perfil de analista está pronto. Redirecionando para a tela de Análise de Crédito...')
-      setTimeout(() => router.push('/subscricao/analise-credito'), 2000)
+      addBot('Configuração concluída! Seu perfil de analista está pronto. Redirecionando para o Dashboard...')
+      setTimeout(() => router.push('/'), 2000)
     } catch {
       addBot('Houve um erro ao salvar seu perfil. Tente novamente.')
       setStatus('conversando')

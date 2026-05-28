@@ -126,8 +126,37 @@ export interface Operacao {
   status: string
   ativo: boolean
   data_entrada: string | null
+  comite_notas: string | null
+  comite_analista: string | null
+  comite_data: string | null
+  comite_decisao: string | null
   created_at: string
   updated_at: string
+}
+
+export interface MetaNegocio {
+  id: string
+  periodo: string
+  tipo: 'mensal' | 'anual'
+  premio_meta: number | null
+  lmg_meta: number | null
+  taxa_media_ponderada_meta: number | null
+  qtd_operacoes_meta: number | null
+  risco_judicial: number | null
+  sinistralidade_aceitavel: number | null
+  observacao: string | null
+  criado_por: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ComiteComentario {
+  id: string
+  operacao_id: string
+  autor: string
+  comentario: string
+  tipo: 'geral' | 'restricao' | 'condicao' | 'aprovacao' | 'negacao'
+  created_at: string
 }
 
 export interface Anexo {
