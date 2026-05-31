@@ -746,18 +746,32 @@ export default function OperacoesPage() {
     return emitidosLmgTotal > 0 ? wSum / emitidosLmgTotal : 0
   }, [bookAtualOps, emitidosLmgTotal])
 
-  const premioRealizadoMes = useMemo(() =>
-    bookAtualOps
-      .filter(op => (op.data_entrada ?? '').startsWith(periodoMesAtual))
-      .reduce((s, op) => s + (op.premio_previsto ?? 0), 0),
-    [bookAtualOps, periodoMesAtual])
+  const premioRealizadoMes = useMemo(() => {
+    // Emitidas: sempre filtradas pela data de emissão (data_entrada do mês)
+    const emitidas = operacoes
+      .filter(op => op.status === 'Emitido' && (op.data_entrada ?? '').startsWith(periodoMesAtual))
+      .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+    if (modoBook !== 'book') return emitidas
+    // Book mode: soma todas as Aprovadas sem filtro de data (simulação do período corrente)
+    const aprovadas = operacoes
+      .filter(op => op.status === 'Aprovado')
+      .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+    return emitidas + aprovadas
+  }, [operacoes, periodoMesAtual, modoBook])
 
   const premioRealizadoAno = useMemo(() => {
     const ano = new Date().getFullYear().toString()
-    return bookAtualOps
-      .filter(op => (op.data_entrada ?? '').startsWith(ano))
+    // Emitidas: filtradas pelo ano de emissão
+    const emitidas = operacoes
+      .filter(op => op.status === 'Emitido' && (op.data_entrada ?? '').startsWith(ano))
       .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
-  }, [bookAtualOps])
+    if (modoBook !== 'book') return emitidas
+    // Book mode: soma todas as Aprovadas sem filtro de data
+    const aprovadas = operacoes
+      .filter(op => op.status === 'Aprovado')
+      .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
+    return emitidas + aprovadas
+  }, [operacoes, modoBook])
 
   const exposicaoPorModalidade = useMemo(() => {
     const map: Record<string, { qtd: number; lmg: number; premio: number; taxaMin: number; taxaMax: number; taxaLmg: number }> = {}
@@ -2905,6 +2919,53 @@ export default function OperacoesPage() {
                 </div>
               )}
             </div>
+
+            {/* ── APROVADAS & EMITIDAS — visíveis para contexto do Comitê ── */}
+            {(() => {
+              const aprovEmit = operacoes.filter(op => op.status === 'Aprovado' || op.status === 'Emitido')
+              if (aprovEmit.length === 0) return null
+              const corStatus = (s: string) => s === 'Emitido' ? '#3070c8' : '#27a96c'
+              return (
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: '#1a2a3a', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    📋 Aprovadas &amp; Emitidas
+                    <span style={{ background: '#f0f6ff', color: '#3070c8', borderRadius: 20, padding: '2px 10px', fontSize: 13, fontWeight: 800 }}>{aprovEmit.length}</span>
+                    <span style={{ fontSize: 12, fontWeight: 400, color: '#6080a0' }}>operações já decididas — visíveis para contexto do Comitê</span>
+                  </div>
+                  <div style={{ background: 'white', borderRadius: 10, border: '1.5px solid #d0e4f5', overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ background: '#f0f6ff' }}>
+                          {['Status','Tomador','Produto / Modalidade','LMG','Taxa','Prêmio Prev.','Vigência (anos)'].map(h => (
+                            <th key={h} style={{ padding: '9px 12px', textAlign: h === 'Status' || h === 'Tomador' || h === 'Produto / Modalidade' ? 'left' : 'right', color: '#1a4080', fontWeight: 700, fontSize: 12 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {aprovEmit.sort((a, b) => {
+                          const order = (s: string) => s === 'Aprovado' ? 0 : 1
+                          return order(a.status) - order(b.status)
+                        }).map((op, i) => (
+                          <tr key={op.id} style={{ borderBottom: '1px solid #e0ecff', background: i % 2 === 0 ? 'white' : '#f8fafc' }}>
+                            <td style={{ padding: '9px 12px' }}>
+                              <span style={{ background: corStatus(op.status) + '22', color: corStatus(op.status), border: `1px solid ${corStatus(op.status)}55`, borderRadius: 12, padding: '2px 9px', fontSize: 11, fontWeight: 700 }}>
+                                {op.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '9px 12px', fontWeight: 600, color: '#1a2a3a' }}>{op.tomador?.razao_social ?? '—'}</td>
+                            <td style={{ padding: '9px 12px', color: '#4060a0' }}>{op.produto?.nome ?? '—'}{op.modalidade ? ` · ${op.modalidade}` : ''}</td>
+                            <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>{fmtMoeda(op.lmg ?? 0)}</td>
+                            <td style={{ padding: '9px 12px', textAlign: 'right', color: '#e8b84b', fontWeight: 700 }}>{op.taxa != null ? fmtPercent(op.taxa / 100) : '—'}</td>
+                            <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700, color: '#27a96c' }}>{fmtMoeda(op.premio_previsto ?? 0)}</td>
+                            <td style={{ padding: '9px 12px', textAlign: 'right', color: '#6080a0' }}>{op.vigencia_anos ?? '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )
+            })()}
           </>
         )
       })()}
