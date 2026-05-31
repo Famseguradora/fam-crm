@@ -2,6 +2,23 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* ── News Ticker ── */
+@keyframes fam-ticker {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-100%); }
+}
+
+.fam-ticker-scroll {
+  display: inline-block;
+  padding-left: 100%; /* empurra o texto para começar no lado direito do container */
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.fam-ticker-scroll:hover {
+  animation-play-state: paused;
+}
+
 :root {
   --blue-900: #0a1628;
   --blue-800: #102040;

@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cockpit de Comitê de Subscrição — FAM Seguradora</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #1a2a3a;
+      font-size: 13px;
+      line-height: 1.65;
+      background: #f0f4f8;
+    }
+
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 36px 48px 60px;
+      background: white;
+      box-shadow: 0 2px 24px rgba(0,0,0,0.08);
+    }
+
+    @page { size: A4; margin: 2cm 2.5cm; }
+
+    @media print {
+      body { background: white; font-size: 11.5px; }
+      .container { padding: 0; max-width: 100%; box-shadow: none; }
+      .no-print { display: none !important; }
+      .page-break { page-break-before: always; }
+      h2 { page-break-after: avoid; }
+      table { page-break-inside: avoid; }
+      .formula-box { page-break-inside: avoid; }
+    }
+
+    /* ── Cover ── */
+    .cover {
+      text-align: center;
+      padding: 56px 40px 48px;
+      background: linear-gradient(135deg, #0d1e30 0%, #1e3a6e 100%);
+      color: white;
+      border-radius: 10px;
+      margin-bottom: 44px;
+    }
+    .cover .brand {
+      font-size: 32px;
+      font-weight: 900;
+      letter-spacing: 6px;
+      color: #e8b84b;
+      margin-bottom: 18px;
+    }
+    .cover h1 {
+      font-size: 21px;
+      font-weight: 700;
+      line-height: 1.35;
+      margin-bottom: 8px;
+    }
+    .cover .subtitle {
+      font-size: 13px;
+      color: #90b8e0;
+      margin-bottom: 36px;
+      letter-spacing: 0.3px;
+    }
+    .cover .meta-row {
+      display: flex;
+      justify-content: center;
+      gap: 48px;
+      font-size: 12px;
+      color: #6090b8;
+      border-top: 1px solid rgba(255,255,255,0.12);
+      padding-top: 20px;
+    }
+    .cover .meta-row span strong { color: #b0d0f0; }
+
+    /* ── Typography ── */
+    h2 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0d1e30;
+      border-left: 4px solid #e8b84b;
+      padding-left: 12px;
+      margin: 40px 0 16px;
+    }
+    h3 {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #1e3a6e;
+      margin: 22px 0 8px;
+    }
+    p { margin-bottom: 10px; color: #2a3a4a; }
+
+    /* ── Tables ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 22px;
+      font-size: 12px;
+    }
+    th {
+      background: #0d1e30;
+      color: white;
+      padding: 9px 11px;
+      text-align: left;
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.2px;
+    }
+    td {
+      padding: 7px 11px;
+      border-bottom: 1px solid #e4eefc;
+      color: #2a3a4a;
+      vertical-align: top;
+    }
+    tr:nth-child(even) td { background: #f4f8ff; }
+    tr.total td { background: #e0ecff; font-weight: 700; }
+
+    /* ── Formula Box ── */
+    .formula-box {
+      background: #f0f6ff;
+      border: 1.5px solid #b8d4f8;
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin: 12px 0 22px;
+      font-family: 'Courier New', Consolas, monospace;
+      font-size: 12px;
+      line-height: 2;
+      color: #1a3060;
+    }
+    .formula-box .result {
+      border-top: 2px double #2060b8;
+      margin-top: 10px;
+      padding-top: 10px;
+      font-weight: 700;
+      color: #0d40a0;
+      font-size: 12.5px;
+    }
+
+    /* ── Alert Boxes ── */
+    .alert-amber {
+      background: #fffbeb;
+      border-left: 4px solid #e8b84b;
+      padding: 11px 16px;
+      border-radius: 0 6px 6px 0;
+      margin: 10px 0 18px;
+      font-size: 12px;
+      color: #5a4010;
+    }
+    .alert-blue {
+      background: #eff6ff;
+      border-left: 4px solid #3070c8;
+      padding: 11px 16px;
+      border-radius: 0 6px 6px 0;
+      margin: 10px 0 18px;
+      font-size: 12px;
+      color: #0d2a60;
+    }
+
+    /* ── KPI Cards ── */
+    .kpi-row {
+      display: flex;
+      gap: 14px;
+      margin: 16px 0 22px;
+      flex-wrap: wrap;
+    }
+    .kpi-card {
+      flex: 1 1 160px;
+      background: #0d1e30;
+      color: white;
+      border-radius: 8px;
+      padding: 14px 18px;
+    }
+    .kpi-card .kpi-label {
+      font-size: 10px;
+      color: #6090b8;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 5px;
+    }
+    .kpi-card .kpi-value {
+      font-size: 17px;
+      font-weight: 700;
+      color: #e8b84b;
+      line-height: 1.2;
+    }
+    .kpi-card .kpi-sub {
+      font-size: 11px;
+      color: #4a7aa8;
+      margin-top: 3px;
+    }
+
+    /* ── Progress Bars ── */
+    .progress-row { margin: 10px 0; }
+    .progress-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #4a6a8a;
+      margin-bottom: 4px;
+    }
+    .progress-bar {
+      height: 14px;
+      background: #e0ecff;
+      border-radius: 7px;
+      overflow: hidden;
+    }
+    .progress-fill { height: 100%; border-radius: 7px; transition: width 0.6s ease; }
+    .green  { background: linear-gradient(90deg, #16a34a, #22c55e); }
+    .yellow { background: linear-gradient(90deg, #d97706, #f59e0b); }
+    .red    { background: linear-gradient(90deg, #dc2626, #ef4444); }
+
+    /* ── Traffic Light Legend ── */
+    .semaforo-row {
+      display: flex;
+      gap: 12px;
+      margin: 14px 0 20px;
+      flex-wrap: wrap;
+    }
+    .semaforo-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      background: #f4f8ff;
+      padding: 7px 14px;
+      border-radius: 6px;
+    }
+    .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green  { background: #22c55e; }
+    .dot-yellow { background: #f59e0b; }
+    .dot-red    { background: #ef4444; }
+
+    /* ── Flow ── */
+    .flow {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin: 18px 0 8px;
+      flex-wrap: wrap;
+    }
+    .flow-step {
+      background: #1e3a6e;
+      color: white;
+      padding: 9px 18px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      text-align: center;
+    }
+    .flow-arrow {
+      color: #e8b84b;
+      font-size: 20px;
+      padding: 0 10px;
+      font-weight: 700;
+    }
+
+    /* ── Glossary ── */
+    .glossary { margin: 12px 0; }
+    .glossary dt {
+      font-weight: 700;
+      color: #1e3a6e;
+      margin-top: 12px;
+      font-size: 12.5px;
+    }
+    .glossary dd {
+      margin-left: 18px;
+      color: #3a5070;
+      font-size: 12px;
+    }
+
+    /* ── Footer ── */
+    .doc-footer {
+      text-align: center;
+      color: #8090a8;
+      font-size: 11px;
+      margin-top: 48px;
+      padding-top: 18px;
+      border-top: 1px solid #dce8f8;
+    }
+
+    /* ── Print Button ── */
+    .print-btn {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      background: #1e3a6e;
+      color: white;
+      border: none;
+      padding: 11px 22px;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 3px 12px rgba(0,0,0,0.25);
+      z-index: 999;
+      letter-spacing: 0.3px;
+    }
+    .print-btn:hover { background: #2a4a8e; }
+
+    ul { margin-left: 20px; }
+    ul li { margin-bottom: 5px; font-size: 12px; color: #2a3a4a; }
+    code {
+      background: #e8f0ff;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 11.5px;
+      color: #1a3a70;
+    }
+  </style>
+</head>
+<body>
+
+<button class="print-btn no-print" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
+
+<div class="container">
+
+  <!-- ════════════════════════════════════════════════════════ CAPA -->
+  <div class="cover">
+    <div class="brand">FAM</div>
+    <h1>Cockpit de Comitê de Subscrição</h1>
+    <div class="subtitle">Documentação Técnica e de Negócio &mdash; Seguro Garantia</div>
+    <div class="meta-row">
+      <span><strong>Empresa:</strong> FAM Seguradora</span>
+      <span><strong>Data:</strong> Maio / 2026</span>
+      <span><strong>Versão:</strong> 1.0</span>
+      <span><strong>Classificação:</strong> Confidencial</span>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════ SUMÁRIO EXECUTIVO -->
+  <h2>1. Sumário Executivo</h2>
+
+  <p>O <strong>Cockpit de Comitê de Subscrição</strong> é o módulo central de tomada de decisão do CRM FAM para operações de seguro garantia. Ele transforma um processo manual — baseado em intuição e planilhas dispersas — em uma plataforma integrada que centraliza dados, demonstra cálculos passo a passo e empoda o comitê a deliberar com informação completa e rastreável.</p>
+
+  <div class="alert-blue">
+    <strong>Filosofia central:</strong> "Prêmio é receita. LMG é risco. O comitê decide &mdash; a ferramenta ilumina."
+  </div>
+
+  <h3>Benefícios para o Processo Decisório</h3>
+  <table>
+    <tr><th style="width:48%">Antes do Cockpit</th><th>Com o Cockpit</th></tr>
+    <tr><td>Análise manual em planilhas separadas</td><td>Todos os cálculos em tempo real na mesma tela</td></tr>
+    <tr><td>Meta de prêmio comunicada verbalmente</td><td>Meta configurada no sistema &mdash; painel META vs REALIZADO sempre visível</td></tr>
+    <tr><td>Decisão baseada em intuição do analista</td><td>Simulador mostra o impacto exato de cada aprovação no portfólio</td></tr>
+    <tr><td>Deliberações sem registro formal</td><td>Histórico de comentários, restrições e condições salvo por operação</td></tr>
+    <tr><td>Concentração de risco não monitorada</td><td>Alertas automáticos de concentração por modalidade e por tomador</td></tr>
+    <tr><td>Taxa sem análise de adequação técnica</td><td>Simulador de composição de taxa (sinistralidade + carregamento + margem)</td></tr>
+  </table>
+
+  <!-- ════════════════════════════════════════════════ GLOSSÁRIO -->
+  <div class="page-break"></div>
+  <h2>2. Glossário de Termos</h2>
+
+  <dl class="glossary">
+    <dt>LMG &mdash; Limite Máximo de Garantia</dt>
+    <dd>Valor máximo que a seguradora pode ser chamada a pagar em caso de sinistro. É a medida de risco da operação. Quanto maior o LMG, maior a exposição da carteira.</dd>
+
+    <dt>Prêmio Previsto</dt>
+    <dd>Receita esperada da operação, calculada como <strong>LMG &times; Taxa &times; Vigência</strong>. É o indicador de resultado financeiro. O comitê prioriza operações com maior prêmio por unidade de risco assumido.</dd>
+
+    <dt>Taxa</dt>
+    <dd>Percentual anual cobrado sobre o LMG para composição do prêmio. Exemplo: taxa de 1,25% ao ano sobre LMG de R$ 5M por 2 anos = prêmio de R$ 125.000.</dd>
+
+    <dt>Vigência</dt>
+    <dd>Prazo de duração da apólice em anos. Multiplica diretamente o prêmio anual para obter o prêmio total do contrato.</dd>
+
+    <dt>TMP &mdash; Taxa Média Ponderada</dt>
+    <dd>Indicador de qualidade técnica do portfólio. Mede a taxa média das operações ponderada pelo LMG de cada uma. Uma TMP maior significa melhor remuneração do risco assumido. Fórmula: <strong>Σ(taxa&sub;i &times; LMG&sub;i) &divide; Σ(LMG&sub;i)</strong>.</dd>
+
+    <dt>Book (Carteira Ativa)</dt>
+    <dd>Conjunto de operações com status <strong>Aprovado</strong> ou <strong>Emitido</strong>. É a base para todos os cálculos de exposição, TMP e comparação com metas.</dd>
+
+    <dt>Sinistralidade</dt>
+    <dd>Percentual esperado de sinistros (acionamentos da garantia) sobre o prêmio emitido. Componente da taxa técnica mínima. Depende do setor, histórico e perfil do tomador.</dd>
+
+    <dt>Carregamento Operacional</dt>
+    <dd>Custo operacional da operação: comissões de corretagem, despesas administrativas, tributos. Componente da taxa técnica mínima.</dd>
+
+    <dt>Margem Técnica</dt>
+    <dd>Lucro técnico desejado sobre a operação após sinistros e custos. Componente da taxa técnica mínima. Definido pela diretoria técnica.</dd>
+
+    <dt>Taxa Técnica Mínima</dt>
+    <dd>Taxa mínima para que a operação seja tecnicamente adequada e lucrativa: <strong>Sinistralidade + Carregamento + Margem Técnica</strong>.</dd>
+
+    <dt>Folga de Taxa</dt>
+    <dd>Diferença entre a taxa praticada e a taxa técnica mínima. Folga positiva = operação adequada. Folga negativa = taxa insuficiente, requer atenção do comitê.</dd>
+
+    <dt>Concentração</dt>
+    <dd>Percentual que uma modalidade ou tomador representa no book total. Alta concentração indica dependência excessiva de um segmento ou cliente, aumentando o risco sistêmico.</dd>
+  </dl>
+
+  <!-- ════════════════════════════════════════════════ FÓRMULAS -->
+  <div class="page-break"></div>
+  <h2>3. Fórmulas e Demonstração de Cálculos</h2>
+
+  <h3>3.1 Prêmio Previsto</h3>
+  <p>A receita esperada de uma operação é calculada multiplicando o risco assumido (LMG) pela taxa anual e pelo prazo de vigência:</p>
+
+  <div class="formula-box">
+    DEMONSTRAÇÃO &mdash; ABC Engenharia Ltda (Seguro Performance)<br>
+    <br>
+    LMG Solicitado ........................... R$  5.000.000,00<br>
+    &times; Taxa Aplicada ..................... &times;        1,2500%<br>
+    &times; Vig&ecirc;ncia ..................... &times;     2,00 anos<br>
+    <div class="result">= Pr&ecirc;mio Previsto .................... R$    125.000,00</div>
+  </div>
+
+  <div class="alert-amber">
+    <strong>Interpretação:</strong> Ao assumir R$ 5 milhões de risco por 2 anos a 1,25% ao ano, a receita esperada é R$ 125.000. Se a vigência fosse 3 anos com a mesma taxa, o prêmio seria R$ 187.500 (+50%).
+  </div>
+
+  <h3>3.2 Taxa Média Ponderada (TMP) do Portfólio</h3>
+  <p>A TMP mede a qualidade técnica do portfólio inteiro. Operações com LMG maior têm mais peso — pois representam maior risco assumido e devem ser melhor remuneradas:</p>
+
+  <div class="formula-box">
+    TMP = &Sigma;(taxa&sub;i &times; LMG&sub;i) &divide; &Sigma; LMG&sub;i<br>
+    <br>
+    Operação              LMG               Taxa        Taxa &times; LMG<br>
+    ─────────────────────────────────────────────────────────<br>
+    ABC Engenharia        R$ 5.000.000      1,2500%      R$  62.500<br>
+    XYZ Constru&ccedil;&otilde;es   R$ 3.000.000      0,9500%      R$  28.500<br>
+    Beta Infraestrutura   R$ 8.000.000      1,4000%      R$ 112.000<br>
+    Gama Log&iacute;stica       R$ 2.000.000      1,1000%      R$  22.000<br>
+    ─────────────────────────────────────────────────────────<br>
+    &Sigma; LMG ............. R$ 18.000.000<br>
+    &Sigma; (taxa &times; LMG) .. R$ 225.000<br>
+    <div class="result">TMP = R$ 225.000 &divide; R$ 18.000.000 = 1,2500%</div>
+  </div>
+
+  <div class="alert-blue">
+    <strong>Por que não usar média simples?</strong> Uma operação de R$ 10M a 1% tem muito mais impacto no risco total do que 10 operações de R$ 100k a 2%. A TMP pondera corretamente, refletindo a qualidade técnica real do portfólio.
+  </div>
+
+  <h3>3.3 Taxa Técnica Mínima e Folga</h3>
+  <p>O simulador decompõe a taxa de cada operação para verificar se ela cobre, no mínimo, o custo técnico esperado:</p>
+
+  <div class="formula-box">
+    COMPOSIÇÃO DA TAXA &mdash; ABC Engenharia Ltda<br>
+    <br>
+    Sin istralidade Esperada ............... 0,5000%<br>
+    + Carregamento Operacional ............. 0,3500%<br>
+    + Margem T&eacute;cnica ...................... 0,2000%<br>
+    <div class="result">= Taxa T&eacute;cnica M&iacute;nima ................. 1,0500%</div>
+    <br>
+    Taxa da Operação ...................... 1,2500%<br>
+    &minus; Taxa T&eacute;cnica M&iacute;nima ................. 1,0500%<br>
+    <div class="result">= Folga .............................. +0,2000% &nbsp; ✅ Adequada</div>
+  </div>
+
+  <table>
+    <tr><th>Folga</th><th>Classificação</th><th>Interpretação</th></tr>
+    <tr><td>&gt; 0%</td><td>✅ Adequada</td><td>Taxa cobre sinistros, custos e margem — operação viável tecnicamente</td></tr>
+    <tr><td>= 0%</td><td>⚠ No Limite</td><td>Sem margem de segurança — qualquer variação pode gerar prejuízo</td></tr>
+    <tr><td>&lt; 0%</td><td>❌ Insuficiente</td><td>Taxa abaixo do custo técnico — operação deficitária na expectativa</td></tr>
+  </table>
+
+  <!-- ════════════════════════════════════════════════ META vs REALIZADO -->
+  <div class="page-break"></div>
+  <h2>4. Painel META vs REALIZADO</h2>
+
+  <p>O CEO configura as metas de negócio diretamente no CRM. O sistema compara automaticamente os valores realizados (status <strong>Emitido</strong>) contra essas metas, mês a mês e no acumulado do ano.</p>
+
+  <h3>4.1 Campos Configurados pelo CEO</h3>
+  <table>
+    <tr><th>Campo</th><th>Descrição</th><th>Exemplo</th></tr>
+    <tr><td>Prêmio Meta Mês</td><td>Receita alvo mensal (prêmios emitidos)</td><td>R$ 2.000.000,00</td></tr>
+    <tr><td>Prêmio Meta Ano</td><td>Receita alvo anual acumulada</td><td>R$ 25.000.000,00</td></tr>
+    <tr><td>TMP Alvo</td><td>Taxa Média Ponderada mínima desejada</td><td>1,2000%</td></tr>
+    <tr><td>LMG Máximo em Carteira</td><td>Exposição máxima aceitável no book</td><td>R$ 400.000.000,00</td></tr>
+    <tr><td>Risco Judicial</td><td>Provisão para acionamentos judiciais</td><td>R$ 2.400.000,00</td></tr>
+    <tr><td>Sinistralidade Aceitável</td><td>% máximo de sinistros sobre prêmio</td><td>45,00%</td></tr>
+  </table>
+
+  <h3>4.2 Visualização no Cockpit — Exemplo Maio/2026</h3>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-label">🎯 Meta Mês</div>
+      <div class="kpi-value">55,5%</div>
+      <div class="kpi-sub">R$ 1.110.500 / R$ 2.000.000</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">🎯 Meta Ano</div>
+      <div class="kpi-value">44,3%</div>
+      <div class="kpi-sub">R$ 11,1M / R$ 25M</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">📐 TMP Atual</div>
+      <div class="kpi-value">1,1502%</div>
+      <div class="kpi-sub">Meta: 1,2000%</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">⚖ Risco Judicial</div>
+      <div class="kpi-value">R$ 2,4M</div>
+      <div class="kpi-sub">Provisionado</div>
+    </div>
+  </div>
+
+  <div class="progress-row">
+    <div class="progress-labels"><span><strong>Meta Mês</strong> — R$ 1.110.500 de R$ 2.000.000</span><span>55,5% — Atenção</span></div>
+    <div class="progress-bar"><div class="progress-fill yellow" style="width:55.5%"></div></div>
+  </div>
+  <div class="progress-row" style="margin-top:10px">
+    <div class="progress-labels"><span><strong>Meta Ano</strong> — R$ 11.068.193 de R$ 25.000.000</span><span>44,3% — Crítico</span></div>
+    <div class="progress-bar"><div class="progress-fill red" style="width:44.3%"></div></div>
+  </div>
+
+  <h3>4.3 Semáforo de Progresso</h3>
+  <div class="semaforo-row">
+    <div class="semaforo-item"><div class="dot dot-green"></div> &gt; 80% — No caminho</div>
+    <div class="semaforo-item"><div class="dot dot-yellow"></div> 50–80% — Atenção</div>
+    <div class="semaforo-item"><div class="dot dot-red"></div> &lt; 50% — Crítico</div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════ EXPOSIÇÃO -->
+  <div class="page-break"></div>
+  <h2>5. Exposição do Portfólio</h2>
+
+  <p>A seção de exposição analisa apenas o <strong>book real</strong> (Aprovado + Emitido). Duas dimensões são monitoradas para controle de concentração de risco.</p>
+
+  <h3>5.1 Por Modalidade</h3>
+  <table>
+    <tr><th>Modalidade</th><th>Qtd</th><th>LMG Total</th><th>% Book LMG</th><th>Prêmio Total</th><th>% Book Prêmio</th><th>TMP</th></tr>
+    <tr style="background:#fff8e0"><td><strong>Performance</strong></td><td>6</td><td>R$ 180.000.000</td><td><strong>49,6%</strong></td><td>R$ 5.580.000</td><td>50,4%</td><td>1,55%</td></tr>
+    <tr><td>Pagamento</td><td>5</td><td>R$ 109.000.000</td><td>30,0%</td><td>R$ 3.100.000</td><td>28,0%</td><td>1,43%</td></tr>
+    <tr><td>Judicial</td><td>4</td><td>R$ 55.000.000</td><td>15,2%</td><td>R$ 1.650.000</td><td>14,9%</td><td>1,50%</td></tr>
+    <tr><td>Licitação</td><td>2</td><td>R$ 18.758.302</td><td>5,2%</td><td>R$ 738.193</td><td>6,7%</td><td>1,97%</td></tr>
+    <tr class="total"><td>TOTAL</td><td>17</td><td>R$ 362.758.302</td><td>100%</td><td>R$ 11.068.193</td><td>100%</td><td><strong>1,15%</strong></td></tr>
+  </table>
+
+  <div class="alert-amber">
+    <strong>Alerta de Concentração &mdash; Performance (49,6%):</strong> Acima de 40% do book — zona de atenção. Uma deterioração no setor de construção civil afetaria metade do portfólio. O comitê deve avaliar novas aprovações nesta modalidade com cautela adicional.
+  </div>
+
+  <table>
+    <tr><th>Faixa de Concentração</th><th>Cor no Sistema</th><th>Ação Recomendada</th></tr>
+    <tr><td>0% – 40%</td><td>Normal (sem destaque)</td><td>Sem restrição — diversificação adequada</td></tr>
+    <tr><td>40% – 60%</td><td>🟡 Fundo âmbar</td><td>Atenção — monitorar e considerar na deliberação</td></tr>
+    <tr><td>&gt; 60%</td><td>🟠 Fundo laranja</td><td>Concentração crítica — comitê deve deliberar com restrição</td></tr>
+  </table>
+
+  <h3>5.2 Top Tomadores por Prêmio</h3>
+  <table>
+    <tr><th>Tomador</th><th>Qtd Ops</th><th>LMG Total</th><th>% LMG</th><th>Prêmio Total</th><th>% Prêmio</th><th>TMP</th></tr>
+    <tr><td>ABC Engenharia Ltda</td><td>3</td><td>R$ 45.000.000</td><td>12,4%</td><td>R$ 1.350.000</td><td>12,2%</td><td>1,50%</td></tr>
+    <tr><td>XYZ Construções S.A.</td><td>2</td><td>R$ 38.000.000</td><td>10,5%</td><td>R$ 950.000</td><td>8,6%</td><td>1,25%</td></tr>
+    <tr><td>Beta Infraestrutura</td><td>2</td><td>R$ 32.000.000</td><td>8,8%</td><td>R$ 896.000</td><td>8,1%</td><td>1,40%</td></tr>
+    <tr><td>Gama Logística</td><td>1</td><td>R$ 25.000.000</td><td>6,9%</td><td>R$ 625.000</td><td>5,6%</td><td>1,25%</td></tr>
+    <tr><td>Delta Energia</td><td>2</td><td>R$ 22.000.000</td><td>6,1%</td><td>R$ 616.000</td><td>5,6%</td><td>1,40%</td></tr>
+    <tr><td>Demais tomadores (12)</td><td>7</td><td>R$ 200.758.302</td><td>55,3%</td><td>R$ 6.631.193</td><td>59,9%</td><td>1,05%</td></tr>
+    <tr class="total"><td>TOTAL</td><td>17</td><td>R$ 362.758.302</td><td>100%</td><td>R$ 11.068.193</td><td>100%</td><td>1,15%</td></tr>
+  </table>
+
+  <!-- ════════════════════════════════════════════════ SIMULADOR -->
+  <div class="page-break"></div>
+  <h2>6. Fila de Deliberação — Simulador de Aprovação</h2>
+
+  <p>Cada operação na fila aparece como um card colapsado com prêmio em destaque. Ao clicar em <strong>"▼ Analisar"</strong>, o card expande e revela o simulador completo com 5 abas.</p>
+
+  <div class="alert-blue">
+    <strong>Design intencional:</strong> O prêmio (receita) é exibido em destaque dourado no card colapsado. O LMG (risco) aparece apenas ao expandir — o comitê vê primeiro o potencial de receita, depois analisa o risco em detalhe.
+  </div>
+
+  <h3>Aba 1 — Cálculo do Prêmio (com inputs interativos)</h3>
+  <p>Demonstra o cálculo passo a passo e permite que o analista ajuste sinistralidade, carregamento e margem em tempo real. A Taxa Técnica Mínima e a folga recalculam instantaneamente.</p>
+  <div class="formula-box">
+    DEMONSTRAÇÃO DO CÁLCULO &mdash; ABC Engenharia Ltda<br>
+    <br>
+    LMG Solicitado ........................... R$  5.000.000,00<br>
+    &times; Taxa Aplicada ..................... &times;         1,2500%<br>
+    &times; Vig&ecirc;ncia ..................... &times;     2,00 anos<br>
+    <div class="result">= Pr&ecirc;mio Previsto .................... R$    125.000,00</div>
+    <br>
+    COMPOSI&Ccedil;&Atilde;O DA TAXA (edit&aacute;vel no simulador):<br>
+    ├─ Sinistralidade Esperada: ........... 0,5000% &larr; input<br>
+    ├─ Carregamento: ...................... 0,3500% &larr; input<br>
+    └─ Margem T&eacute;cnica: .............. 0,2000% &larr; input<br>
+    ─────────────────────────────────────────────────<br>
+    Taxa T&eacute;cnica M&iacute;nima: .......... 1,0500% (calculado)<br>
+    Taxa da Operação: .................... 1,2500%<br>
+    <div class="result">Folga: +0,2000% &nbsp; ✅ Adequada</div>
+  </div>
+
+  <h3>Aba 2 — Contribuição para o Resultado</h3>
+  <p>Mostra o impacto direto desta operação no atingimento das metas mensais e anuais:</p>
+  <table>
+    <tr><th>Indicador</th><th>Valor</th><th>% Meta Mês</th></tr>
+    <tr><td>Meta Mensal de Prêmio</td><td>R$ 2.000.000,00</td><td>100,0%</td></tr>
+    <tr><td>Prêmio Realizado Atual</td><td>R$ 1.110.500,00</td><td>55,5%</td></tr>
+    <tr><td>+ Esta Operação</td><td><strong style="color:#e8b84b">R$ 125.000,00</strong></td><td><strong>+6,3%</strong></td></tr>
+    <tr class="total"><td>Novo Patamar</td><td>R$ 1.235.500,00</td><td>61,8%</td></tr>
+    <tr><td>Gap Restante para a Meta</td><td>R$ 764.500,00</td><td>38,2%</td></tr>
+  </table>
+  <p style="font-size:12px; color:#5a7090">Para fechar o gap restante, seriam necessárias mais <strong>~6 operações</strong> com este valor médio de R$ 125.000.</p>
+
+  <h3>Aba 3 — Impacto no Portfólio</h3>
+  <p>Compara o book antes e depois da aprovação desta operação, incluindo variação na TMP e concentração por modalidade:</p>
+  <table>
+    <tr><th>Indicador</th><th>Atual</th><th>Após Aprovação</th><th>Variação</th></tr>
+    <tr><td>LMG Total em Carteira</td><td>R$ 362.758.302</td><td>R$ 367.758.302</td><td style="color:#16a34a">+1,38% ↑</td></tr>
+    <tr><td>Prêmio Total em Carteira</td><td>R$ 11.068.193</td><td>R$ 11.193.193</td><td style="color:#16a34a">+1,13% ↑</td></tr>
+    <tr><td>Taxa Média Ponderada</td><td>1,1502%</td><td>1,1512%</td><td style="color:#16a34a">+0,001% ↑</td></tr>
+    <tr><td>Qtd Operações Ativas</td><td>17</td><td>18</td><td style="color:#16a34a">+1 ↑</td></tr>
+    <tr><td>Concentração Performance</td><td>49,6%</td><td>50,7%</td><td style="color:#d97706">+1,1% ↑ ⚠</td></tr>
+  </table>
+
+  <h3>Aba 4 — Deliberação e Comentários</h3>
+  <p>Área de registro formal das deliberações, visível a todos os membros do comitê:</p>
+  <ul>
+    <li><strong>Notas do Analista</strong> — campo livre para a análise técnica do responsável</li>
+    <li><strong>Comentários do Comitê</strong> — classificados por tipo: <em>Geral | Restrição | Condição | Aprovação | Negação</em></li>
+    <li><strong>Histórico rastreável</strong> — autor, tipo, data e hora de cada comentário</li>
+    <li><strong>Recomendação formal</strong> — Aguardando / Aprovar / Aprovar com Restrições / Negar</li>
+    <li><strong>Condições negociadas</strong> — variação de taxa e/ou LMG com justificativa</li>
+  </ul>
+
+  <h3>Aba 5 — Dados Técnicos</h3>
+  <p>Todos os campos da operação (LMG, taxa, vigência, modalidade, estado, produto, corretor, data de entrada, observação). Permite edição rápida antes da votação definitiva.</p>
+
+  <h3>Decisão Final</h3>
+  <table>
+    <tr><th>Decisão</th><th>Status Resultante</th><th>O que acontece no sistema</th></tr>
+    <tr><td>✅ Aprovar</td><td>Aprovado</td><td>Entra no book; métricas da barra atualizam em tempo real</td></tr>
+    <tr><td>✅ Aprovar com Restrições</td><td>Aprovado</td><td>Campo obrigatório: quais restrições se aplicam. Registrado em comite_comentarios.</td></tr>
+    <tr><td>❌ Negar</td><td>Negado</td><td>Sai da fila; motivo fica registrado no histórico</td></tr>
+    <tr><td>↩ Devolver</td><td>Em Análise</td><td>Retorna ao analista com orientação para revisão</td></tr>
+  </table>
+
+  <!-- ════════════════════════════════════════════════ BANCO -->
+  <div class="page-break"></div>
+  <h2>7. Estrutura de Dados — Banco de Dados (Supabase / PostgreSQL)</h2>
+
+  <h3>7.1 Tabela <code>metas_negocio</code> (nova)</h3>
+  <table>
+    <tr><th>Coluna</th><th>Tipo</th><th>Descrição</th></tr>
+    <tr><td><code>id</code></td><td>UUID</td><td>Chave primária (gerada automaticamente)</td></tr>
+    <tr><td><code>periodo</code></td><td>TEXT</td><td>Formato <code>'2026-05'</code> (mensal) ou <code>'2026'</code> (anual)</td></tr>
+    <tr><td><code>tipo</code></td><td>TEXT</td><td><code>'mensal'</code> ou <code>'anual'</code></td></tr>
+    <tr><td><code>premio_meta</code></td><td>NUMERIC(18,2)</td><td>R$ meta de prêmio do período</td></tr>
+    <tr><td><code>lmg_meta</code></td><td>NUMERIC(18,2)</td><td>R$ meta de LMG total em carteira</td></tr>
+    <tr><td><code>taxa_media_ponderada_meta</code></td><td>NUMERIC(8,6)</td><td>TMP alvo em decimal (0,0120 = 1,20%)</td></tr>
+    <tr><td><code>qtd_operacoes_meta</code></td><td>INTEGER</td><td>Quantidade alvo de operações ativas</td></tr>
+    <tr><td><code>risco_judicial</code></td><td>NUMERIC(18,2)</td><td>Provisão para acionamentos judiciais</td></tr>
+    <tr><td><code>sinistralidade_aceitavel</code></td><td>NUMERIC(5,2)</td><td>% máximo de sinistralidade aceitável</td></tr>
+    <tr><td><code>observacao</code></td><td>TEXT</td><td>Diretriz do período (campo livre)</td></tr>
+    <tr><td><code>criado_por</code></td><td>UUID</td><td>Referência ao usuário que configurou a meta</td></tr>
+  </table>
+
+  <h3>7.2 Campos Adicionados em <code>operacoes</code></h3>
+  <table>
+    <tr><th>Coluna</th><th>Tipo</th><th>Descrição</th></tr>
+    <tr><td><code>comite_notas</code></td><td>TEXT</td><td>Notas livres do analista sobre a análise técnica</td></tr>
+    <tr><td><code>comite_analista</code></td><td>TEXT</td><td>Nome do analista responsável pela operação</td></tr>
+    <tr><td><code>comite_data</code></td><td>DATE</td><td>Data da deliberação oficial do comitê</td></tr>
+    <tr><td><code>comite_decisao</code></td><td>TEXT</td><td>Texto da decisão (ex: <code>'Aprovar com Restrições'</code>)</td></tr>
+  </table>
+
+  <h3>7.3 Tabela <code>comite_comentarios</code> (nova)</h3>
+  <table>
+    <tr><th>Coluna</th><th>Tipo</th><th>Descrição</th></tr>
+    <tr><td><code>id</code></td><td>UUID</td><td>Chave primária</td></tr>
+    <tr><td><code>operacao_id</code></td><td>UUID</td><td>FK → <code>operacoes.id</code> (ON DELETE CASCADE)</td></tr>
+    <tr><td><code>autor</code></td><td>TEXT</td><td>Nome do membro do comitê</td></tr>
+    <tr><td><code>comentario</code></td><td>TEXT</td><td>Conteúdo do comentário ou deliberação</td></tr>
+    <tr><td><code>tipo</code></td><td>TEXT</td><td><code>'geral' | 'restricao' | 'condicao' | 'aprovacao' | 'negacao'</code></td></tr>
+    <tr><td><code>created_at</code></td><td>TIMESTAMPTZ</td><td>Data e hora (automático, fuso UTC)</td></tr>
+  </table>
+
+  <!-- ════════════════════════════════════════════════ FLUXO -->
+  <h2>8. Fluxo de uma Operação no Comitê</h2>
+
+  <div class="flow">
+    <div class="flow-step">📋 Em Análise</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">🏛 Comitê</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">🔍 Deliberação</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">✅ Aprovado</div>
+  </div>
+  <p style="font-size:11.5px; color:#5a7090; margin-top:6px">Também possível: Deliberação → ❌ Negado &nbsp;|&nbsp; Deliberação → ↩ Em Análise (devolvido)</p>
+
+  <table style="margin-top:16px">
+    <tr><th>Etapa</th><th>Responsável</th><th>Ação no Sistema</th></tr>
+    <tr><td><strong>Em Análise</strong></td><td>Analista de Subscrição</td><td>Cadastra operação, anexa documentos, preenche LMG, taxa, vigência, modalidade</td></tr>
+    <tr><td><strong>Comitê</strong></td><td>Analista</td><td>Move o status para "Comitê" — operação aparece na fila de deliberação do cockpit</td></tr>
+    <tr><td><strong>Deliberação</strong></td><td>Membros do Comitê</td><td>Usam o simulador (5 abas), adicionam comentários, registram restrições e condições</td></tr>
+    <tr><td><strong>Aprovado</strong></td><td>Comitê</td><td>Entra no book — métricas do cockpit atualizam em tempo real (LMG, prêmio, TMP)</td></tr>
+    <tr><td><strong>Negado</strong></td><td>Comitê</td><td>Sai da fila — motivo e comentários ficam no histórico da operação</td></tr>
+    <tr><td><strong>Devolvido</strong></td><td>Comitê</td><td>Retorna para "Em Análise" com comentários orientadores para o analista</td></tr>
+    <tr><td><strong>Emitido</strong></td><td>Operações</td><td>Apólice emitida — entra no cálculo de prêmio realizado para meta vs realizado</td></tr>
+  </table>
+
+  <div class="doc-footer">
+    FAM Seguradora &mdash; Cockpit de Comitê de Subscrição v1.0 &mdash; Maio/2026 &mdash; <strong>Documento Confidencial</strong>
+  </div>
+
+</div>
+
+</body>
+</html>

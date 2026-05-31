@@ -147,6 +147,7 @@ export default function OperacoesPage() {
   const [expandidoComiteId, setExpandidoComiteId] = useState<string | null>(null)
   const [abaSimulador, setAbaSimulador] = useState<Record<string, number>>({})
   const [simInputs, setSimInputs] = useState<Record<string, { sinistralidade: number; carregamento: number; margem: number }>>({})
+  const [comissaoInputs, setComissaoInputs] = useState<Record<string, number>>({})
   const [metaMensal, setMetaMensal] = useState<MetaNegocio | null>(null)
   const [metaAnual, setMetaAnual] = useState<MetaNegocio | null>(null)
   const [mostrarConfigurarMetas, setMostrarConfigurarMetas] = useState(false)
@@ -278,6 +279,7 @@ export default function OperacoesPage() {
     })
     setMensagem(null)
     setMostrarForm(true)
+    carregarComentariosComite([op.id])
   }
 
   function fecharForm() {
@@ -384,6 +386,7 @@ export default function OperacoesPage() {
 
   async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault()
+    if (enviando) return
     const encerrandoNeg = form.status === 'Perdido' || form.status === 'Recusado'
     const statusMudou = !editando || editando.status !== form.status
     if (encerrandoNeg && statusMudou) {
@@ -428,6 +431,7 @@ export default function OperacoesPage() {
         if ((form.status === 'Emitido' || form.status === 'Fechado') && form.tomador_id) {
           await supabase.from('tomadores').update({ status: 'Fechado' }).eq('id', form.tomador_id)
         }
+        await carregarOperacoes()
         setMensagem({ tipo: 'sucesso', texto: 'Operação atualizada com sucesso.' })
       } else {
         const { error } = await supabase.from('operacoes').insert(payload)
@@ -435,10 +439,10 @@ export default function OperacoesPage() {
         if ((form.status === 'Emitido' || form.status === 'Fechado') && form.tomador_id) {
           await supabase.from('tomadores').update({ status: 'Fechado' }).eq('id', form.tomador_id)
         }
-        setMensagem({ tipo: 'sucesso', texto: 'Operação cadastrada com sucesso.' })
-        setForm(FORM_OP_INICIAL)
+        await carregarOperacoes()
+        fecharForm()
+        return
       }
-      await carregarOperacoes()
     } catch (err: unknown) {
       setMensagem({ tipo: 'erro', texto: err instanceof Error ? err.message : 'Erro desconhecido.' })
     } finally {
@@ -676,7 +680,7 @@ export default function OperacoesPage() {
   const kpis = useMemo(() => {
     const CAP = 80_000_000
     const lmgTotal = operacoesFiltradas.reduce((s, op) => s + (op.lmg ?? 0), 0)
-    const lmgLiquido = operacoesFiltradas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const lmgLiquido = operacoesFiltradas.filter(op => !['Perdido', 'Recusado'].includes(op.status)).reduce((s, op) => s + (op.lmg ?? 0), 0)
     const lmgCapeadoTotal = operacoesFiltradas.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
     const premioTotal = operacoesFiltradas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     const corretoras = new Set(operacoesFiltradas.map(op => op.corretora_id).filter(Boolean)).size
@@ -994,28 +998,28 @@ export default function OperacoesPage() {
 
     // ── 1. HEADER ──────────────────────────────────────────────────────────
     doc.setFillColor(10, 22, 40)
-    doc.rect(0, 0, W, 34, 'F')
+    doc.rect(0, 0, W, 26, 'F')
     doc.setFillColor(232, 184, 75)
     doc.rect(0, 0, W, 2.5, 'F')
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(22)
     doc.setTextColor(255, 255, 255)
-    doc.text('FAM', M, 22)
+    doc.text('FAM', M, 17)
 
     doc.setDrawColor(232, 184, 75)
     doc.setLineWidth(0.3)
-    doc.line(48, 9, 48, 30)
+    doc.line(48, 7, 48, 23)
 
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
     doc.setTextColor(232, 184, 75)
-    doc.text('S E G U R A D O R A', 52, 16)
+    doc.text('S E G U R A D O R A', 52, 11)
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(13)
     doc.setTextColor(255, 255, 255)
-    doc.text('Operações / Subscrição', 52, 24)
+    doc.text('Operações / Subscrição', 52, 19)
 
     const tituloFiltros: string[] = []
     if (filtroStatus.length > 0) tituloFiltros.push(filtroStatus.join('/'))
@@ -1033,25 +1037,26 @@ export default function OperacoesPage() {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(tituloFiltros.length > 0 ? 8 : 9)
     doc.setTextColor(tituloFiltros.length > 0 ? 232 : 160, tituloFiltros.length > 0 ? 184 : 192, tituloFiltros.length > 0 ? 75 : 232)
-    doc.text(tituloRelatorio, 52, 30)
+    doc.text(tituloRelatorio, 52, 24)
 
     doc.setFontSize(8)
     doc.setTextColor(160, 192, 232)
-    doc.text(`Emitido em: ${dataHoje} às ${horaAgora}`, W - M, 16, { align: 'right' })
+    doc.text(`Emitido em: ${dataHoje} às ${horaAgora}`, W - M, 11, { align: 'right' })
 
     doc.setFontSize(6)
     doc.setTextColor(120, 140, 160)
-    doc.text('Documento Confidencial · Gerado automaticamente pelo FAM CRM', W - M, 23, { align: 'right' })
+    doc.text('Documento Confidencial · Gerado automaticamente pelo FAM CRM', W - M, 18, { align: 'right' })
 
     // ── 2. KPI CARDS ───────────────────────────────────────────────────────
-    const cardTop = 38, cardH = 22
-    const cardW = (W - M * 2 - 12) / 4
+    const cardTop = 30, cardH = 22
+    const cardW = (W - M * 2 - 16) / 5
 
     const cards = [
-      { label: 'OPERAÇÕES', value: String(operacoesFiltradas.length), sub: 'Conforme filtros', ar: [30, 64, 120] },
-      { label: 'LMG TOTAL', value: fmtMoeda(kpis.lmgTotal), sub: 'Soma total carteira', ar: [16, 32, 64] },
-      { label: 'LMG EM POTENCIAL', value: fmtMoeda(kpis.lmgLiquido), sub: 'Excl. negadas/perdidas', ar: [30, 64, 120] },
-      { label: 'PRÊMIO TOTAL', value: fmtMoeda(kpis.premioTotal), sub: 'Prêmios previstos', ar: [232, 184, 75] },
+      { label: 'CORRETORAS',        value: String(kpis.corretoras),          sub: 'Conforme filtros',        ar: [30, 64, 120],   isCount: true },
+      { label: 'TOMADORES',         value: String(kpis.tomadores),           sub: 'Conforme filtros',        ar: [30, 64, 120],   isCount: true },
+      { label: 'OPERAÇÕES',         value: String(operacoesFiltradas.length), sub: 'Conforme filtros',       ar: [30, 64, 120],   isCount: true },
+      { label: 'LMG EM POTENCIAL',  value: fmtMoeda(kpis.lmgLiquido),       sub: 'Excl. perdidos/recusados', ar: [16, 48, 96],  isCount: false },
+      { label: 'PRÊMIO PREVISTO',   value: fmtMoeda(kpis.premioTotal),      sub: 'Prêmios previstos',       ar: [232, 184, 75],  isCount: false },
     ]
 
     cards.forEach((card, idx) => {
@@ -1070,7 +1075,7 @@ export default function OperacoesPage() {
       doc.text(card.label, cx + cardW / 2, cardTop + 7.5, { align: 'center' })
 
       doc.setFont('helvetica', 'bold')
-      doc.setFontSize(idx === 0 ? 16 : 9.5)
+      doc.setFontSize(card.isCount ? 14 : 9)
       doc.setTextColor(10, 22, 40)
       doc.text(card.value, cx + cardW / 2, cardTop + 14.5, { align: 'center' })
 
@@ -1140,33 +1145,40 @@ export default function OperacoesPage() {
         textColor: [30, 40, 60],
         lineColor: [210, 220, 235],
         lineWidth: 0.15,
+        overflow: 'hidden',
       },
       headStyles: {
-        fillColor: [10, 22, 40],
-        textColor: [232, 184, 75],
+        fillColor: [48, 112, 200],
+        textColor: [255, 255, 255],
         fontStyle: 'bold',
         fontSize: 7.5,
         cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 },
       },
       footStyles: {
-        fillColor: [10, 22, 40],
-        textColor: [232, 184, 75],
+        fillColor: [213, 229, 250],
+        textColor: [16, 48, 96],
         fontStyle: 'bold',
         fontSize: 7.5,
       },
       alternateRowStyles: { fillColor: [245, 247, 252] },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 8, textColor: [100, 110, 130] },
-        1: { halign: 'center', cellWidth: 24 },
-        2: { cellWidth: 58 },
-        3: { cellWidth: 36 },
-        4: { halign: 'center', cellWidth: 10, textColor: [60, 80, 120] },
-        5: { cellWidth: 44 },
-        6: { halign: 'center', cellWidth: 20 },
-        7: { halign: 'right', cellWidth: 30, fontStyle: 'bold' },
-        8: { halign: 'right', cellWidth: 12 },
-        9: { halign: 'center', cellWidth: 12 },
-        10: { halign: 'right', cellWidth: 27, fontStyle: 'bold', textColor: [16, 64, 120] },
+        0:  { halign: 'center', cellWidth: 8,  textColor: [100, 110, 130] },
+        1:  { halign: 'left',   cellWidth: 24 },
+        2:  { halign: 'left',   cellWidth: 53 },
+        3:  { halign: 'left',   cellWidth: 36 },
+        4:  { halign: 'center', cellWidth: 10, textColor: [60, 80, 120] },
+        5:  { halign: 'left',   cellWidth: 38 },
+        6:  { halign: 'center', cellWidth: 16 },
+        7:  { halign: 'right',  cellWidth: 30 },
+        8:  { halign: 'center', cellWidth: 17 },
+        9:  { halign: 'center', cellWidth: 12 },
+        10: { halign: 'right',  cellWidth: 37, textColor: [16, 64, 120] },
+      },
+      didParseCell: (data: any) => {
+        if (data.section === 'head' || data.section === 'foot') {
+          const alignMap: Record<number, string> = { 0: 'center', 1: 'left', 2: 'left', 3: 'left', 4: 'center', 5: 'left', 6: 'center', 7: 'right', 8: 'center', 9: 'center', 10: 'right' }
+          data.cell.styles.halign = alignMap[data.column.index] ?? 'left'
+        }
       },
       didDrawPage: () => {
         doc.setDrawColor(232, 184, 75)
@@ -1255,6 +1267,8 @@ export default function OperacoesPage() {
     ? tomadores.filter((t) => t.corretora_id === form.corretora_id)
     : tomadores
 
+  const opFinalizada = !!(editando && ['Emitido', 'Perdido', 'Recusado'].includes(editando.status))
+
   return (
     <>
       {/* Cabeçalho */}
@@ -1307,20 +1321,14 @@ export default function OperacoesPage() {
           <div className="kpi-value" style={{ fontSize: 22, fontWeight: 800 }}>{operacoesFiltradas.length}</div>
           <div className="kpi-sub">Conforme filtros</div>
         </div>
-        {/* Card: LMG Total */}
-        <div className="kpi-card" style={{ flex: '2 1 180px', minWidth: 160, borderColor: '#b0d0f0' }}>
-          <div className="kpi-label" style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase' }}>LMG Total</div>
-          <div className="kpi-value" style={{ fontSize: 17, fontWeight: 800 }}>{fmtMoeda(kpis.lmgTotal)}</div>
-          <div className="kpi-sub">Soma total LMG</div>
-        </div>
         {/* Card: LMG Total Líquido */}
         <div style={{
           flex: '2 1 180px', minWidth: 160, padding: '14px 16px', borderRadius: 10,
           background: '#0d2040', border: '1px solid rgba(56,120,200,0.3)',
         }}>
           <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: 'rgba(180,200,220,0.7)', marginBottom: 6 }}>LMG Total em Potencial</div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpisFiltroAtivo ? kpisFiltroAtivo.lmg : kpis.lmgTotal)}</div>
-          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>{kpisFiltroAtivo ? 'LMG da seleção ativa' : 'LMG Total − Negados/Perdidos'}</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpisFiltroAtivo ? kpisFiltroAtivo.lmg : kpis.lmgLiquido)}</div>
+          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>{kpisFiltroAtivo ? 'LMG da seleção ativa' : 'LMG Total − Perdidos/Recusados'}</div>
         </div>
         {/* Card: Prêmio Previsto Total */}
         <div style={{
@@ -1530,27 +1538,34 @@ export default function OperacoesPage() {
           {statusOpcoes.filter(s => s.ativo && s.nome !== 'Perdido' && s.nome !== 'Recusado').map((s) => {
             const stats = kpisPerStatus[s.nome]
             const sel = filtroStatus.includes(s.nome)
+            const count = s.nome === 'Emitido' ? kpisEmitido.count : (stats?.count ?? 0)
             return (
               <button
                 key={s.id}
-                onClick={() => setFiltroStatus(prev => sel ? prev.filter(x => x !== s.nome) : [...prev, s.nome])}
+                onClick={() => {
+                  if (s.nome === 'Emitido') {
+                    setIncluirEmitidas(prev => !prev)
+                  } else {
+                    setFiltroStatus(prev => sel ? prev.filter(x => x !== s.nome) : [...prev, s.nome])
+                  }
+                }}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   padding: '4px 10px', borderRadius: 20, cursor: 'pointer', transition: 'all 0.12s',
-                  background: sel ? s.cor + '33' : s.cor + '11',
-                  border: sel ? `2px solid ${s.cor}` : `1.5px solid ${s.cor}55`,
-                  color: s.cor, fontWeight: sel ? 800 : 600, fontSize: 12,
+                  background: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? s.cor + '33' : s.cor + '11',
+                  border: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? `2px solid ${s.cor}` : `1.5px solid ${s.cor}55`,
+                  color: s.cor, fontWeight: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? 800 : 600, fontSize: 12,
                   fontFamily: "'Calibri','Segoe UI',sans-serif",
-                  boxShadow: sel ? `0 2px 6px ${s.cor}44` : 'none',
+                  boxShadow: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? `0 2px 6px ${s.cor}44` : 'none',
                 }}
               >
                 {s.nome}
                 <span style={{
-                  background: sel ? s.cor : s.cor + '33',
-                  color: sel ? 'white' : s.cor,
+                  background: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? s.cor : s.cor + '33',
+                  color: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? 'white' : s.cor,
                   borderRadius: 10, padding: '1px 6px', fontSize: 11, fontWeight: 700,
                 }}>
-                  {stats?.count ?? 0}
+                  {count}
                 </span>
               </button>
             )
@@ -1640,6 +1655,11 @@ export default function OperacoesPage() {
                     {mensagem.texto}
                   </div>
                 )}
+                {opFinalizada && (
+                  <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: '#fff8e8', border: '1.5px solid #e8b84b', color: '#7a5000', fontSize: 13, fontWeight: 600 }}>
+                    🔒 Operação <strong>{editando?.status}</strong> — campos bloqueados. Altere o status para desbloquear.
+                  </div>
+                )}
                 <form onSubmit={handleSubmit}>
 
                   {/* Vínculos */}
@@ -1650,7 +1670,7 @@ export default function OperacoesPage() {
                     <div className="form-field full">
                       <label className="form-label">Tomador</label>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <select className="fam-input" style={{ flex: 1 }} value={form.tomador_id} onChange={(e) => {
+                        <select className="fam-input" style={{ flex: 1 }} disabled={opFinalizada} value={form.tomador_id} onChange={(e) => {
                           const tomadorId = e.target.value
                           const tomador = tomadores.find((t) => t.id === tomadorId)
                           setForm((f) => ({ ...f, tomador_id: tomadorId, corretora_id: tomador?.corretora_id ?? f.corretora_id }))
@@ -1660,6 +1680,7 @@ export default function OperacoesPage() {
                         </select>
                         <button
                           type="button"
+                          disabled={opFinalizada}
                           onClick={() => setMostrarFormTomador(true)}
                           title="Cadastrar novo tomador básico"
                           style={{
@@ -1675,7 +1696,7 @@ export default function OperacoesPage() {
                     </div>
                     <div className="form-field full">
                       <label className="form-label">Corretora</label>
-                      <select className="fam-input" value={form.corretora_id} onChange={(e) => {
+                      <select className="fam-input" disabled={opFinalizada} value={form.corretora_id} onChange={(e) => {
                         const corrId = e.target.value
                         const tomadorAtual = tomadores.find((t) => t.id === form.tomador_id)
                         const manterTomador = !corrId || !tomadorAtual || tomadorAtual.corretora_id === corrId
@@ -1703,6 +1724,7 @@ export default function OperacoesPage() {
                             <button
                               key={p.id}
                               type="button"
+                              disabled={opFinalizada}
                               onClick={() => handleSetorChange(p.id)}
                               style={{
                                 flex: 1, padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
@@ -1727,7 +1749,7 @@ export default function OperacoesPage() {
                         className="fam-input"
                         value={form.modalidade_id}
                         onChange={(e) => handleModalidadeChange(e.target.value)}
-                        disabled={!form.produto_id}
+                        disabled={opFinalizada || !form.produto_id}
                       >
                         <option value="">— {form.produto_id ? 'Selecione a modalidade' : 'Selecione o setor primeiro'} —</option>
                         {modalidadesDoSetor.map((m) => (
@@ -1757,7 +1779,7 @@ export default function OperacoesPage() {
                   <div className="form-grid" style={{ marginBottom: 20 }}>
                     <div className="form-field">
                       <label className="form-label">LMG (R$)</label>
-                      <input className="fam-input" type="text" placeholder="Ex: 1.000.000,00"
+                      <input className="fam-input" type="text" placeholder="Ex: 1.000.000,00" disabled={opFinalizada}
                         value={form.lmg}
                         onChange={(e) => {
                           const lmg = maskMoeda(e.target.value)
@@ -1766,7 +1788,7 @@ export default function OperacoesPage() {
                     </div>
                     <div className="form-field">
                       <label className="form-label">Taxa (%)</label>
-                      <input className="fam-input" type="text" placeholder="Ex: 1,50"
+                      <input className="fam-input" type="text" placeholder="Ex: 1,50" disabled={opFinalizada}
                         value={form.taxa}
                         onChange={(e) => {
                           const taxa = e.target.value
@@ -1777,7 +1799,7 @@ export default function OperacoesPage() {
                       <label className="form-label">Periodicidade</label>
                       <div style={{ display: 'flex', gap: 8 }}>
                         {(['Anos', 'Meses'] as const).map((p) => (
-                          <button key={p} type="button"
+                          <button key={p} type="button" disabled={opFinalizada}
                             onClick={() => setForm((f) => ({ ...f, periodicidade_vigencia: p, premio_previsto: calcPremio(f.lmg, f.taxa, f.vigencia_anos, p) }))}
                             style={{
                               flex: 1, padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
@@ -1793,7 +1815,7 @@ export default function OperacoesPage() {
                     </div>
                     <div className="form-field">
                       <label className="form-label">Vigência ({form.periodicidade_vigencia === 'Meses' ? 'meses' : 'anos'})</label>
-                      <input className="fam-input" type="text"
+                      <input className="fam-input" type="text" disabled={opFinalizada}
                         inputMode="decimal"
                         placeholder={form.periodicidade_vigencia === 'Meses' ? 'Ex: 18' : 'Ex: 0,6'}
                         value={form.vigencia_anos}
@@ -1830,12 +1852,12 @@ export default function OperacoesPage() {
                     </div>
                     <div className="form-field">
                       <label className="form-label">Data de Entrada na FAM</label>
-                      <input className="fam-input" type="date" value={form.data_entrada}
+                      <input className="fam-input" type="date" disabled={opFinalizada} value={form.data_entrada}
                         onChange={(e) => setForm({ ...form, data_entrada: e.target.value })} />
                     </div>
                     <div className="form-field">
                       <label className="form-label">Prioridade</label>
-                      <select className="fam-input" value={form.prioridade} onChange={(e) => setForm({ ...form, prioridade: e.target.value })}>
+                      <select className="fam-input" disabled={opFinalizada} value={form.prioridade} onChange={(e) => setForm({ ...form, prioridade: e.target.value })}>
                         <option value="Fluxo Normal">Fluxo Normal</option>
                         <option value="Prioridade">Prioridade</option>
                         <option value="Urgente">🚨 Urgente</option>
@@ -1843,7 +1865,7 @@ export default function OperacoesPage() {
                     </div>
                     <div className="form-field">
                       <label className="form-label">Temperatura</label>
-                      <select className="fam-input" value={form.temperatura} onChange={(e) => setForm({ ...form, temperatura: e.target.value })}>
+                      <select className="fam-input" disabled={opFinalizada} value={form.temperatura} onChange={(e) => setForm({ ...form, temperatura: e.target.value })}>
                         <option value="Frio">❄ Frio</option>
                         <option value="Morno">🌤 Morno</option>
                         <option value="Quente">🔥 Quente</option>
@@ -1851,14 +1873,14 @@ export default function OperacoesPage() {
                     </div>
                     <div className="form-field">
                       <label className="form-label">Estado</label>
-                      <select className="fam-input" value={form.estado} onChange={(e) => setForm({ ...form, estado: e.target.value })}>
+                      <select className="fam-input" disabled={opFinalizada} value={form.estado} onChange={(e) => setForm({ ...form, estado: e.target.value })}>
                         <option value="">— UF —</option>
                         {ESTADOS_BR.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
                       </select>
                     </div>
                     <div className="form-field full">
                       <label className="form-label">Observação</label>
-                      <textarea className="fam-input" placeholder="Informações adicionais..."
+                      <textarea className="fam-input" placeholder="Informações adicionais..." disabled={opFinalizada}
                         value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })}
                         rows={2} style={{ resize: 'vertical' }} />
                     </div>
@@ -1872,7 +1894,7 @@ export default function OperacoesPage() {
                       </button>
                     )}
                     <button type="button" className="btn-secondary" onClick={fecharForm}>Cancelar</button>
-                    <button type="submit" className="btn-primary" disabled={enviando}>
+                    <button type="submit" className="btn-primary" disabled={enviando || (opFinalizada && form.status === editando?.status)}>
                       {enviando ? 'Salvando...' : editando ? 'Salvar Alterações' : 'Cadastrar Operação'}
                     </button>
                   </div>
@@ -1882,6 +1904,67 @@ export default function OperacoesPage() {
                   <>
                     <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
                     <AnexosSection entidadeTipo="operacao" entidadeId={editando.id} tomadorId={editando.tomador_id ?? undefined} />
+                  </>
+                )}
+                {editando && (editando.comite_notas || editando.comite_variacao_taxa != null || editando.comite_variacao_lmg != null || (comentariosComite[editando.id]?.length ?? 0) > 0) && (
+                  <>
+                    <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
+                    <div style={{ background: '#f0f6ff', borderRadius: 10, padding: '14px 16px', border: '1px solid #d0e4f5' }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1a4080', marginBottom: 12, letterSpacing: 0.5, textTransform: 'uppercase' as const }}>
+                        Histórico do Comitê
+                      </div>
+                      {editando.comite_notas && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 11, color: '#6080a0', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 3 }}>Notas do Analista</div>
+                          <div style={{ fontSize: 13, color: '#1a2a3a', background: 'white', borderRadius: 6, padding: '8px 10px', border: '1px solid #e0ecf0', lineHeight: 1.5 }}>{editando.comite_notas}</div>
+                        </div>
+                      )}
+                      {(editando.comite_variacao_taxa != null || editando.comite_variacao_lmg != null) && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 11, color: '#6080a0', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 5 }}>Variações</div>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {editando.comite_variacao_taxa != null && (
+                              <div style={{ background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e0ecf0', fontSize: 12 }}>
+                                <span style={{ color: '#6080a0' }}>Taxa: </span>
+                                <strong>{editando.comite_variacao_taxa > 0 ? '+' : ''}{editando.comite_variacao_taxa}%</strong>
+                                {editando.comite_variacao_taxa_just && <span style={{ color: '#6080a0', marginLeft: 6 }}>— {editando.comite_variacao_taxa_just}</span>}
+                              </div>
+                            )}
+                            {editando.comite_variacao_lmg != null && (
+                              <div style={{ background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e0ecf0', fontSize: 12 }}>
+                                <span style={{ color: '#6080a0' }}>LMG: </span>
+                                <strong>{editando.comite_variacao_lmg > 0 ? '+' : ''}{fmtMoeda(editando.comite_variacao_lmg)}</strong>
+                                {editando.comite_variacao_lmg_just && <span style={{ color: '#6080a0', marginLeft: 6 }}>— {editando.comite_variacao_lmg_just}</span>}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {(comentariosComite[editando.id]?.length ?? 0) > 0 && (
+                        <div>
+                          <div style={{ fontSize: 11, color: '#6080a0', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 5 }}>
+                            Comentários ({comentariosComite[editando.id].length})
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 200, overflowY: 'auto' }}>
+                            {comentariosComite[editando.id].map(c => {
+                              const cor: Record<string, string> = { restricao: '#d64545', condicao: '#d07830', aprovacao: '#27a96c', negacao: '#888', geral: '#3070c8' }
+                              return (
+                                <div key={c.id} style={{ background: 'white', borderRadius: 6, padding: '7px 10px', border: '1px solid #e0ecf0' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                                    <span style={{ fontWeight: 700, fontSize: 12, color: '#1a4080' }}>{c.autor}</span>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                      <span style={{ fontSize: 11, color: cor[c.tipo] ?? '#6080a0', fontWeight: 700, textTransform: 'capitalize' as const }}>{c.tipo}</span>
+                                      <span style={{ fontSize: 10, color: '#6080a0' }}>{new Date(c.created_at).toLocaleString('pt-BR')}</span>
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize: 12, color: '#1a2a3a' }}>{c.comentario}</div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </>
                 )}
               </div>
@@ -2463,7 +2546,13 @@ export default function OperacoesPage() {
                     const isExp = expandidoComiteId === op.id
                     const abaAt = abaSimulador[op.id] ?? 0
                     const inp = simInputs[op.id] ?? { sinistralidade: 0.50, carregamento: 0.35, margem: 0.20 }
-                    const taxaMin = (inp.sinistralidade + inp.carregamento + inp.margem) / Math.max(op.vigencia_anos ?? 1, 0.001)
+                    // Composição técnica preservada para uso futuro:
+                    // taxaMin = (inp.sinistralidade + inp.carregamento + inp.margem) — taxa total do período
+                    // taxaMinAnual = taxaMin / vigencia_anos — para comparação anualizada
+                    const _taxaMinPeriodo = inp.sinistralidade + inp.carregamento + inp.margem
+                    const _taxaMinAnual = _taxaMinPeriodo / Math.max(op.vigencia_anos ?? 1, 0.001)
+                    void _taxaMinPeriodo; void _taxaMinAnual
+                    const comissaoPct = comissaoInputs[op.id] ?? 25
                     const opL = op.lmg ?? 0; const opP = op.premio_previsto ?? 0; const opT = op.taxa ?? 0; const opV = op.vigencia_anos ?? 1
                     const nBL = bookLmgTotal + opL; const nBP = bookPremioTotal + opP
                     const nBT = nBL > 0 ? (bookOps.reduce((s,o) => s + (o.taxa ?? 0) * (o.lmg ?? 0), 0) + opT * opL) / nBL : 0
@@ -2533,41 +2622,70 @@ export default function OperacoesPage() {
                                       <div>Estado: {op.estado ?? '—'} · Entrada: {op.data_entrada ? fmtData(op.data_entrada) : '—'}</div>
                                     </div>
                                   </div>
-                                  <div style={{ flex: '1 1 260px', background: '#f8fafc', borderRadius: 10, padding: '18px 22px', border: '1.5px solid #d0e4f5' }}>
-                                    <div style={{ fontWeight: 700, fontSize: 13, color: '#1a2a3a', marginBottom: 14, letterSpacing: 0.5 }}>COMPOSIÇÃO TÉCNICA DA TAXA</div>
-                                    {(['sinistralidade','carregamento','margem'] as const).map((k) => {
-                                      const lbs: Record<string,string> = { sinistralidade: 'Sinistralidade Esperada (%)', carregamento: 'Carregamento Operacional (%)', margem: 'Margem Técnica (%)' }
-                                      const cors: Record<string,string> = { sinistralidade: '#d64545', carregamento: '#d07830', margem: '#27a96c' }
-                                      return (
-                                        <div key={k} style={{ marginBottom: 12 }}>
-                                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: 12 }}>
-                                            <label style={{ color: '#1a2a3a' }}>{lbs[k]}</label>
-                                            <span style={{ color: cors[k], fontWeight: 700 }}>{inp[k].toFixed(2)}%</span>
+                                  {/* Painel: Comissão & Taxa Líquida */}
+                                  {(() => {
+                                    const premioValor = opP
+                                    const comissaoValor = premioValor * (comissaoPct / 100)
+                                    const liquidoFAM = premioValor - comissaoValor
+                                    const taxaLiquida = opT * (1 - comissaoPct / 100)
+                                    return (
+                                      <div style={{ flex: '1 1 260px', background: '#f8fafc', borderRadius: 10, padding: '18px 22px', border: '1.5px solid #d0e4f5' }}>
+                                        {/* Título + Input */}
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+                                          <div style={{ fontWeight: 700, fontSize: 13, color: '#1a2a3a', letterSpacing: 0.5 }}>COMISSÃO DA CORRETORA</div>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                            <input
+                                              type="number" min="0" max="50" step="0.5"
+                                              value={comissaoPct}
+                                              onChange={(e) => setComissaoInputs(prev => ({ ...prev, [op.id]: parseFloat(e.target.value) || 0 }))}
+                                              style={{ width: 60, padding: '4px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 13, fontWeight: 700, color: '#1a4080', textAlign: 'right', background: 'white' }}
+                                            />
+                                            <span style={{ fontSize: 13, color: '#1a4080', fontWeight: 700 }}>%</span>
                                           </div>
-                                          <input type="range" min="0" max="5" step="0.05" value={inp[k]}
-                                            onChange={(e) => setSimInputs(prev => ({ ...prev, [op.id]: { ...inp, [k]: parseFloat(e.target.value) } }))}
-                                            style={{ width: '100%', accentColor: cors[k] }} />
                                         </div>
-                                      )
-                                    })}
-                                    <div style={{ borderTop: '1.5px solid #d0e4f5', paddingTop: 12, marginTop: 4 }}>
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
-                                        <span style={{ color: '#6080a0' }}>Taxa Técnica Mínima ({opV}a):</span>
-                                        <span style={{ fontWeight: 800, color: '#1a4080' }}>{fmtPercent(taxaMin / 100)}</span>
+                                        {/* Demonstrativo */}
+                                        {premioValor > 0 ? (
+                                          <>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+                                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                <span style={{ color: '#6080a0' }}>Prêmio Bruto</span>
+                                                <span style={{ fontWeight: 600, color: '#1a2a3a' }}>{fmtMoeda(premioValor)}</span>
+                                              </div>
+                                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                <span style={{ color: '#d07830' }}>Comissão ({comissaoPct}%)</span>
+                                                <span style={{ fontWeight: 600, color: '#d07830' }}>− {fmtMoeda(comissaoValor)}</span>
+                                              </div>
+                                              <div style={{ borderTop: '1.5px solid #d0e4f5', marginTop: 2, paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
+                                                <span style={{ color: '#1a2a3a', fontWeight: 700 }}>Prêmio Líquido FAM</span>
+                                                <span style={{ fontWeight: 900, color: '#27a96c', fontSize: 14 }}>{fmtMoeda(liquidoFAM)}</span>
+                                              </div>
+                                            </div>
+                                            {/* Taxas */}
+                                            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                                <span style={{ color: '#6080a0' }}>Taxa Cobrada</span>
+                                                <span style={{ fontWeight: 700, color: '#1a4080' }}>{opT > 0 ? fmtPercent(opT / 100) : '—'}</span>
+                                              </div>
+                                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                                <span style={{ color: '#6080a0' }}>Taxa Líquida FAM</span>
+                                                <span style={{ fontWeight: 800, color: '#1a6a40', fontSize: 14 }}>{opT > 0 ? fmtPercent(taxaLiquida / 100) : '—'}</span>
+                                              </div>
+                                            </div>
+                                            {/* Badge explicativo */}
+                                            {opT > 0 && (
+                                              <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 8, background: '#eaf4ff', border: '1.5px solid #b8d8f0', fontSize: 11, color: '#2a4a70', lineHeight: 1.6 }}>
+                                                Se o tomador pagasse a comissão diretamente à corretora, a FAM receberia à taxa efetiva de <strong>{fmtPercent(taxaLiquida / 100)}</strong>.
+                                              </div>
+                                            )}
+                                          </>
+                                        ) : (
+                                          <div style={{ color: '#9ab0c8', fontSize: 13, textAlign: 'center', paddingTop: 20 }}>
+                                            Prêmio não informado
+                                          </div>
+                                        )}
                                       </div>
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13 }}>
-                                        <span style={{ color: '#6080a0' }}>Taxa desta Operação:</span>
-                                        <span style={{ fontWeight: 800 }}>{opT > 0 ? fmtPercent(opT / 100) : '—'}</span>
-                                      </div>
-                                      {opT > 0 && (
-                                        <div style={{ padding: '9px 12px', borderRadius: 8, background: opT >= taxaMin ? '#d4f4e4' : '#fbeaea', border: `1.5px solid ${opT >= taxaMin ? '#27a96c' : '#d64545'}`, textAlign: 'center' }}>
-                                          <span style={{ fontWeight: 800, color: opT >= taxaMin ? '#1a6a40' : '#a02020', fontSize: 13 }}>
-                                            {opT >= taxaMin ? '✅ Taxa ADEQUADA' : '⚠️ Taxa ABAIXO do mínimo'}{' '}({opT >= taxaMin ? '+' : ''}{fmtPercent(Math.abs(opT - taxaMin) / 100)})
-                                          </span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
+                                    )
+                                  })()}
                                 </div>
                               )}
                               {/* ABA 1: Resultado */}
@@ -2666,18 +2784,38 @@ export default function OperacoesPage() {
                                         onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_notas: e.target.value }).eq('id', op.id) }}
                                         style={{ width: '100%', minHeight: 96, padding: '9px 11px', borderRadius: 8, border: '1.5px solid #c5d5e8', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' as const }} />
                                       <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', margin: '12px 0 7px', letterSpacing: 0.5 }}>CAMPOS DE VARIAÇÃO / CONDIÇÕES</div>
-                                      {[['Taxa (%)', 'ex: +0.25'], ['LMG (R$)', 'ex: -500000']].map(([lb, ph]) => (
-                                        <div key={lb} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                                          <div style={{ width: 120 }}>
-                                            <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Variação {lb}</label>
-                                            <input type="number" step="any" placeholder={ph} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
-                                          </div>
-                                          <div style={{ flex: 1 }}>
-                                            <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Justificativa</label>
-                                            <input type="text" placeholder="ex: Mitigar concentração" style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
-                                          </div>
+                                      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                                        <div style={{ width: 120 }}>
+                                          <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Variação Taxa (%)</label>
+                                          <input type="number" step="any" placeholder="ex: +0.25"
+                                            defaultValue={op.comite_variacao_taxa ?? ''}
+                                            onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_variacao_taxa: e.target.value ? parseFloat(e.target.value) : null }).eq('id', op.id) }}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
                                         </div>
-                                      ))}
+                                        <div style={{ flex: 1 }}>
+                                          <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Justificativa</label>
+                                          <input type="text" placeholder="ex: Mitigar concentração"
+                                            defaultValue={op.comite_variacao_taxa_just ?? ''}
+                                            onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_variacao_taxa_just: e.target.value || null }).eq('id', op.id) }}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
+                                        </div>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                                        <div style={{ width: 120 }}>
+                                          <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Variação LMG (R$)</label>
+                                          <input type="number" step="any" placeholder="ex: -500000"
+                                            defaultValue={op.comite_variacao_lmg ?? ''}
+                                            onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_variacao_lmg: e.target.value ? parseFloat(e.target.value) : null }).eq('id', op.id) }}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                          <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Justificativa</label>
+                                          <input type="text" placeholder="ex: Mitigar concentração"
+                                            defaultValue={op.comite_variacao_lmg_just ?? ''}
+                                            onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_variacao_lmg_just: e.target.value || null }).eq('id', op.id) }}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
+                                        </div>
+                                      </div>
                                     </div>
                                     <div style={{ flex: '1 1 260px' }}>
                                       <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 7, letterSpacing: 0.5 }}>COMENTÁRIOS DO COMITÊ</div>
@@ -2909,7 +3047,7 @@ export default function OperacoesPage() {
                           style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
                           Editar
                         </button>
-                        {!s.base && !STATUS_PROTEGIDOS.includes(s.nome) && (
+                        {!STATUS_PROTEGIDOS.includes(s.nome) && (
                           <button onClick={() => setConfirmExcluir(s)}
                             style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: '#fbeaea', color: '#a02020', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
                             Excluir

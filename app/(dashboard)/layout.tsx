@@ -44,6 +44,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       perfilUsuario={usuarioDb?.perfil ?? 'usuario'}
       proprietario={usuarioDb?.proprietario ?? false}
       emailUsuario={user.email ?? ''}
+      userId={user.id}
       dataInicio={config?.valor ?? null}
     >
       {children}

@@ -5,12 +5,14 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fmtDataExtenso } from '@/lib/utils'
 import { DateRangeProvider } from '@/lib/context/date-range-context'
+// import NewsTicker from './NewsTicker'
 
 interface Props {
   nomeUsuario: string
   perfilUsuario: string
   proprietario: boolean
   emailUsuario: string
+  userId: string
   dataInicio: string | null
   children: React.ReactNode
 }
@@ -41,7 +43,7 @@ const CONFIG_ITEMS = [
   { label: 'Sistema',      href: '/configuracoes/sistema', icon: '⚙️', proprietarioOnly: true },
 ]
 
-export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, emailUsuario, dataInicio, children }: Props) {
+export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, emailUsuario, userId, dataInicio, children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -136,6 +138,9 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
 
+      {/* ── Sticky zone: header + news ticker ── */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 100, flexShrink: 0 }}>
+
       {/* ── Header ── */}
       <div style={{
         background: 'linear-gradient(135deg,#0a1628 0%,#1a3560 60%,#2255a4 100%)',
@@ -145,9 +150,6 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
         justifyContent: 'space-between',
         height: 64,
         boxShadow: '0 2px 16px rgba(10,22,40,.4)',
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
         flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -211,6 +213,11 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
           </div>
         </div>
       </div>
+
+      {/* ── News Ticker ── (desabilitado) */}
+      {/* <NewsTicker userId={userId} /> */}
+
+      </div>{/* end sticky zone */}
 
       {/* ── Tabs ── */}
       <div style={{

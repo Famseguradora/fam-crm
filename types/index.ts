@@ -130,6 +130,10 @@ export interface Operacao {
   comite_analista: string | null
   comite_data: string | null
   comite_decisao: string | null
+  comite_variacao_taxa: number | null
+  comite_variacao_taxa_just: string | null
+  comite_variacao_lmg: number | null
+  comite_variacao_lmg_just: string | null
   created_at: string
   updated_at: string
 }
