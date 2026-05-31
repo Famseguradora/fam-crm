@@ -156,6 +156,7 @@ export default function OperacoesPage() {
   const [comentariosComite, setComentariosComite] = useState<Record<string, ComiteComentario[]>>({})
   const [novoComentarioForm, setNovoComentarioForm] = useState<Record<string, { autor: string; comentario: string; tipo: string }>>({})
   const [salvandoComentario, setSalvandoComentario] = useState(false)
+  const [modoBook, setModoBook] = useState<'emitidas' | 'book'>('emitidas')
 
   // ── Cadastro Básico Tomador ──
   const [mostrarFormTomador, setMostrarFormTomador] = useState(false)
@@ -722,44 +723,45 @@ export default function OperacoesPage() {
     const a = new Date(); return `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, '0')}`
   }, [])
 
-  const bookOps = useMemo(() =>
-    operacoes.filter(op => op.status === 'Aprovado' || op.status === 'Emitido'),
-    [operacoes])
+  const bookAtualOps = useMemo(() =>
+    modoBook === 'book'
+      ? operacoes.filter(op => op.status === 'Emitido' || op.status === 'Aprovado')
+      : operacoes.filter(op => op.status === 'Emitido'),
+    [operacoes, modoBook])
 
-  const bookLmgTotal = useMemo(() => bookOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookOps])
-  const bookPremioTotal = useMemo(() => bookOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookOps])
+  const bookLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookAtualOps])
+  const bookPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const bookTmpTotal = useMemo(() => {
-    const wSum = bookOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0), 0)
     return bookLmgTotal > 0 ? wSum / bookLmgTotal : 0
-  }, [bookOps, bookLmgTotal])
+  }, [bookAtualOps, bookLmgTotal])
 
-  const emitidosOps = useMemo(() =>
-    operacoes.filter(op => op.status === 'Emitido'),
-    [operacoes])
+  // emitidosOps é alias de bookAtualOps — usado em labels do JSX
+  const emitidosOps = bookAtualOps
 
-  const emitidosLmgTotal = useMemo(() => emitidosOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [emitidosOps])
-  const emitidosPremioTotal = useMemo(() => emitidosOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [emitidosOps])
+  const emitidosLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookAtualOps])
+  const emitidosPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const emitidosTmpTotal = useMemo(() => {
-    const wSum = emitidosOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0), 0)
     return emitidosLmgTotal > 0 ? wSum / emitidosLmgTotal : 0
-  }, [emitidosOps, emitidosLmgTotal])
+  }, [bookAtualOps, emitidosLmgTotal])
 
   const premioRealizadoMes = useMemo(() =>
-    operacoes
-      .filter(op => op.status === 'Emitido' && (op.data_entrada ?? '').startsWith(periodoMesAtual))
+    bookAtualOps
+      .filter(op => (op.data_entrada ?? '').startsWith(periodoMesAtual))
       .reduce((s, op) => s + (op.premio_previsto ?? 0), 0),
-    [operacoes, periodoMesAtual])
+    [bookAtualOps, periodoMesAtual])
 
   const premioRealizadoAno = useMemo(() => {
     const ano = new Date().getFullYear().toString()
-    return operacoes
-      .filter(op => op.status === 'Emitido' && (op.data_entrada ?? '').startsWith(ano))
+    return bookAtualOps
+      .filter(op => (op.data_entrada ?? '').startsWith(ano))
       .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
-  }, [operacoes])
+  }, [bookAtualOps])
 
   const exposicaoPorModalidade = useMemo(() => {
     const map: Record<string, { qtd: number; lmg: number; premio: number; taxaMin: number; taxaMax: number; taxaLmg: number }> = {}
-    for (const op of bookOps) {
+    for (const op of bookAtualOps) {
       const m = op.modalidade ?? 'Não informada'
       if (!map[m]) map[m] = { qtd: 0, lmg: 0, premio: 0, taxaMin: Infinity, taxaMax: -Infinity, taxaLmg: 0 }
       map[m].qtd++
@@ -782,11 +784,11 @@ export default function OperacoesPage() {
       taxaMax: d.taxaMax === -Infinity ? 0 : d.taxaMax,
       tmp: d.lmg > 0 ? d.taxaLmg / d.lmg : 0,
     })).sort((a, b) => b.premio - a.premio)
-  }, [bookOps, bookLmgTotal, bookPremioTotal])
+  }, [bookAtualOps, bookLmgTotal, bookPremioTotal])
 
   const exposicaoPorTomador = useMemo(() => {
     const map: Record<string, { nome: string; qtd: number; lmg: number; premio: number; taxaLmg: number; limiteAprovado: number | null }> = {}
-    for (const op of bookOps) {
+    for (const op of bookAtualOps) {
       const tid = op.tomador_id ?? '__sem__'
       if (!map[tid]) map[tid] = { nome: op.tomador?.razao_social ?? 'Não informado', qtd: 0, lmg: 0, premio: 0, taxaLmg: 0, limiteAprovado: op.tomador?.limite_aprovado ?? null }
       map[tid].qtd++
@@ -805,7 +807,7 @@ export default function OperacoesPage() {
       tmp: d.lmg > 0 ? d.taxaLmg / d.lmg : 0,
       limiteAprovado: d.limiteAprovado,
     })).sort((a, b) => b.premio - a.premio).slice(0, 10)
-  }, [bookOps, bookLmgTotal, bookPremioTotal])
+  }, [bookAtualOps, bookLmgTotal, bookPremioTotal])
 
   // ─── Import CSV ─────────────────────────────────────────────────────────────
 
@@ -2351,7 +2353,25 @@ export default function OperacoesPage() {
             {/* ── PAINEL META vs REALIZADO ── */}
             <div style={{ background: '#0d2040', borderRadius: 12, padding: '16px 20px', marginBottom: 16, border: '1px solid rgba(56,120,200,0.3)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
-                <div style={{ color: 'rgba(180,200,220,0.9)', fontSize: 13, fontWeight: 700, letterSpacing: 1 }}>🎯 PAINEL DE METAS — {mesAnoLabel.toUpperCase()}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ color: 'rgba(180,200,220,0.9)', fontSize: 13, fontWeight: 700, letterSpacing: 1 }}>
+                    🎯 PAINEL DE METAS — {mesAnoLabel.toUpperCase()}
+                    {modoBook === 'book' && <span style={{ marginLeft: 8, background: '#e8b84b', color: '#3a2800', fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 10 }}>+APROVADAS</span>}
+                  </div>
+                  {/* Toggle Book */}
+                  <div style={{ display: 'flex', gap: 5 }}>
+                    {(['emitidas', 'book'] as const).map(modo => (
+                      <button key={modo} onClick={() => setModoBook(modo)} style={{
+                        padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: modoBook === modo ? 800 : 600,
+                        background: modoBook === modo ? '#3070c8' : 'rgba(48,112,200,0.12)',
+                        border: modoBook === modo ? '2px solid #3070c8' : '1.5px solid rgba(48,112,200,0.3)',
+                        color: modoBook === modo ? 'white' : 'rgba(180,200,220,0.7)', transition: 'all 0.15s',
+                      }}>
+                        {modo === 'emitidas' ? '✅ Só Emitidas' : '📊 +Aprovadas'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <button onClick={() => setMostrarConfigurarMetas(v => !v)}
                   style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(56,120,200,0.5)', background: 'rgba(56,120,200,0.15)', color: 'rgba(180,200,220,0.9)', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
                   ⚙ {mostrarConfigurarMetas ? 'Fechar' : 'Configurar Metas'}
@@ -2391,14 +2411,14 @@ export default function OperacoesPage() {
                     <div style={{ fontSize: 22, fontWeight: 900, color: '#e8b84b' }}>{fmtPercent(emitidosTmpTotal / 100)}</div>
                     {meta > 0 && <div style={{ fontSize: 12, color: delta >= 0 ? '#27a96c' : '#d64545', fontWeight: 700, marginTop: 4 }}>{delta >= 0 ? '▲' : '▼'} {delta >= 0 ? '+' : ''}{fmtPercent(delta / 100)} vs meta {fmtPercent(meta / 100)}</div>}
                     {meta === 0 && <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 4 }}>Meta não definida</div>}
-                    <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 6 }}>{emitidosOps.length} ops emitidas</div>
+                    <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 6 }}>{emitidosOps.length} ops {modoBook === 'book' ? 'Emitidas + Aprovadas' : 'emitidas'}</div>
                   </div>
                 )})()}
                 {/* LMG Emitido */}
                 <div style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)' }}>
                   <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>⚖️ LMG em Carteira</div>
                   <div style={{ fontSize: 15, fontWeight: 800, color: 'white' }}>{fmtMoeda(emitidosLmgTotal)}</div>
-                  <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 4 }}>Prêmio emitido: {fmtMoeda(emitidosPremioTotal)}</div>
+                  <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 4 }}>{modoBook === 'book' ? 'Prêmio (E+A):' : 'Prêmio emitido:'} {fmtMoeda(emitidosPremioTotal)}</div>
                   {(metaMensal?.risco_judicial ?? 0) > 0 && <div style={{ fontSize: 11, color: '#e8b84b', marginTop: 6 }}>⚖️ Risco Judicial: {fmtMoeda(metaMensal!.risco_judicial!)}</div>}
                 </div>
               </div>
@@ -2431,9 +2451,12 @@ export default function OperacoesPage() {
 
             {/* ── EXPOSIÇÃO DO PORTFÓLIO ── */}
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#1a2a3a', marginBottom: 12 }}>📊 Exposição do Portfólio — Book Atual <span style={{ fontSize: 12, fontWeight: 400, color: '#6080a0' }}>(Aprovadas + Emitidas)</span></div>
-              {bookOps.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 28, color: '#6080a0', background: '#f8fafc', borderRadius: 10, border: '1.5px dashed #c5d5e8' }}>Nenhuma operação aprovada ou emitida no book ainda.</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#1a2a3a', marginBottom: 12 }}>
+                📊 Exposição do Portfólio — {modoBook === 'book' ? 'Book: Aprovadas + Emitidas' : 'Só Emitidas'}
+                <span style={{ fontSize: 12, fontWeight: 400, color: '#6080a0', marginLeft: 6 }}>{modoBook === 'book' ? '(Aprovadas + Emitidas)' : '(apenas Emitidas)'}</span>
+              </div>
+              {bookAtualOps.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 28, color: '#6080a0', background: '#f8fafc', borderRadius: 10, border: '1.5px dashed #c5d5e8' }}>Nenhuma operação {modoBook === 'book' ? 'aprovada ou emitida' : 'emitida'} no book ainda.</div>
               ) : (
                 <>
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
@@ -2462,7 +2485,7 @@ export default function OperacoesPage() {
                           ))}
                           <tr style={{ background: '#0d2040', color: 'rgba(180,200,220,0.9)' }}>
                             <td style={{ padding: '7px 10px', fontWeight: 700 }}>TOTAL</td>
-                            <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700 }}>{bookOps.length}</td>
+                            <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700 }}>{bookAtualOps.length}</td>
                             <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700, color: '#e8b84b' }}>{fmtMoeda(bookPremioTotal)}</td>
                             <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700 }}>100%</td>
                             <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700 }}>{fmtMoeda(bookLmgTotal)}</td>
@@ -2555,13 +2578,13 @@ export default function OperacoesPage() {
                     const comissaoPct = comissaoInputs[op.id] ?? 25
                     const opL = op.lmg ?? 0; const opP = op.premio_previsto ?? 0; const opT = op.taxa ?? 0; const opV = op.vigencia_anos ?? 1
                     const nBL = bookLmgTotal + opL; const nBP = bookPremioTotal + opP
-                    const nBT = nBL > 0 ? (bookOps.reduce((s,o) => s + (o.taxa ?? 0) * (o.lmg ?? 0), 0) + opT * opL) / nBL : 0
+                    const nBT = nBL > 0 ? (bookAtualOps.reduce((s,o) => s + (o.taxa ?? 0) * (o.lmg ?? 0), 0) + opT * opL) / nBL : 0
                     const mM = metaMensal?.premio_meta ?? 0; const mA = metaAnual?.premio_meta ?? 0
                     const pMAt = mM > 0 ? premioRealizadoMes / mM * 100 : 0
                     const pMNv = mM > 0 ? (premioRealizadoMes + opP) / mM * 100 : 0
                     const cMes = mM > 0 ? opP / mM * 100 : 0
                     const gapM = mM > 0 ? Math.max(0, mM - premioRealizadoMes - opP) : 0
-                    const pMed = bookOps.length > 0 && bookPremioTotal > 0 ? bookPremioTotal / bookOps.length : 0
+                    const pMed = bookAtualOps.length > 0 && bookPremioTotal > 0 ? bookPremioTotal / bookAtualOps.length : 0
                     const nOps = pMed > 0 && gapM > 0 ? Math.ceil(gapM / pMed) : 0
                     const pANv = mA > 0 ? (premioRealizadoAno + opP) / mA * 100 : 0
                     return (
@@ -2737,7 +2760,7 @@ export default function OperacoesPage() {
                                           { l: 'LMG Total em Carteira', a: fmtMoeda(bookLmgTotal), d: fmtMoeda(nBL), delta: bookLmgTotal > 0 ? `+${(opL / bookLmgTotal * 100).toFixed(2)}%` : '—', up: true },
                                           { l: 'Prêmio Total em Carteira', a: fmtMoeda(bookPremioTotal), d: fmtMoeda(nBP), delta: bookPremioTotal > 0 ? `+${(opP / bookPremioTotal * 100).toFixed(2)}%` : '—', up: true },
                                           { l: 'Taxa Média Ponderada', a: fmtPercent(bookTmpTotal / 100), d: fmtPercent(nBT / 100), delta: `${nBT >= bookTmpTotal ? '+' : ''}${fmtPercent(Math.abs(nBT - bookTmpTotal) / 100)}`, up: nBT >= bookTmpTotal },
-                                          { l: 'Operações no Book', a: `${bookOps.length}`, d: `${bookOps.length + 1}`, delta: '+1', up: true },
+                                          { l: 'Operações no Book', a: `${bookAtualOps.length}`, d: `${bookAtualOps.length + 1}`, delta: '+1', up: true },
                                         ].map((row, i) => (
                                           <tr key={i} style={{ borderBottom: '1px solid #e0ecff', background: i % 2 === 0 ? 'white' : '#f8fafc' }}>
                                             <td style={{ padding: '9px 14px', fontWeight: 600, color: '#1a2a3a' }}>{row.l}</td>
