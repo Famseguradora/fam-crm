@@ -368,7 +368,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
               </div>
             )}
             {PERFORMANCE_ITEMS.map((item) => (
-              <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} />
+              <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} disabled={item.disabled} />
             ))}
           </div>
 
@@ -388,7 +388,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
               (!item.proprietarioOnly || proprietario) &&
               (!item.emailOnly || item.emailOnly === emailUsuario)
             ).map((item) => (
-              <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} />
+              <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} disabled={item.disabled} />
             ))}
           </div>
 
