@@ -618,10 +618,12 @@ export default function OperacoesPage() {
     const filtered = operacoes.filter((op) => {
       if (op.status !== 'Emitido') return false
       const buscaLow = busca.toLowerCase()
+      const buscaDigitos = busca.replace(/\D/g, '')
       const textMatch = !busca ||
         (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
-        (op.tomador?.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
+        (buscaDigitos.length > 0 && (op.tomador?.cnpj ?? '').includes(buscaDigitos)) ||
         (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.corretora?.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
         (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
       const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
@@ -653,10 +655,12 @@ export default function OperacoesPage() {
     const filtered = operacoes.filter((op) => {
       if (op.status !== 'Perdido' && op.status !== 'Recusado') return false
       const buscaLow = busca.toLowerCase()
+      const buscaDigitos = busca.replace(/\D/g, '')
       const textMatch = !busca ||
         (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
-        (op.tomador?.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
+        (buscaDigitos.length > 0 && (op.tomador?.cnpj ?? '').includes(buscaDigitos)) ||
         (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.corretora?.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
         (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
       const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
@@ -689,10 +693,12 @@ export default function OperacoesPage() {
     const filtered = operacoes.filter((op) => {
       if (op.status === 'Emitido' || op.status === 'Perdido' || op.status === 'Recusado') return false
       const buscaLow = busca.toLowerCase()
+      const buscaDigitos = busca.replace(/\D/g, '')
       const textMatch = !busca ||
         (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
-        (op.tomador?.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
+        (buscaDigitos.length > 0 && (op.tomador?.cnpj ?? '').includes(buscaDigitos)) ||
         (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.corretora?.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
         (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
       const statusMatch = filtroStatus.length === 0 || filtroStatus.includes(op.status ?? '')
       const priorMatch = !filtroPrioridade || op.prioridade === filtroPrioridade
@@ -740,10 +746,12 @@ export default function OperacoesPage() {
     operacoes.forEach((op) => {
       if (op.status === 'Emitido' || op.status === 'Perdido' || op.status === 'Recusado') return
       const buscaLow = busca.toLowerCase()
+      const buscaDigitos = busca.replace(/\D/g, '')
       const textMatch = !busca ||
         (op.tomador?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
-        (op.tomador?.cnpj ?? '').includes(busca.replace(/\D/g, '')) ||
+        (buscaDigitos.length > 0 && (op.tomador?.cnpj ?? '').includes(buscaDigitos)) ||
         (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
+        (op.corretora?.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
         (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
       const tempMatch = filtroTemperatura.length === 0 || filtroTemperatura.includes(op.temperatura ?? '')
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
