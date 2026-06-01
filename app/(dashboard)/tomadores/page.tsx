@@ -322,6 +322,10 @@ export default function TomadoresPage() {
       if (editandoStatus) {
         const { error } = await supabase.from('status_fluxo_tomador').update(p).eq('id', editandoStatus.id)
         if (error) throw new Error(error.message)
+        if (editandoStatus.nome !== p.nome) {
+          const { error: errTom } = await supabase.from('tomadores').update({ status: p.nome }).eq('status', editandoStatus.nome)
+          if (errTom) throw new Error(errTom.message)
+        }
         setMsgStatus({ tipo: 'sucesso', texto: 'Status atualizado.' })
       } else {
         const { error } = await supabase.from('status_fluxo_tomador').insert({ ...p, base: false })

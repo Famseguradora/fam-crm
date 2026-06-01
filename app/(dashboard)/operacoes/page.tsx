@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { maskCNPJ, maskMoeda, fmtMoeda, fmtData, fmtPercent } from '@/lib/utils'
+import { maskCNPJ, maskMoeda, fmtMoeda, fmtData, fmtPercent, titleCase } from '@/lib/utils'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario } from '@/types'
 import AnexosSection from '@/components/AnexosSection'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Line, AreaChart, Area, CartesianGrid, Cell } from 'recharts'
@@ -149,6 +149,8 @@ export default function OperacoesPage() {
   // ── Sorting ──
   const [sortField, setSortField] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [sortEmitidas, setSortEmitidas] = useState<{ field: string; dir: 'asc' | 'desc' }>({ field: 'data_entrada', dir: 'desc' })
+  const [sortPerdidas, setSortPerdidas] = useState<{ field: string; dir: 'asc' | 'desc' }>({ field: 'data_entrada', dir: 'desc' })
 
   // ── Comitê Cockpit ──
   const [expandidoComiteId, setExpandidoComiteId] = useState<string | null>(null)
@@ -332,11 +334,11 @@ export default function OperacoesPage() {
     const { data, error } = await supabase
       .from('tomadores')
       .insert({
-        razao_social: formTomador.razao_social.trim(),
+        razao_social: titleCase(formTomador.razao_social.trim()),
         cnpj: formTomador.cnpj.replace(/\D/g, '') || null,
         corretora_id: formTomador.corretora_id || null,
         porte: formTomador.porte || null,
-        status: 'Aguardando Análise',
+        status: 'Cadastro Basico',
         ativo: true,
       })
       .select('id,razao_social,cnpj,corretora_id')
@@ -556,6 +558,10 @@ export default function OperacoesPage() {
       if (editandoStatus) {
         const { error } = await supabase.from('status_fluxo_operacao').update(p).eq('id', editandoStatus.id)
         if (error) throw new Error(error.message)
+        if (editandoStatus.nome !== p.nome) {
+          const { error: errOp } = await supabase.from('operacoes').update({ status: p.nome }).eq('status', editandoStatus.nome)
+          if (errOp) throw new Error(errOp.message)
+        }
         setMsgStatus({ tipo: 'sucesso', texto: 'Status atualizado.' })
       } else {
         const { error } = await supabase.from('status_fluxo_operacao').insert({ ...p, base: false })
@@ -593,8 +599,23 @@ export default function OperacoesPage() {
 
   const thSort: React.CSSProperties = { cursor: 'pointer', userSelect: 'none' }
 
+  function handleSortEmitidas(field: string) {
+    setSortEmitidas(s => s.field === field ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { field, dir: 'asc' })
+  }
+  function sortIconEmitidas(field: string) {
+    if (sortEmitidas.field !== field) return ' ↕'
+    return sortEmitidas.dir === 'asc' ? ' ▲' : ' ▼'
+  }
+  function handleSortPerdidas(field: string) {
+    setSortPerdidas(s => s.field === field ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { field, dir: 'asc' })
+  }
+  function sortIconPerdidas(field: string) {
+    if (sortPerdidas.field !== field) return ' ↕'
+    return sortPerdidas.dir === 'asc' ? ' ▲' : ' ▼'
+  }
+
   const operacoesEmitidas = useMemo(() => {
-    return operacoes.filter((op) => {
+    const filtered = operacoes.filter((op) => {
       if (op.status !== 'Emitido') return false
       const buscaLow = busca.toLowerCase()
       const textMatch = !busca ||
@@ -605,8 +626,22 @@ export default function OperacoesPage() {
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
       const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
       return textMatch && corrMatch && prodMatch
-    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-  }, [operacoes, busca, filtroCorretora, filtroModalidade])
+    })
+    const { field, dir } = sortEmitidas
+    const mul = dir === 'asc' ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      let cmp = 0
+      if (field === 'tomador') cmp = (a.tomador?.razao_social ?? '').localeCompare(b.tomador?.razao_social ?? '', 'pt-BR', { sensitivity: 'base' })
+      else if (field === 'corretora') cmp = (a.corretora?.nome_fantasia ?? a.corretora?.razao_social ?? '').localeCompare(b.corretora?.nome_fantasia ?? b.corretora?.razao_social ?? '', 'pt-BR', { sensitivity: 'base' })
+      else if (field === 'cobertura') cmp = (a.produto?.nome ?? '').localeCompare(b.produto?.nome ?? '', 'pt-BR', { sensitivity: 'base' })
+      else if (field === 'lmg') cmp = (a.lmg ?? 0) - (b.lmg ?? 0)
+      else if (field === 'taxa') cmp = (a.taxa ?? 0) - (b.taxa ?? 0)
+      else if (field === 'premio') cmp = (a.premio_previsto ?? 0) - (b.premio_previsto ?? 0)
+      else if (field === 'data_entrada') cmp = (a.data_entrada ?? '').localeCompare(b.data_entrada ?? '')
+      else cmp = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      return mul * cmp
+    })
+  }, [operacoes, busca, filtroCorretora, filtroModalidade, sortEmitidas])
 
   const kpisEmitido = useMemo(() => {
     const lmg = operacoesEmitidas.reduce((s, op) => s + (op.lmg ?? 0), 0)
@@ -615,7 +650,7 @@ export default function OperacoesPage() {
   }, [operacoesEmitidas])
 
   const operacoesPerdidas = useMemo(() => {
-    return operacoes.filter((op) => {
+    const filtered = operacoes.filter((op) => {
       if (op.status !== 'Perdido' && op.status !== 'Recusado') return false
       const buscaLow = busca.toLowerCase()
       const textMatch = !busca ||
@@ -626,8 +661,23 @@ export default function OperacoesPage() {
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
       const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
       return textMatch && corrMatch && prodMatch
-    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-  }, [operacoes, busca, filtroCorretora, filtroModalidade])
+    })
+    const { field, dir } = sortPerdidas
+    const mul = dir === 'asc' ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      let cmp = 0
+      if (field === 'tomador') cmp = (a.tomador?.razao_social ?? '').localeCompare(b.tomador?.razao_social ?? '', 'pt-BR', { sensitivity: 'base' })
+      else if (field === 'corretora') cmp = (a.corretora?.nome_fantasia ?? a.corretora?.razao_social ?? '').localeCompare(b.corretora?.nome_fantasia ?? b.corretora?.razao_social ?? '', 'pt-BR', { sensitivity: 'base' })
+      else if (field === 'cobertura') cmp = (a.produto?.nome ?? '').localeCompare(b.produto?.nome ?? '', 'pt-BR', { sensitivity: 'base' })
+      else if (field === 'status') cmp = (a.status ?? '').localeCompare(b.status ?? '', 'pt-BR', { sensitivity: 'base' })
+      else if (field === 'lmg') cmp = (a.lmg ?? 0) - (b.lmg ?? 0)
+      else if (field === 'taxa') cmp = (a.taxa ?? 0) - (b.taxa ?? 0)
+      else if (field === 'premio') cmp = (a.premio_previsto ?? 0) - (b.premio_previsto ?? 0)
+      else if (field === 'data_entrada') cmp = (a.data_entrada ?? '').localeCompare(b.data_entrada ?? '')
+      else cmp = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      return mul * cmp
+    })
+  }, [operacoes, busca, filtroCorretora, filtroModalidade, sortPerdidas])
 
   const kpisPerdido = useMemo(() => {
     const lmg = operacoesPerdidas.reduce((s, op) => s + (op.lmg ?? 0), 0)
@@ -2239,13 +2289,13 @@ export default function OperacoesPage() {
                   <thead>
                     <tr>
                       <th>#</th>
-                      <th>Tomador</th>
-                      <th>Corretora</th>
-                      <th>Cobertura / Modalidade</th>
-                      <th>LMG</th>
-                      <th>Taxa</th>
-                      <th>Prêmio Previsto</th>
-                      <th>Data Entrada</th>
+                      <th style={thSort} onClick={() => handleSortEmitidas('tomador')}>Tomador{sortIconEmitidas('tomador')}</th>
+                      <th style={thSort} onClick={() => handleSortEmitidas('corretora')}>Corretora{sortIconEmitidas('corretora')}</th>
+                      <th style={thSort} onClick={() => handleSortEmitidas('cobertura')}>Cobertura / Modalidade{sortIconEmitidas('cobertura')}</th>
+                      <th style={thSort} onClick={() => handleSortEmitidas('lmg')}>LMG{sortIconEmitidas('lmg')}</th>
+                      <th style={thSort} onClick={() => handleSortEmitidas('taxa')}>Taxa{sortIconEmitidas('taxa')}</th>
+                      <th style={thSort} onClick={() => handleSortEmitidas('premio')}>Prêmio Previsto{sortIconEmitidas('premio')}</th>
+                      <th style={thSort} onClick={() => handleSortEmitidas('data_entrada')}>Data Entrada{sortIconEmitidas('data_entrada')}</th>
                       <th>Ações</th>
                     </tr>
                   </thead>
@@ -2312,14 +2362,14 @@ export default function OperacoesPage() {
                   <thead>
                     <tr>
                       <th>#</th>
-                      <th>Tomador</th>
-                      <th>Corretora</th>
-                      <th>Cobertura / Modalidade</th>
-                      <th>Status</th>
-                      <th>LMG</th>
-                      <th>Taxa</th>
-                      <th>Prêmio Previsto</th>
-                      <th>Data Entrada</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('tomador')}>Tomador{sortIconPerdidas('tomador')}</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('corretora')}>Corretora{sortIconPerdidas('corretora')}</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('cobertura')}>Cobertura / Modalidade{sortIconPerdidas('cobertura')}</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('status')}>Status{sortIconPerdidas('status')}</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('lmg')}>LMG{sortIconPerdidas('lmg')}</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('taxa')}>Taxa{sortIconPerdidas('taxa')}</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('premio')}>Prêmio Previsto{sortIconPerdidas('premio')}</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('data_entrada')}>Data Entrada{sortIconPerdidas('data_entrada')}</th>
                       <th>Ações</th>
                     </tr>
                   </thead>
