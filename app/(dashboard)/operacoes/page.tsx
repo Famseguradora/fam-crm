@@ -3,6 +3,7 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskMoeda, fmtMoeda, fmtData, fmtPercent } from '@/lib/utils'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario } from '@/types'
@@ -88,6 +89,7 @@ function autoTemp(novoStatus: string, tempAtual: string | null): string | null {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OperacoesPage() {
+  const router = useRouter()
   const [aba, setAba] = useState<'operacoes' | 'status' | 'comite'>('operacoes')
 
   // ── Operações ──
@@ -1624,7 +1626,7 @@ export default function OperacoesPage() {
       )}
 
       {/* Abas internas */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: '2px solid #d0e4f5' }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: '2px solid #d0e4f5', alignItems: 'flex-end' }}>
         {([
           { id: 'operacoes', label: '📋 Operações' },
           { id: 'comite', label: '🏛 Comitê' },
@@ -1643,6 +1645,17 @@ export default function OperacoesPage() {
             {label}
           </button>
         ))}
+        <button
+          onClick={() => router.push('/operacoes/mensal')}
+          style={{
+            marginLeft: 'auto', marginBottom: 4, padding: '7px 16px', borderRadius: 8,
+            background: '#e8f0fb', border: '1.5px solid #3070c8',
+            color: '#1e4080', fontFamily: "'Calibri','Segoe UI',sans-serif",
+            fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+          }}
+        >
+          📅 KPIs por Mês
+        </button>
       </div>
 
       {/* Modal resultado importação */}
@@ -2399,8 +2412,8 @@ export default function OperacoesPage() {
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 {/* Meta Mês */}
                 {(() => { const meta = metaMensal?.premio_meta ?? 0; const pct = meta > 0 ? Math.min(100, premioRealizadoMes / meta * 100) : 0; const gap = meta > 0 ? Math.max(0, meta - premioRealizadoMes) : 0; const cor = pct >= 80 ? '#27a96c' : pct >= 50 ? '#e8b84b' : '#d64545'; return (
-                  <div style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)' }}>
-                    <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>🎯 Meta Mês</div>
+                  <div onClick={() => router.push('/operacoes/mensal')} title="Ver KPIs por mês" style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)', cursor: 'pointer', transition: 'border-color 0.15s' }}>
+                    <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>🎯 Meta Mês <span style={{ fontSize: 9, opacity: 0.6 }}>→</span></div>
                     <div style={{ fontSize: 15, fontWeight: 800, color: 'white' }}>{fmtMoeda(premioRealizadoMes)}</div>
                     <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginBottom: 7 }}>de {meta > 0 ? fmtMoeda(meta) : 'Não definida'}</div>
                     <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 4, height: 6 }}><div style={{ height: '100%', borderRadius: 4, background: cor, width: `${pct}%`, transition: 'width 0.4s' }} /></div>

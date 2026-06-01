@@ -11,25 +11,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // Busca dados do usuário para exibir perfil e nome
   const { data: usuarioDb } = await supabase
     .from('usuarios')
-    .select('nome, perfil, primeiro_acesso, proprietario')
+    .select('nome, perfil, proprietario')
     .eq('auth_id', user.id)
     .single()
-
-  // Se é primeiro acesso, redireciona para troca de senha
-  if (usuarioDb?.primeiro_acesso) {
-    redirect('/alterar-senha')
-  }
-
-  // Se onboarding não concluído, redireciona (fora deste layout, sem loop)
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('onboarding_completo')
-    .eq('user_id', user.id)
-    .maybeSingle()
-
-  if (!profile?.onboarding_completo) {
-    redirect('/onboarding')
-  }
 
   // Carrega configuração global de data de início dos cálculos
   const { data: config } = await supabase
