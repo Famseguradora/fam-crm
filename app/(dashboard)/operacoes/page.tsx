@@ -137,6 +137,11 @@ export default function OperacoesPage() {
 
   // ── Modal Motivo (Perdido/Recusado) ──
   const [motivoModal, setMotivoModal] = useState<'form' | { op: Operacao; novoStatus: string } | null>(null)
+  const [modalEmissao, setModalEmissao] = useState<
+    | { tipo: 'form'; motivo: string; dataEmissao: string }
+    | { tipo: 'status'; op: Operacao; novoStatus: string; motivo: string; dataEmissao: string }
+    | null
+  >(null)
   const [motivoInput, setMotivoInput] = useState('')
 
   // ── Sorting ──
@@ -148,6 +153,7 @@ export default function OperacoesPage() {
   const [abaSimulador, setAbaSimulador] = useState<Record<string, number>>({})
   const [simInputs, setSimInputs] = useState<Record<string, { sinistralidade: number; carregamento: number; margem: number }>>({})
   const [comissaoInputs, setComissaoInputs] = useState<Record<string, number>>({})
+  const [taxaSimInputs, setTaxaSimInputs] = useState<Record<string, number>>({})
   const [metaMensal, setMetaMensal] = useState<MetaNegocio | null>(null)
   const [metaAnual, setMetaAnual] = useState<MetaNegocio | null>(null)
   const [mostrarConfigurarMetas, setMostrarConfigurarMetas] = useState(false)
@@ -395,10 +401,15 @@ export default function OperacoesPage() {
       setMotivoInput('')
       return
     }
+    if (form.status === 'Emitido' && statusMudou) {
+      const today = new Date().toISOString().slice(0, 10)
+      setModalEmissao({ tipo: 'form', motivo: '', dataEmissao: editando?.data_emissao ?? today })
+      return
+    }
     await executarSalvarForm('')
   }
 
-  async function executarSalvarForm(motivo: string) {
+  async function executarSalvarForm(motivo: string, dataEmissao?: string) {
     setEnviando(true)
     setMensagem(null)
     const lmgNum = form.lmg ? parseFloat(form.lmg.replace(/\./g, '').replace(',', '.')) : null
@@ -406,7 +417,7 @@ export default function OperacoesPage() {
     const obsComMotivo = motivo
       ? `Motivo: ${motivo}${form.observacao ? '\n\n' + form.observacao : ''}`
       : form.observacao || null
-    const payload = {
+    const payload: Record<string, unknown> = {
       tomador_id: form.tomador_id || null,
       corretora_id: form.corretora_id || null,
       produto_id: form.produto_id || null,
@@ -423,6 +434,7 @@ export default function OperacoesPage() {
       status: form.status,
       ativo: form.ativo,
       data_entrada: form.data_entrada || null,
+      ...(dataEmissao ? { data_emissao: dataEmissao } : {}),
     }
     try {
       const supabase = createClient()
@@ -457,14 +469,20 @@ export default function OperacoesPage() {
       setMotivoInput('')
       return
     }
+    if (novoStatus === 'Emitido') {
+      const today = new Date().toISOString().slice(0, 10)
+      setModalEmissao({ tipo: 'status', op, novoStatus, motivo: '', dataEmissao: op.data_emissao ?? today })
+      return
+    }
     _executarMudarStatus(op, novoStatus, '')
   }
 
-  async function _executarMudarStatus(op: Operacao, novoStatus: string, motivo: string) {
+  async function _executarMudarStatus(op: Operacao, novoStatus: string, motivo: string, dataEmissao?: string) {
     const supabase = createClient()
     const novaTemp = autoTemp(novoStatus, op.temperatura ?? null)
     const updateData: Record<string, unknown> = { status: novoStatus, temperatura: novaTemp }
     if (motivo) updateData.observacao = `Motivo: ${motivo}${op.observacao ? '\n\n' + op.observacao : ''}`
+    if (novoStatus === 'Emitido' && dataEmissao) updateData.data_emissao = dataEmissao
     const { error } = await supabase.from('operacoes').update(updateData).eq('id', op.id)
     if (!error) {
       if ((novoStatus === 'Emitido' || novoStatus === 'Fechado') && op.tomador_id) {
@@ -484,6 +502,17 @@ export default function OperacoesPage() {
       setMotivoModal(null)
       await _executarMudarStatus(op, novoStatus, motivoInput)
       setMotivoInput('')
+    }
+  }
+
+  async function confirmarEmissao(dataEmissao: string) {
+    if (!modalEmissao) return
+    const pending = modalEmissao
+    setModalEmissao(null)
+    if (pending.tipo === 'form') {
+      await executarSalvarForm(pending.motivo, dataEmissao)
+    } else {
+      await _executarMudarStatus(pending.op, pending.novoStatus, pending.motivo, dataEmissao)
     }
   }
 
@@ -723,6 +752,8 @@ export default function OperacoesPage() {
     const a = new Date(); return `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, '0')}`
   }, [])
 
+  const periodoAnoAtual = useMemo(() => `${new Date().getFullYear()}`, [])
+
   const bookAtualOps = useMemo(() =>
     modoBook === 'book'
       ? operacoes.filter(op => op.status === 'Emitido' || op.status === 'Aprovado')
@@ -732,7 +763,7 @@ export default function OperacoesPage() {
   const bookLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookAtualOps])
   const bookPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const bookTmpTotal = useMemo(() => {
-    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0) * (op.vigencia_anos ?? 1), 0)
     return bookLmgTotal > 0 ? wSum / bookLmgTotal : 0
   }, [bookAtualOps, bookLmgTotal])
 
@@ -742,17 +773,15 @@ export default function OperacoesPage() {
   const emitidosLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookAtualOps])
   const emitidosPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const emitidosTmpTotal = useMemo(() => {
-    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0) * (op.vigencia_anos ?? 1), 0)
     return emitidosLmgTotal > 0 ? wSum / emitidosLmgTotal : 0
   }, [bookAtualOps, emitidosLmgTotal])
 
   const premioRealizadoMes = useMemo(() => {
-    // Emitidas: sempre filtradas pela data de emissão (data_entrada do mês)
     const emitidas = operacoes
-      .filter(op => op.status === 'Emitido' && (op.data_entrada ?? '').startsWith(periodoMesAtual))
+      .filter(op => op.status === 'Emitido' && (op.data_emissao ?? '').startsWith(periodoMesAtual))
       .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     if (modoBook !== 'book') return emitidas
-    // Book mode: soma todas as Aprovadas sem filtro de data (simulação do período corrente)
     const aprovadas = operacoes
       .filter(op => op.status === 'Aprovado')
       .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
@@ -760,18 +789,15 @@ export default function OperacoesPage() {
   }, [operacoes, periodoMesAtual, modoBook])
 
   const premioRealizadoAno = useMemo(() => {
-    const ano = new Date().getFullYear().toString()
-    // Emitidas: filtradas pelo ano de emissão
     const emitidas = operacoes
-      .filter(op => op.status === 'Emitido' && (op.data_entrada ?? '').startsWith(ano))
+      .filter(op => op.status === 'Emitido' && (op.data_emissao ?? '').startsWith(periodoAnoAtual))
       .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     if (modoBook !== 'book') return emitidas
-    // Book mode: soma todas as Aprovadas sem filtro de data
     const aprovadas = operacoes
       .filter(op => op.status === 'Aprovado')
       .reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     return emitidas + aprovadas
-  }, [operacoes, modoBook])
+  }, [operacoes, periodoAnoAtual, modoBook])
 
   const exposicaoPorModalidade = useMemo(() => {
     const map: Record<string, { qtd: number; lmg: number; premio: number; taxaMin: number; taxaMax: number; taxaLmg: number }> = {}
@@ -1498,7 +1524,7 @@ export default function OperacoesPage() {
           }}
         >
           <div style={{ fontSize: 10, fontWeight: 600, color: '#777788', letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 5 }}>
-            ✕ Perdidas {incluirPerdidas && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
+            ✕ Perdidas/Recusadas {incluirPerdidas && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
           </div>
           <div style={{ marginBottom: 3 }}>
             <span style={{ fontSize: 28, fontWeight: 700, color: '#aaaaaa', lineHeight: 1 }}>{kpisPerdido.count}</span>
@@ -1551,7 +1577,7 @@ export default function OperacoesPage() {
       {statusOpcoes.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: '#6080a0', letterSpacing: '0.5px', textTransform: 'uppercase', marginRight: 4 }}>Status:</span>
-          {statusOpcoes.filter(s => s.ativo && s.nome !== 'Perdido' && s.nome !== 'Recusado').map((s) => {
+          {statusOpcoes.filter(s => s.ativo && s.nome !== 'Perdido' && s.nome !== 'Recusado' && s.nome !== 'Emitido').map((s) => {
             const stats = kpisPerStatus[s.nome]
             const sel = filtroStatus.includes(s.nome)
             const count = s.nome === 'Emitido' ? kpisEmitido.count : (stats?.count ?? 0)
@@ -1922,7 +1948,7 @@ export default function OperacoesPage() {
                     <AnexosSection entidadeTipo="operacao" entidadeId={editando.id} tomadorId={editando.tomador_id ?? undefined} />
                   </>
                 )}
-                {editando && (editando.comite_notas || editando.comite_variacao_taxa != null || editando.comite_variacao_lmg != null || (comentariosComite[editando.id]?.length ?? 0) > 0) && (
+                {editando && (editando.comite_notas || (comentariosComite[editando.id]?.length ?? 0) > 0) && (
                   <>
                     <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
                     <div style={{ background: '#f0f6ff', borderRadius: 10, padding: '14px 16px', border: '1px solid #d0e4f5' }}>
@@ -1933,27 +1959,6 @@ export default function OperacoesPage() {
                         <div style={{ marginBottom: 10 }}>
                           <div style={{ fontSize: 11, color: '#6080a0', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 3 }}>Notas do Analista</div>
                           <div style={{ fontSize: 13, color: '#1a2a3a', background: 'white', borderRadius: 6, padding: '8px 10px', border: '1px solid #e0ecf0', lineHeight: 1.5 }}>{editando.comite_notas}</div>
-                        </div>
-                      )}
-                      {(editando.comite_variacao_taxa != null || editando.comite_variacao_lmg != null) && (
-                        <div style={{ marginBottom: 10 }}>
-                          <div style={{ fontSize: 11, color: '#6080a0', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 5 }}>Variações</div>
-                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {editando.comite_variacao_taxa != null && (
-                              <div style={{ background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e0ecf0', fontSize: 12 }}>
-                                <span style={{ color: '#6080a0' }}>Taxa: </span>
-                                <strong>{editando.comite_variacao_taxa > 0 ? '+' : ''}{editando.comite_variacao_taxa}%</strong>
-                                {editando.comite_variacao_taxa_just && <span style={{ color: '#6080a0', marginLeft: 6 }}>— {editando.comite_variacao_taxa_just}</span>}
-                              </div>
-                            )}
-                            {editando.comite_variacao_lmg != null && (
-                              <div style={{ background: 'white', borderRadius: 6, padding: '6px 10px', border: '1px solid #e0ecf0', fontSize: 12 }}>
-                                <span style={{ color: '#6080a0' }}>LMG: </span>
-                                <strong>{editando.comite_variacao_lmg > 0 ? '+' : ''}{fmtMoeda(editando.comite_variacao_lmg)}</strong>
-                                {editando.comite_variacao_lmg_just && <span style={{ color: '#6080a0', marginLeft: 6 }}>— {editando.comite_variacao_lmg_just}</span>}
-                              </div>
-                            )}
-                          </div>
                         </div>
                       )}
                       {(comentariosComite[editando.id]?.length ?? 0) > 0 && (
@@ -2591,16 +2596,19 @@ export default function OperacoesPage() {
                     void _taxaMinPeriodo; void _taxaMinAnual
                     const comissaoPct = comissaoInputs[op.id] ?? 25
                     const opL = op.lmg ?? 0; const opP = op.premio_previsto ?? 0; const opT = op.taxa ?? 0; const opV = op.vigencia_anos ?? 1
-                    const nBL = bookLmgTotal + opL; const nBP = bookPremioTotal + opP
+                    const taxaSim = taxaSimInputs[op.id] ?? opT
+                    const simPremio = opL * (taxaSim / 100) * opV
+                    const simulando = Math.abs(taxaSim - opT) > 1e-9
+                    const nBL = bookLmgTotal + opL; const nBP = bookPremioTotal + simPremio
                     const nBT = nBL > 0 ? (bookAtualOps.reduce((s,o) => s + (o.taxa ?? 0) * (o.lmg ?? 0), 0) + opT * opL) / nBL : 0
                     const mM = metaMensal?.premio_meta ?? 0; const mA = metaAnual?.premio_meta ?? 0
                     const pMAt = mM > 0 ? premioRealizadoMes / mM * 100 : 0
-                    const pMNv = mM > 0 ? (premioRealizadoMes + opP) / mM * 100 : 0
-                    const cMes = mM > 0 ? opP / mM * 100 : 0
-                    const gapM = mM > 0 ? Math.max(0, mM - premioRealizadoMes - opP) : 0
+                    const pMNv = mM > 0 ? (premioRealizadoMes + simPremio) / mM * 100 : 0
+                    const cMes = mM > 0 ? simPremio / mM * 100 : 0
+                    const gapM = mM > 0 ? Math.max(0, mM - premioRealizadoMes - simPremio) : 0
                     const pMed = bookAtualOps.length > 0 && bookPremioTotal > 0 ? bookPremioTotal / bookAtualOps.length : 0
                     const nOps = pMed > 0 && gapM > 0 ? Math.ceil(gapM / pMed) : 0
-                    const pANv = mA > 0 ? (premioRealizadoAno + opP) / mA * 100 : 0
+                    const pANv = mA > 0 ? (premioRealizadoAno + simPremio) / mA * 100 : 0
                     return (
                       <div key={op.id} style={{ borderRadius: 12, border: `1.5px solid ${isExp ? '#3070c8' : '#c5d5e8'}`, background: 'white', overflow: 'hidden', boxShadow: isExp ? '0 2px 12px rgba(48,112,200,0.12)' : 'none' }}>
                         {/* Header colapsado */}
@@ -2634,7 +2642,7 @@ export default function OperacoesPage() {
                           <div style={{ borderTop: '1.5px solid #e0ecff' }}>
                             {/* Abas */}
                             <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #e0ecff', overflowX: 'auto' }}>
-                              {['📐 Cálculo','📊 Resultado','📈 Portfólio','💬 Deliberação','⚡ Dados'].map((lb, idx) => (
+                              {['📐 Cálculo','📊 Resultado','💬 Deliberação','⚡ Dados'].map((lb, idx) => (
                                 <button key={idx} onClick={() => setAbaSimulador(prev => ({ ...prev, [op.id]: idx }))}
                                   style={{ padding: '10px 16px', border: 'none', background: 'transparent', borderBottom: abaAt === idx ? '2.5px solid #3070c8' : '2.5px solid transparent', color: abaAt === idx ? '#1a4080' : '#6080a0', fontWeight: abaAt === idx ? 700 : 400, cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>
                                   {lb}
@@ -2659,65 +2667,87 @@ export default function OperacoesPage() {
                                       <div>Estado: {op.estado ?? '—'} · Entrada: {op.data_entrada ? fmtData(op.data_entrada) : '—'}</div>
                                     </div>
                                   </div>
-                                  {/* Painel: Comissão & Taxa Líquida */}
+                                  {/* Painel: Simulação de Cenário */}
                                   {(() => {
-                                    const premioValor = opP
-                                    const comissaoValor = premioValor * (comissaoPct / 100)
-                                    const liquidoFAM = premioValor - comissaoValor
-                                    const taxaLiquida = opT * (1 - comissaoPct / 100)
+                                    const comissaoSim = simPremio * (comissaoPct / 100)
+                                    const liquidoFAMSim = simPremio - comissaoSim
+                                    const taxaLiquidaSim = taxaSim * (1 - comissaoPct / 100)
+                                    const deltaPremio = simPremio - opP
                                     return (
-                                      <div style={{ flex: '1 1 260px', background: '#f8fafc', borderRadius: 10, padding: '18px 22px', border: '1.5px solid #d0e4f5' }}>
-                                        {/* Título + Input */}
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-                                          <div style={{ fontWeight: 700, fontSize: 13, color: '#1a2a3a', letterSpacing: 0.5 }}>COMISSÃO DA CORRETORA</div>
-                                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                            <input
-                                              type="number" min="0" max="50" step="0.5"
-                                              value={comissaoPct}
-                                              onChange={(e) => setComissaoInputs(prev => ({ ...prev, [op.id]: parseFloat(e.target.value) || 0 }))}
-                                              style={{ width: 60, padding: '4px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 13, fontWeight: 700, color: '#1a4080', textAlign: 'right', background: 'white' }}
-                                            />
-                                            <span style={{ fontSize: 13, color: '#1a4080', fontWeight: 700 }}>%</span>
+                                      <div style={{ flex: '1 1 260px', background: '#f8fafc', borderRadius: 10, padding: '18px 22px', border: simulando ? '1.5px solid #e8b84b' : '1.5px solid #d0e4f5' }}>
+                                        <div style={{ fontWeight: 700, fontSize: 13, color: '#1a2a3a', letterSpacing: 0.5, marginBottom: 14 }}>SIMULAÇÃO DE CENÁRIO</div>
+                                        {/* Inputs: Taxa + Comissão */}
+                                        <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+                                          <div style={{ flex: 1 }}>
+                                            <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 4, fontWeight: 600 }}>Taxa (%)</label>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                              <input
+                                                type="number" step="any" min="0"
+                                                value={taxaSim}
+                                                onChange={(e) => setTaxaSimInputs(prev => ({ ...prev, [op.id]: parseFloat(e.target.value) || 0 }))}
+                                                style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: simulando ? '1.5px solid #e8b84b' : '1.5px solid #c5d5e8', fontSize: 13, fontWeight: 700, color: '#1a4080', background: 'white', boxSizing: 'border-box' as const }}
+                                              />
+                                            </div>
+                                          </div>
+                                          <div style={{ flex: 1 }}>
+                                            <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 4, fontWeight: 600 }}>Comissão (%)</label>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                              <input
+                                                type="number" min="0" max="50" step="0.5"
+                                                value={comissaoPct}
+                                                onChange={(e) => setComissaoInputs(prev => ({ ...prev, [op.id]: parseFloat(e.target.value) || 0 }))}
+                                                style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 13, fontWeight: 700, color: '#1a4080', background: 'white', boxSizing: 'border-box' as const }}
+                                              />
+                                            </div>
                                           </div>
                                         </div>
-                                        {/* Demonstrativo */}
-                                        {premioValor > 0 ? (
+                                        {/* Resultados */}
+                                        {opL > 0 ? (
                                           <>
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
-                                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                <span style={{ color: '#6080a0' }}>Prêmio Bruto</span>
-                                                <span style={{ fontWeight: 600, color: '#1a2a3a' }}>{fmtMoeda(premioValor)}</span>
+                                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span style={{ color: '#6080a0' }}>Prêmio Simulado</span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                  <span style={{ fontWeight: 600, color: '#1a2a3a' }}>{fmtMoeda(simPremio)}</span>
+                                                  {simulando && deltaPremio !== 0 && (
+                                                    <span style={{ fontSize: 11, fontWeight: 700, color: deltaPremio > 0 ? '#27a96c' : '#d64545', background: deltaPremio > 0 ? '#d4f4e4' : '#fbeaea', borderRadius: 4, padding: '1px 5px' }}>
+                                                      {deltaPremio > 0 ? '+' : ''}{fmtMoeda(deltaPremio)}
+                                                    </span>
+                                                  )}
+                                                </div>
                                               </div>
                                               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                                 <span style={{ color: '#d07830' }}>Comissão ({comissaoPct}%)</span>
-                                                <span style={{ fontWeight: 600, color: '#d07830' }}>− {fmtMoeda(comissaoValor)}</span>
+                                                <span style={{ fontWeight: 600, color: '#d07830' }}>− {fmtMoeda(comissaoSim)}</span>
                                               </div>
                                               <div style={{ borderTop: '1.5px solid #d0e4f5', marginTop: 2, paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
                                                 <span style={{ color: '#1a2a3a', fontWeight: 700 }}>Prêmio Líquido FAM</span>
-                                                <span style={{ fontWeight: 900, color: '#27a96c', fontSize: 14 }}>{fmtMoeda(liquidoFAM)}</span>
+                                                <span style={{ fontWeight: 900, color: '#27a96c', fontSize: 14 }}>{fmtMoeda(liquidoFAMSim)}</span>
                                               </div>
                                             </div>
-                                            {/* Taxas */}
-                                            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 7 }}>
-                                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                                                <span style={{ color: '#6080a0' }}>Taxa Cobrada</span>
-                                                <span style={{ fontWeight: 700, color: '#1a4080' }}>{opT > 0 ? fmtPercent(opT / 100) : '—'}</span>
+                                            <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 10, borderTop: '1px dashed #d0e4f5', fontSize: 13 }}>
+                                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                <span style={{ color: '#6080a0' }}>Taxa Base</span>
+                                                <span style={{ fontWeight: 600, color: '#6080a0' }}>{opT > 0 ? fmtPercent(opT / 100) : '—'}</span>
                                               </div>
-                                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                <span style={{ color: simulando ? '#e8b84b' : '#6080a0' }}>Taxa Simulada</span>
+                                                <span style={{ fontWeight: 700, color: simulando ? '#d07830' : '#1a4080' }}>{taxaSim > 0 ? fmtPercent(taxaSim / 100) : '—'}</span>
+                                              </div>
+                                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                                 <span style={{ color: '#6080a0' }}>Taxa Líquida FAM</span>
-                                                <span style={{ fontWeight: 800, color: '#1a6a40', fontSize: 14 }}>{opT > 0 ? fmtPercent(taxaLiquida / 100) : '—'}</span>
+                                                <span style={{ fontWeight: 800, color: '#1a6a40', fontSize: 14 }}>{taxaSim > 0 ? fmtPercent(taxaLiquidaSim / 100) : '—'}</span>
                                               </div>
                                             </div>
-                                            {/* Badge explicativo */}
-                                            {opT > 0 && (
-                                              <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 8, background: '#eaf4ff', border: '1.5px solid #b8d8f0', fontSize: 11, color: '#2a4a70', lineHeight: 1.6 }}>
-                                                Se o tomador pagasse a comissão diretamente à corretora, a FAM receberia à taxa efetiva de <strong>{fmtPercent(taxaLiquida / 100)}</strong>.
+                                            {simulando && (
+                                              <div style={{ marginTop: 12, padding: '8px 10px', borderRadius: 7, background: '#fffbea', border: '1.5px solid #e8b84b', fontSize: 11, color: '#7a5a00', lineHeight: 1.6 }}>
+                                                ⚡ Simulação ativa — os resultados na aba <strong>Resultado</strong> refletem esta taxa.
                                               </div>
                                             )}
                                           </>
                                         ) : (
                                           <div style={{ color: '#9ab0c8', fontSize: 13, textAlign: 'center', paddingTop: 20 }}>
-                                            Prêmio não informado
+                                            LMG não informado
                                           </div>
                                         )}
                                       </div>
@@ -2730,14 +2760,19 @@ export default function OperacoesPage() {
                                 <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
                                   <div style={{ flex: '1 1 320px', background: '#0d2040', borderRadius: 10, padding: '18px 22px', fontFamily: 'monospace', fontSize: 13, lineHeight: 2 }}>
                                     <div style={{ color: '#e8b84b', fontWeight: 700, marginBottom: 10, fontFamily: 'sans-serif', letterSpacing: 1 }}>ANÁLISE DE RESULTADO — META MENSAL</div>
+                                    {simulando && (
+                                      <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 6, background: 'rgba(232,184,75,0.15)', border: '1px solid rgba(232,184,75,0.4)', fontSize: 11, color: '#e8b84b', fontFamily: 'sans-serif', fontWeight: 700 }}>
+                                        ⚡ Simulando taxa {fmtPercent(taxaSim / 100)} — prêmio {fmtMoeda(simPremio)}
+                                      </div>
+                                    )}
                                     {mM === 0 ? <div style={{ color: '#6080a0' }}>Configure a Meta Mensal acima.</div> : (
                                       <>
                                         <div style={{ color: 'rgba(180,200,220,0.7)' }}>Meta Mensal .... <span style={{ color: 'white', fontWeight: 700 }}>{fmtMoeda(mM)}</span> <span style={{ color: '#6080a0' }}>100%</span></div>
                                         <div style={{ color: 'rgba(180,200,220,0.7)' }}>Realizado Atual  <span style={{ color: 'white' }}>{fmtMoeda(premioRealizadoMes)}</span> <span style={{ color: pMAt >= 80 ? '#27a96c' : '#e8b84b' }}>{pMAt.toFixed(1)}%</span></div>
                                         <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 4, height: 7, margin: '2px 0 4px' }}><div style={{ height: '100%', borderRadius: 4, background: pMAt >= 80 ? '#27a96c' : pMAt >= 50 ? '#e8b84b' : '#d64545', width: `${Math.min(100, pMAt)}%` }} /></div>
-                                        <div style={{ color: '#e8b84b', fontWeight: 700 }}>+ Esta Operação  +{fmtMoeda(opP)} <span style={{ fontSize: 12 }}>+{cMes.toFixed(1)}%</span></div>
+                                        <div style={{ color: '#e8b84b', fontWeight: 700 }}>+ Esta Operação  +{fmtMoeda(simPremio)} <span style={{ fontSize: 12 }}>+{cMes.toFixed(1)}%</span></div>
                                         <div style={{ borderTop: '1px solid rgba(56,120,200,0.3)', paddingTop: 6, marginTop: 2 }}>
-                                          <div style={{ color: 'rgba(180,200,220,0.8)' }}>Novo Patamar ... <span style={{ color: '#27a96c', fontWeight: 900 }}>{fmtMoeda(premioRealizadoMes + opP)}</span> <span style={{ color: '#27a96c' }}>{pMNv.toFixed(1)}%</span></div>
+                                          <div style={{ color: 'rgba(180,200,220,0.8)' }}>Novo Patamar ... <span style={{ color: '#27a96c', fontWeight: 900 }}>{fmtMoeda(premioRealizadoMes + simPremio)}</span> <span style={{ color: '#27a96c' }}>{pMNv.toFixed(1)}%</span></div>
                                           <div style={{ background: 'rgba(39,169,108,0.3)', borderRadius: 4, height: 7, margin: '3px 0' }}><div style={{ height: '100%', borderRadius: 4, background: '#27a96c', width: `${Math.min(100, pMNv)}%` }} /></div>
                                           {gapM > 0 && <div style={{ color: '#d64545', fontWeight: 700 }}>Gap Restante ... {fmtMoeda(gapM)}</div>}
                                           {nOps > 0 && pMed > 0 && <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 3 }}>~{nOps} ops no valor médio de {fmtMoeda(pMed)}</div>}
@@ -2752,64 +2787,16 @@ export default function OperacoesPage() {
                                         <div>Meta Ano: <strong>{fmtMoeda(mA)}</strong></div>
                                         <div>Realizado: <span style={{ color: '#1a4080' }}>{fmtMoeda(premioRealizadoAno)}</span> ({(premioRealizadoAno / mA * 100).toFixed(1)}%)</div>
                                         <div style={{ background: '#e0ecff', borderRadius: 4, height: 7, margin: '6px 0' }}><div style={{ height: '100%', borderRadius: 4, background: '#3070c8', width: `${Math.min(100, premioRealizadoAno / mA * 100)}%` }} /></div>
-                                        <div>+ Esta Op: <span style={{ color: '#e8b84b', fontWeight: 700 }}>+{fmtMoeda(opP)}</span></div>
-                                        <div style={{ borderTop: '1px dashed #d0e4f5', paddingTop: 8, marginTop: 8 }}>Novo: <strong style={{ color: '#27a96c' }}>{fmtMoeda(premioRealizadoAno + opP)}</strong> ({pANv.toFixed(1)}%)</div>
+                                        <div>+ Esta Op: <span style={{ color: '#e8b84b', fontWeight: 700 }}>+{fmtMoeda(simPremio)}</span></div>
+                                        <div style={{ borderTop: '1px dashed #d0e4f5', paddingTop: 8, marginTop: 8 }}>Novo: <strong style={{ color: '#27a96c' }}>{fmtMoeda(premioRealizadoAno + simPremio)}</strong> ({pANv.toFixed(1)}%)</div>
                                         <div style={{ background: '#d4f4e4', borderRadius: 4, height: 7, marginTop: 6 }}><div style={{ height: '100%', borderRadius: 4, background: '#27a96c', width: `${Math.min(100, pANv)}%` }} /></div>
                                       </>
                                     )}
                                   </div>
                                 </div>
                               )}
-                              {/* ABA 2: Portfólio */}
-                              {abaAt === 2 && (
-                                <div>
-                                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1a2a3a', marginBottom: 12, letterSpacing: 0.5 }}>SIMULAÇÃO DE IMPACTO — SE APROVADA</div>
-                                  <div style={{ background: 'white', borderRadius: 10, overflow: 'hidden', border: '1.5px solid #d0e4f5', marginBottom: 16 }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                                      <thead><tr style={{ background: '#0d2040' }}>
-                                        {['Indicador','Atual','Após Aprovação','Variação'].map(h => <th key={h} style={{ padding: '9px 14px', textAlign: h === 'Indicador' ? 'left' : 'right', color: 'rgba(180,200,220,0.9)', fontWeight: 600 }}>{h}</th>)}
-                                      </tr></thead>
-                                      <tbody>
-                                        {[
-                                          { l: 'LMG Total em Carteira', a: fmtMoeda(bookLmgTotal), d: fmtMoeda(nBL), delta: bookLmgTotal > 0 ? `+${(opL / bookLmgTotal * 100).toFixed(2)}%` : '—', up: true },
-                                          { l: 'Prêmio Total em Carteira', a: fmtMoeda(bookPremioTotal), d: fmtMoeda(nBP), delta: bookPremioTotal > 0 ? `+${(opP / bookPremioTotal * 100).toFixed(2)}%` : '—', up: true },
-                                          { l: 'Taxa Média Ponderada', a: fmtPercent(bookTmpTotal / 100), d: fmtPercent(nBT / 100), delta: `${nBT >= bookTmpTotal ? '+' : ''}${fmtPercent(Math.abs(nBT - bookTmpTotal) / 100)}`, up: nBT >= bookTmpTotal },
-                                          { l: 'Operações no Book', a: `${bookAtualOps.length}`, d: `${bookAtualOps.length + 1}`, delta: '+1', up: true },
-                                        ].map((row, i) => (
-                                          <tr key={i} style={{ borderBottom: '1px solid #e0ecff', background: i % 2 === 0 ? 'white' : '#f8fafc' }}>
-                                            <td style={{ padding: '9px 14px', fontWeight: 600, color: '#1a2a3a' }}>{row.l}</td>
-                                            <td style={{ padding: '9px 14px', textAlign: 'right', color: '#6080a0' }}>{row.a}</td>
-                                            <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, color: '#1a4080' }}>{row.d}</td>
-                                            <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, color: row.up ? '#27a96c' : '#d64545' }}>{row.delta} {row.up ? '↑' : '↓'}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                  <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 10 }}>CONCENTRAÇÃO DE MODALIDADE (% Prêmio)</div>
-                                  {exposicaoPorModalidade.map(m => {
-                                    const add = op.modalidade === m.modalidade ? opP : 0
-                                    const nPct = nBP > 0 ? (m.premio + add) / nBP * 100 : 0
-                                    const dlt = nPct - (bookPremioTotal > 0 ? m.premio / bookPremioTotal * 100 : 0)
-                                    return (
-                                      <div key={m.modalidade} style={{ marginBottom: 9 }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: 12 }}>
-                                          <span style={{ fontWeight: 600, color: '#1a2a3a' }}>{m.modalidade}</span>
-                                          <span style={{ fontWeight: 700, color: dlt > 2 ? '#d07830' : '#1a4080' }}>
-                                            {nPct.toFixed(1)}% {dlt !== 0 && <span style={{ fontSize: 11, color: dlt > 0 ? '#e8b84b' : '#6080a0' }}>({dlt > 0 ? '+' : ''}{dlt.toFixed(1)}%)</span>}
-                                          </span>
-                                        </div>
-                                        <div style={{ background: '#e0ecff', borderRadius: 5, height: 11, position: 'relative', overflow: 'hidden' }}>
-                                          <div style={{ position: 'absolute', height: '100%', background: '#3070c8', opacity: 0.3, width: `${Math.min(100, m.pctPremio)}%` }} />
-                                          <div style={{ position: 'absolute', height: '100%', borderRadius: 5, background: op.modalidade === m.modalidade ? '#27a96c' : '#3070c8', width: `${Math.min(100, nPct)}%`, transition: 'width 0.3s' }} />
-                                        </div>
-                                      </div>
-                                    )
-                                  })}
-                                </div>
-                              )}
-                              {/* ABA 3: Deliberação */}
-                              {abaAt === 3 && (() => {
+                              {/* ABA 2: Deliberação */}
+                              {abaAt === 2 && (() => {
                                 const coments = comentariosComite[op.id] ?? []
                                 const nf = novoComentarioForm[op.id] ?? { autor: '', comentario: '', tipo: 'geral' }
                                 const tCor: Record<string,string> = { restricao: '#d64545', condicao: '#d07830', aprovacao: '#27a96c', negacao: '#888', geral: '#3070c8' }
@@ -2820,39 +2807,6 @@ export default function OperacoesPage() {
                                       <textarea placeholder="Análise técnica para o comitê..." defaultValue={op.comite_notas ?? ''}
                                         onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_notas: e.target.value }).eq('id', op.id) }}
                                         style={{ width: '100%', minHeight: 96, padding: '9px 11px', borderRadius: 8, border: '1.5px solid #c5d5e8', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' as const }} />
-                                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', margin: '12px 0 7px', letterSpacing: 0.5 }}>CAMPOS DE VARIAÇÃO / CONDIÇÕES</div>
-                                      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                                        <div style={{ width: 120 }}>
-                                          <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Variação Taxa (%)</label>
-                                          <input type="number" step="any" placeholder="ex: +0.25"
-                                            defaultValue={op.comite_variacao_taxa ?? ''}
-                                            onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_variacao_taxa: e.target.value ? parseFloat(e.target.value) : null }).eq('id', op.id) }}
-                                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
-                                        </div>
-                                        <div style={{ flex: 1 }}>
-                                          <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Justificativa</label>
-                                          <input type="text" placeholder="ex: Mitigar concentração"
-                                            defaultValue={op.comite_variacao_taxa_just ?? ''}
-                                            onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_variacao_taxa_just: e.target.value || null }).eq('id', op.id) }}
-                                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
-                                        </div>
-                                      </div>
-                                      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                                        <div style={{ width: 120 }}>
-                                          <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Variação LMG (R$)</label>
-                                          <input type="number" step="any" placeholder="ex: -500000"
-                                            defaultValue={op.comite_variacao_lmg ?? ''}
-                                            onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_variacao_lmg: e.target.value ? parseFloat(e.target.value) : null }).eq('id', op.id) }}
-                                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
-                                        </div>
-                                        <div style={{ flex: 1 }}>
-                                          <label style={{ fontSize: 11, color: '#6080a0', display: 'block', marginBottom: 2 }}>Justificativa</label>
-                                          <input type="text" placeholder="ex: Mitigar concentração"
-                                            defaultValue={op.comite_variacao_lmg_just ?? ''}
-                                            onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_variacao_lmg_just: e.target.value || null }).eq('id', op.id) }}
-                                            style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 12, boxSizing: 'border-box' as const }} />
-                                        </div>
-                                      </div>
                                     </div>
                                     <div style={{ flex: '1 1 260px' }}>
                                       <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 7, letterSpacing: 0.5 }}>COMENTÁRIOS DO COMITÊ</div>
@@ -2890,15 +2844,21 @@ export default function OperacoesPage() {
                                   </div>
                                 )
                               })()}
-                              {/* ABA 4: Dados */}
-                              {abaAt === 4 && (
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(185px,1fr))', gap: 10 }}>
-                                  {[['Tomador', op.tomador?.razao_social ?? '—'],['CNPJ', op.tomador?.cnpj ? maskCNPJ(op.tomador.cnpj) : '—'],['Corretora', op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'],['Produto', op.produto?.nome ?? '—'],['Modalidade', op.modalidade ?? '—'],['Estado', op.estado ?? '—'],['LMG', opL > 0 ? fmtMoeda(opL) : '—'],['Taxa', opT > 0 ? fmtPercent(opT / 100) : '—'],['Vigência', `${opV} anos`],['Prêmio Previsto', opP > 0 ? fmtMoeda(opP) : '—'],['Temperatura', op.temperatura ?? '—'],['Data Entrada', op.data_entrada ? fmtData(op.data_entrada) : '—'],['Analista', op.comite_analista ?? '—'],['Observação', op.observacao ?? '—']].map(([lb, vl]) => (
-                                    <div key={lb} style={{ background: '#f8fafc', borderRadius: 8, padding: '9px 12px', border: '1px solid #e0ecff' }}>
-                                      <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginBottom: 3 }}>{lb}</div>
-                                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1a2a3a', wordBreak: 'break-word' as const }}>{vl}</div>
-                                    </div>
-                                  ))}
+                              {/* ABA 3: Dados */}
+                              {abaAt === 3 && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(185px,1fr))', gap: 10 }}>
+                                    {[['Tomador', op.tomador?.razao_social ?? '—'],['CNPJ', op.tomador?.cnpj ? maskCNPJ(op.tomador.cnpj) : '—'],['Corretora', op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'],['Produto', op.produto?.nome ?? '—'],['Modalidade', op.modalidade ?? '—'],['Estado', op.estado ?? '—'],['LMG', opL > 0 ? fmtMoeda(opL) : '—'],['Taxa', opT > 0 ? fmtPercent(opT / 100) : '—'],['Vigência', `${opV} anos`],['Prêmio Previsto', opP > 0 ? fmtMoeda(opP) : '—'],['Temperatura', op.temperatura ?? '—'],['Data Entrada', op.data_entrada ? fmtData(op.data_entrada) : '—'],['Analista', op.comite_analista ?? '—']].map(([lb, vl]) => (
+                                      <div key={lb} style={{ background: '#f8fafc', borderRadius: 8, padding: '9px 12px', border: '1px solid #e0ecff' }}>
+                                        <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginBottom: 3 }}>{lb}</div>
+                                        <div style={{ fontSize: 13, fontWeight: 600, color: '#1a2a3a', wordBreak: 'break-word' as const }}>{vl}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div style={{ background: '#f8fafc', borderRadius: 8, padding: '12px 14px', border: '1px solid #e0ecff' }}>
+                                    <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginBottom: 6 }}>Observação</div>
+                                    <div style={{ fontSize: 13, fontWeight: 500, color: '#1a2a3a', lineHeight: 1.6 }}>{op.observacao || '—'}</div>
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -2906,8 +2866,6 @@ export default function OperacoesPage() {
                             <div style={{ borderTop: '1.5px solid #e0ecff', padding: '12px 22px', background: '#f8fafc', display: 'flex', gap: 9, flexWrap: 'wrap', alignItems: 'center' }}>
                               <span style={{ fontSize: 11, fontWeight: 700, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginRight: 4 }}>Decisão:</span>
                               <button onClick={() => mudarStatus(op, 'Aprovado')} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#d4f4e4', color: '#1a6a40', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>✅ Aprovar</button>
-                              <button onClick={async () => { const sb = createClient(); await sb.from('operacoes').update({ comite_decisao: 'Aprovar com Restrições' }).eq('id', op.id); mudarStatus(op, 'Aprovado') }}
-                                style={{ padding: '7px 16px', borderRadius: 8, border: '1.5px solid #27a96c', background: 'white', color: '#27a96c', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>✅ Aprovar c/ Restrições</button>
                               <button onClick={() => mudarStatus(op, 'Recusado')} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#fbeaea', color: '#a02020', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>❌ Negar</button>
                               <button onClick={() => mudarStatus(op, 'Em Análise')} style={{ padding: '7px 16px', borderRadius: 8, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>↩ Devolver</button>
                             </div>
@@ -3220,6 +3178,36 @@ export default function OperacoesPage() {
       )}
 
       {/* ── Modal Motivo (Perdido / Recusado) ── */}
+      {modalEmissao && (
+        <div className="modal-overlay" style={{ zIndex: 1300 }} onClick={(e) => { if (e.target === e.currentTarget) setModalEmissao(null) }}>
+          <div className="modal-box" style={{ maxWidth: 400 }}>
+            <div className="modal-header">
+              <div className="modal-title">✅ Data de Emissão</div>
+              <button onClick={() => setModalEmissao(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
+            </div>
+            <p style={{ fontSize: 13, color: '#6080a0', margin: '0 0 14px' }}>
+              Informe a data em que esta operação foi efetivamente emitida. Essa data define em qual mês os KPIs serão contabilizados.
+            </p>
+            <input
+              type="date"
+              autoFocus
+              value={modalEmissao.dataEmissao}
+              onChange={(e) => setModalEmissao(prev => prev ? { ...prev, dataEmissao: e.target.value } : null)}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid #c5d5e8', fontSize: 14, fontFamily: "'Calibri','Segoe UI',sans-serif", boxSizing: 'border-box', outline: 'none', color: '#1a2a3a' }}
+            />
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn-secondary" onClick={() => setModalEmissao(null)}>Cancelar</button>
+              <button
+                onClick={() => confirmarEmissao(modalEmissao.dataEmissao)}
+                disabled={!modalEmissao.dataEmissao}
+                style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: '#27a96c', color: 'white', fontWeight: 700, cursor: modalEmissao.dataEmissao ? 'pointer' : 'not-allowed', opacity: modalEmissao.dataEmissao ? 1 : 0.5, fontSize: 14 }}>
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {motivoModal && (
         <div className="modal-overlay" style={{ zIndex: 1200 }} onClick={(e) => { if (e.target === e.currentTarget) { setMotivoModal(null); setMotivoInput('') } }}>
           <div className="modal-box" style={{ maxWidth: 440 }}>

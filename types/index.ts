@@ -126,6 +126,7 @@ export interface Operacao {
   status: string
   ativo: boolean
   data_entrada: string | null
+  data_emissao: string | null
   comite_notas: string | null
   comite_analista: string | null
   comite_data: string | null
