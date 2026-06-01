@@ -35,11 +35,11 @@ const TABS: Tab[] = [
 const SUBSCRICAO_ITEMS: { label: string; href: string; icon: string; disabled?: boolean }[] = []
 
 const PERFORMANCE_ITEMS = [
-  { label: 'Performance', href: '/performance', icon: '📊' },
+  { label: 'Performance', href: '/performance', icon: '📊', disabled: true },
 ]
 
 const CONFIG_ITEMS = [
-  { label: 'Skills de IA', href: '/configuracoes/skills',  icon: '🧠', proprietarioOnly: false, emailOnly: 'marcodragone@gmail.com' },
+  { label: 'Skills de IA', href: '/configuracoes/skills',  icon: '🧠', proprietarioOnly: false, emailOnly: 'marcodragone@gmail.com', disabled: true },
   { label: 'Sistema',      href: '/configuracoes/sistema', icon: '⚙️', proprietarioOnly: true },
 ]
 
