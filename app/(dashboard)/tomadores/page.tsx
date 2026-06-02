@@ -109,6 +109,7 @@ export default function TomadoresPage() {
 
   // ── Permissão proprietário ──
   const [isProprietario, setIsProprietario] = useState(false)
+  const [usuarioInfo, setUsuarioInfo] = useState<{ authId: string; nome: string | null; email: string | null } | null>(null)
   const [confirmExcluirTomador, setConfirmExcluirTomador] = useState<Tomador | null>(null)
   const [excluindoTomador, setExcluindoTomador] = useState(false)
 
@@ -153,8 +154,11 @@ export default function TomadoresPage() {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
-      supabase.from('usuarios').select('proprietario').eq('auth_id', user.id).single()
-        .then(({ data }) => setIsProprietario(data?.proprietario ?? false))
+      supabase.from('usuarios').select('proprietario, nome, email').eq('auth_id', user.id).single()
+        .then(({ data }) => {
+          setIsProprietario(data?.proprietario ?? false)
+          setUsuarioInfo({ authId: user.id, nome: data?.nome ?? null, email: data?.email ?? null })
+        })
     })
   }, [])
 
@@ -218,6 +222,16 @@ export default function TomadoresPage() {
       setMensagem({ tipo: 'erro', texto: 'Erro ao excluir: ' + error.message })
       return
     }
+    await supabase.from('audit_log').insert({
+      tabela: 'tomadores',
+      acao: 'exclusao',
+      registro_id: confirmExcluirTomador.id,
+      dados_antes: confirmExcluirTomador as unknown as Record<string, unknown>,
+      dados_depois: null,
+      usuario_auth_id: usuarioInfo?.authId ?? null,
+      usuario_nome: usuarioInfo?.nome ?? null,
+      usuario_email: usuarioInfo?.email ?? null,
+    })
     setConfirmExcluirTomador(null)
     fecharForm()
     await carregarTomadores()
@@ -268,6 +282,16 @@ export default function TomadoresPage() {
       if (editando) {
         const { error } = await supabase.from('tomadores').update(payload).eq('id', editando.id)
         if (error) throw new Error(error.message)
+        await supabase.from('audit_log').insert({
+          tabela: 'tomadores',
+          acao: 'alteracao',
+          registro_id: editando.id,
+          dados_antes: editando as unknown as Record<string, unknown>,
+          dados_depois: payload,
+          usuario_auth_id: usuarioInfo?.authId ?? null,
+          usuario_nome: usuarioInfo?.nome ?? null,
+          usuario_email: usuarioInfo?.email ?? null,
+        })
         setMensagem({ tipo: 'sucesso', texto: 'Tomador atualizado com sucesso.' })
       } else {
         const { error } = await supabase.from('tomadores').insert(payload)

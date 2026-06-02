@@ -132,8 +132,8 @@ export default function OperacoesPage() {
   const [msgStatus, setMsgStatus] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
   const [confirmExcluir, setConfirmExcluir] = useState<StatusFluxo | null>(null)
 
-  // ── Permissão proprietário ──
-  const [isProprietario, setIsProprietario] = useState(false)
+  // ── Usuário atual ──
+  const [usuarioInfo, setUsuarioInfo] = useState<{ authId: string; nome: string | null; email: string | null } | null>(null)
   const [confirmExcluirOp, setConfirmExcluirOp] = useState<Operacao | null>(null)
   const [excluindoOp, setExcluindoOp] = useState(false)
 
@@ -245,8 +245,8 @@ export default function OperacoesPage() {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
-      supabase.from('usuarios').select('proprietario').eq('auth_id', user.id).single()
-        .then(({ data }) => setIsProprietario(data?.proprietario ?? false))
+      supabase.from('usuarios').select('nome, email').eq('auth_id', user.id).single()
+        .then(({ data }) => setUsuarioInfo({ authId: user.id, nome: data?.nome ?? null, email: data?.email ?? null }))
     })
   }, [])
 
@@ -311,6 +311,16 @@ export default function OperacoesPage() {
       setMensagem({ tipo: 'erro', texto: 'Erro ao excluir: ' + error.message })
       return
     }
+    await supabase.from('audit_log').insert({
+      tabela: 'operacoes',
+      acao: 'exclusao',
+      registro_id: confirmExcluirOp.id,
+      dados_antes: confirmExcluirOp as unknown as Record<string, unknown>,
+      dados_depois: null,
+      usuario_auth_id: usuarioInfo?.authId ?? null,
+      usuario_nome: usuarioInfo?.nome ?? null,
+      usuario_email: usuarioInfo?.email ?? null,
+    })
     setConfirmExcluirOp(null)
     fecharForm()
     await carregarOperacoes()
@@ -445,6 +455,16 @@ export default function OperacoesPage() {
       if (editando) {
         const { error } = await supabase.from('operacoes').update(payload).eq('id', editando.id)
         if (error) throw new Error(error.message)
+        await supabase.from('audit_log').insert({
+          tabela: 'operacoes',
+          acao: 'alteracao',
+          registro_id: editando.id,
+          dados_antes: editando as unknown as Record<string, unknown>,
+          dados_depois: payload,
+          usuario_auth_id: usuarioInfo?.authId ?? null,
+          usuario_nome: usuarioInfo?.nome ?? null,
+          usuario_email: usuarioInfo?.email ?? null,
+        })
         if ((form.status === 'Emitido' || form.status === 'Fechado') && form.tomador_id) {
           await supabase.from('tomadores').update({ status: 'Fechado' }).eq('id', form.tomador_id)
         }
@@ -2002,7 +2022,7 @@ export default function OperacoesPage() {
                   </div>
 
                   <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                    {editando && isProprietario && (
+                    {editando && (
                       <button type="button" onClick={() => setConfirmExcluirOp(editando)}
                         style={{ marginRight: 'auto', background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 16px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
                         🗑 Excluir Operação
