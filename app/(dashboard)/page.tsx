@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useDateRange } from '@/lib/context/date-range-context'
-import { fmtData } from '@/lib/utils'
+import { fmtData, fmtPercent } from '@/lib/utils'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -45,6 +45,8 @@ interface RawOperacao {
   modalidade: string | null
   premio_previsto: number | null
   lmg: number | null
+  taxa: number | null
+  vigencia_anos: number | null
   status: string | null
   data_entrada: string | null
 }
@@ -145,7 +147,8 @@ export default function DashboardPage() {
           .select('id, status, corretora_id, corretora:corretoras(id,razao_social), limite_aprovado, data_entrada'),
         supabase
           .from('operacoes')
-          .select('id, corretora_id, corretora:corretoras(id,razao_social), modalidade, premio_previsto, lmg, status, data_entrada'),
+          .select('id, corretora_id, corretora:corretoras(id,razao_social), modalidade, premio_previsto, lmg, taxa, vigencia_anos, status, data_entrada')
+          .eq('ativo', true),
         supabase.from('corretoras').select('*', { count: 'exact', head: true }),
         supabase.from('status_fluxo_tomador').select('*').order('ordem'),
         supabase.from('status_fluxo_operacao').select('*').order('ordem'),
@@ -191,6 +194,9 @@ export default function DashboardPage() {
   const opsFechadas = operacoes.filter(o => o.status === 'Emitido')
   const premioFechado = opsFechadas.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
   const lmgFechado = opsFechadas.reduce((s, o) => s + (o.lmg ?? 0), 0)
+  const taxaMediaFechada = lmgFechado > 0
+    ? opsFechadas.reduce((s, o) => s + (o.taxa ?? 0) * (o.lmg ?? 0) * Math.min(o.vigencia_anos ?? 1, 1), 0) / lmgFechado
+    : 0
 
   const corretorasComTomadores = new Set(tomadores.map(t => t.corretora_id).filter(Boolean)).size
   const tomadoresAtivos = tomadores.filter(t => t.status !== 'Perdido' && t.status !== 'Recusado')
@@ -199,12 +205,9 @@ export default function DashboardPage() {
 
   const corretoresUnicos = new Set(operacoes.map(o => o.corretora_id).filter(Boolean)).size
   const lmgTotal = operacoes.reduce((s, o) => s + (o.lmg ?? 0), 0)
-  const lmgLiquido = operacoes
-    .filter(o => !['Recusado', 'Perdido'].includes(o.status ?? ''))
-    .reduce((s, o) => s + (o.lmg ?? 0), 0)
-  const premioTotal = operacoes
-    .filter(o => !['Recusado', 'Perdido'].includes(o.status ?? ''))
-    .reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
+  const opsPotencial = operacoes.filter(o => !['Emitido', 'Recusado', 'Perdido'].includes(o.status ?? ''))
+  const lmgLiquido = opsPotencial.reduce((s, o) => s + (o.lmg ?? 0), 0)
+  const premioTotal = opsPotencial.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
 
   // ── chart data ────────────────────────────────────────────────────────────
 
@@ -385,7 +388,7 @@ export default function DashboardPage() {
           <div style={{ fontSize: 11, fontWeight: 700, color: '#e8b84b', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 18 }}>
             🏆 Operações Fechadas — Destaque
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr', gap: 32, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 1fr', gap: 32, alignItems: 'start' }}>
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>QTD. Fechadas</div>
               <div style={{ fontSize: 40, fontWeight: 900, color: 'white', lineHeight: 1 }}>{opsFechadas.length}</div>
@@ -398,6 +401,10 @@ export default function DashboardPage() {
               <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>LMG Total Fechado</div>
               <div style={{ fontSize: 28, fontWeight: 800, color: '#6ab0e8', lineHeight: 1 }}>{fmtBRL(lmgFechado)}</div>
             </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>Taxa Méd. Ponderada</div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: '#e8b84b', lineHeight: 1 }}>{fmtPercent(taxaMediaFechada / 100)}</div>
+            </div>
           </div>
         </div>
       )}
@@ -409,12 +416,11 @@ export default function DashboardPage() {
             <span style={dot('#2255a4')} />
             Tomadores — Resumo
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
             {[
               { label: 'Corretoras', value: fmtNum(totalCorretoras), sub: 'Total recebidas', accent: '#2255a4', gold: false },
               { label: 'Corretoras com Tomadores Cadastrados', value: fmtNum(corretorasComTomadores), sub: 'Cadastradas únicas', accent: '#2255a4', gold: false },
               { label: 'Tomadores Recebidos', value: fmtNum(tomadores.length), sub: 'Total recebidos', accent: '#2255a4', gold: false },
-              { label: 'Tomadores Cadastrados', value: fmtNum(tomadoresCadastrados), sub: 'Total cadastrados', accent: '#2255a4', gold: false },
               { label: 'Limite Aprovado Total', value: fmtBRL(limiteAprovadoTotal), sub: 'Soma dos limites ativos', accent: '#e8b84b', gold: true },
             ].map((k, i) => (
               <div key={i} style={{ ...cardBase, borderTop: `3px solid ${k.accent}` }}>
@@ -441,8 +447,8 @@ export default function DashboardPage() {
               { label: 'Corretoras', value: fmtNum(corretoresUnicos), sub: 'Únicas em operações', dark: false },
               { label: 'Total de Operações', value: fmtNum(operacoes.length), sub: 'Todas as operações', dark: false },
               { label: 'LMG Total', value: fmtBRL(lmgTotal), sub: 'Soma total LMG', dark: false },
-              { label: 'LMG Total em Potencial', value: fmtBRL(lmgLiquido), sub: 'LMG Total – Negados/Perdidos', dark: true },
-              { label: 'Prêmio Previsto Total', value: fmtBRL(premioTotal), sub: 'Soma prêmios previstos − Negados/Perdidos', dark: false },
+              { label: 'LMG Total em Potencial', value: fmtBRL(lmgLiquido), sub: 'LMG Total menos Emitidas/Recusadas/Perdidas', dark: true },
+              { label: 'Prêmio Previsto Total', value: fmtBRL(premioTotal), sub: 'Prêmios previstos menos Emitidas/Recusadas/Perdidas', dark: false },
             ].map((k, i) => (
               <div key={i} style={{
                 ...cardBase,

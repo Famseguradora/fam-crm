@@ -9,6 +9,14 @@ export function fmtMoeda(valor: number | null | undefined): string {
   }).format(valor)
 }
 
+// Formata valor abreviado apenas para bilhões: R$ 8,1 Bi; demais valores ficam no formato completo
+export function fmtMoedaCurta(valor: number | null | undefined): string {
+  if (valor === null || valor === undefined || isNaN(valor)) return '—'
+  if (Math.abs(valor) >= 1_000_000_000)
+    return 'R$ ' + (valor / 1_000_000_000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + ' Bi'
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(valor)
+}
+
 // Formata percentual: 12,50%
 export function fmtPercent(valor: number | null | undefined): string {
   if (valor === null || valor === undefined || isNaN(valor)) return '—'

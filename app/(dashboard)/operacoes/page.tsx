@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { maskCNPJ, maskMoeda, fmtMoeda, fmtData, fmtPercent, titleCase } from '@/lib/utils'
+import { maskCNPJ, maskMoeda, fmtMoeda, fmtMoedaCurta, fmtData, fmtPercent, titleCase } from '@/lib/utils'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario } from '@/types'
 import AnexosSection from '@/components/AnexosSection'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Line, AreaChart, Area, CartesianGrid, Cell } from 'recharts'
@@ -823,7 +823,7 @@ export default function OperacoesPage() {
   const bookLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookAtualOps])
   const bookPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const bookTmpTotal = useMemo(() => {
-    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0) * (op.vigencia_anos ?? 1), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0) * Math.min(op.vigencia_anos ?? 1, 1), 0)
     return bookLmgTotal > 0 ? wSum / bookLmgTotal : 0
   }, [bookAtualOps, bookLmgTotal])
 
@@ -833,7 +833,7 @@ export default function OperacoesPage() {
   const emitidosLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookAtualOps])
   const emitidosPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const emitidosTmpTotal = useMemo(() => {
-    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0) * (op.vigencia_anos ?? 1), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0) * Math.min(op.vigencia_anos ?? 1, 1), 0)
     return emitidosLmgTotal > 0 ? wSum / emitidosLmgTotal : 0
   }, [bookAtualOps, emitidosLmgTotal])
 
@@ -1337,8 +1337,10 @@ export default function OperacoesPage() {
     const agora = new Date()
     const periodoMes = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`
     const periodoAno = `${agora.getFullYear()}`
-    const payloadMes = { periodo: periodoMes, tipo: 'mensal', premio_meta: parseFloat(formMeta.premio_mensal) || null, taxa_media_ponderada_meta: parseFloat(formMeta.taxa_ponderada) || null, lmg_meta: parseFloat(formMeta.lmg_meta) || null, risco_judicial: parseFloat(formMeta.risco_judicial) || null, sinistralidade_aceitavel: parseFloat(formMeta.sinistralidade) || null, observacao: formMeta.observacao || null }
-    const payloadAno = { periodo: periodoAno, tipo: 'anual', premio_meta: parseFloat(formMeta.premio_anual) || null, taxa_media_ponderada_meta: parseFloat(formMeta.taxa_ponderada) || null, lmg_meta: parseFloat(formMeta.lmg_meta) || null, risco_judicial: parseFloat(formMeta.risco_judicial) || null, sinistralidade_aceitavel: parseFloat(formMeta.sinistralidade) || null, observacao: formMeta.observacao || null }
+    const pM = (v: string) => { const r = v.replace(/\./g, '').replace(',', '.').trim(); const n = parseFloat(r); return isNaN(n) ? null : n }
+    const pP = (v: string) => { const r = v.replace(/%$/, '').replace(',', '.').trim(); const n = parseFloat(r); return isNaN(n) ? null : n }
+    const payloadMes = { periodo: periodoMes, tipo: 'mensal', premio_meta: pM(formMeta.premio_mensal), taxa_media_ponderada_meta: pP(formMeta.taxa_ponderada), lmg_meta: pM(formMeta.lmg_meta), risco_judicial: pM(formMeta.risco_judicial), sinistralidade_aceitavel: pP(formMeta.sinistralidade), observacao: formMeta.observacao || null }
+    const payloadAno = { periodo: periodoAno, tipo: 'anual', premio_meta: pM(formMeta.premio_anual), taxa_media_ponderada_meta: pP(formMeta.taxa_ponderada), lmg_meta: pM(formMeta.lmg_meta), risco_judicial: pM(formMeta.risco_judicial), sinistralidade_aceitavel: pP(formMeta.sinistralidade), observacao: formMeta.observacao || null }
     if (metaMensal) await supabase.from('metas_negocio').update(payloadMes).eq('id', metaMensal.id)
     else await supabase.from('metas_negocio').insert(payloadMes)
     if (metaAnual) await supabase.from('metas_negocio').update(payloadAno).eq('id', metaAnual.id)
@@ -2462,7 +2464,23 @@ export default function OperacoesPage() {
                     ))}
                   </div>
                 </div>
-                <button onClick={() => setMostrarConfigurarMetas(v => !v)}
+                <button onClick={() => {
+                  const opening = !mostrarConfigurarMetas
+                  if (opening) {
+                    const fmt = (n: number | null | undefined) => n != null ? maskMoeda(String(Math.round(n * 100))) : ''
+                    const fmtP = (n: number | null | undefined) => n != null ? String(n).replace('.', ',') + '%' : ''
+                    setFormMeta({
+                      premio_mensal: fmt(metaMensal?.premio_meta),
+                      premio_anual: fmt(metaAnual?.premio_meta),
+                      taxa_ponderada: fmtP(metaMensal?.taxa_media_ponderada_meta),
+                      lmg_meta: fmt(metaMensal?.lmg_meta),
+                      risco_judicial: fmt(metaMensal?.risco_judicial),
+                      sinistralidade: fmtP(metaMensal?.sinistralidade_aceitavel),
+                      observacao: metaMensal?.observacao ?? '',
+                    })
+                  }
+                  setMostrarConfigurarMetas(opening)
+                }}
                   style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(56,120,200,0.5)', background: 'rgba(56,120,200,0.15)', color: 'rgba(180,200,220,0.9)', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
                   ⚙ {mostrarConfigurarMetas ? 'Fechar' : 'Configurar Metas'}
                 </button>
@@ -2505,23 +2523,56 @@ export default function OperacoesPage() {
                   </div>
                 )})()}
                 {/* LMG Emitido */}
-                <div style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)' }}>
-                  <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>⚖️ LMG em Carteira</div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: 'white' }}>{fmtMoeda(emitidosLmgTotal)}</div>
-                  <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 4 }}>{modoBook === 'book' ? 'Prêmio (E+A):' : 'Prêmio emitido:'} {fmtMoeda(emitidosPremioTotal)}</div>
-                  {(metaMensal?.risco_judicial ?? 0) > 0 && <div style={{ fontSize: 11, color: '#e8b84b', marginTop: 6 }}>⚖️ Risco Judicial: {fmtMoeda(metaMensal!.risco_judicial!)}</div>}
-                </div>
+                {(() => { const meta = metaMensal?.lmg_meta ?? 0; const pct = meta > 0 ? Math.min(100, emitidosLmgTotal / meta * 100) : 0; const gap = meta > 0 ? Math.max(0, meta - emitidosLmgTotal) : 0; const cor = pct >= 80 ? '#27a96c' : pct >= 50 ? '#e8b84b' : '#d64545'; return (
+                  <div style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)' }}>
+                    <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>⚖️ LMG em Carteira</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: 'white' }}>{fmtMoeda(emitidosLmgTotal)}</div>
+                    <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginBottom: 7 }}>de {meta > 0 ? fmtMoedaCurta(meta) : 'Não definida'}</div>
+                    {meta > 0 && <>
+                      <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 4, height: 6 }}><div style={{ height: '100%', borderRadius: 4, background: cor, width: `${pct}%`, transition: 'width 0.4s' }} /></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 11 }}>
+                        <span style={{ color: cor, fontWeight: 700 }}>{pct.toFixed(1)}%</span>
+                        {gap > 0 && <span style={{ color: 'rgba(180,200,220,0.4)' }}>Gap {fmtMoedaCurta(gap)}</span>}
+                      </div>
+                    </>}
+                    {(metaMensal?.risco_judicial ?? 0) > 0 && <div style={{ fontSize: 11, color: '#e8b84b', marginTop: 6 }}>⚖️ Risco Judicial: {fmtMoeda(metaMensal!.risco_judicial!)}</div>}
+                  </div>
+                )})()}
               </div>
               {/* Form Metas */}
               {mostrarConfigurarMetas && (
                 <div style={{ marginTop: 16, background: 'rgba(255,255,255,0.04)', borderRadius: 10, padding: '16px 20px', border: '1px solid rgba(56,120,200,0.3)' }}>
                   <div style={{ color: 'rgba(180,200,220,0.8)', fontWeight: 700, fontSize: 12, marginBottom: 12, letterSpacing: 1 }}>⚙ CONFIGURAÇÃO DE METAS</div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10 }}>
-                    {([['Prêmio Meta Mês (R$)','premio_mensal','ex: 2000000'],['Prêmio Meta Ano (R$)','premio_anual','ex: 25000000'],['Taxa Méd. Pond. Meta (%)','taxa_ponderada','ex: 1.20'],['LMG em Carteira Meta (R$)','lmg_meta','ex: 500000000'],['Provisão Risco Judicial (R$)','risco_judicial','ex: 5000000'],['Sinistralidade Aceitável (%)','sinistralidade','ex: 0.5']] as const).map(([label, key, ph]) => (
+                    {([
+                      ['Prêmio Meta Mês (R$)', 'premio_mensal', 'ex: 2.000.000,00', 'moeda'],
+                      ['Prêmio Meta Ano (R$)', 'premio_anual', 'ex: 25.000.000,00', 'moeda'],
+                      ['Taxa Méd. Pond. Meta (%)', 'taxa_ponderada', 'ex: 1,20%', 'pct'],
+                      ['LMG em Carteira Meta (R$)', 'lmg_meta', 'ex: 500.000.000,00', 'moeda'],
+                      ['Provisão Risco Judicial (R$)', 'risco_judicial', 'ex: 5.000.000,00', 'moeda'],
+                      ['Sinistralidade Aceitável (%)', 'sinistralidade', 'ex: 0,5%', 'pct'],
+                    ] as [string, 'premio_mensal'|'premio_anual'|'taxa_ponderada'|'lmg_meta'|'risco_judicial'|'sinistralidade', string, 'moeda'|'pct'][]).map(([label, key, ph, tipo]) => (
                       <div key={key}>
                         <label style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', display: 'block', marginBottom: 3 }}>{label}</label>
-                        <input type="number" step="any" placeholder={ph} value={formMeta[key]}
-                          onChange={(e) => setFormMeta(prev => ({ ...prev, [key]: e.target.value }))}
+                        <input type="text" placeholder={ph} value={formMeta[key]}
+                          onChange={(e) => {
+                            if (tipo === 'moeda') {
+                              setFormMeta(prev => ({ ...prev, [key]: maskMoeda(e.target.value) }))
+                            } else {
+                              const v = e.target.value.replace(/%$/, '').replace(/[^\d,]/g, '')
+                              setFormMeta(prev => ({ ...prev, [key]: v }))
+                            }
+                          }}
+                          onBlur={() => {
+                            if (tipo === 'pct' && formMeta[key] && !formMeta[key].endsWith('%')) {
+                              setFormMeta(prev => ({ ...prev, [key]: prev[key] + '%' }))
+                            }
+                          }}
+                          onFocus={() => {
+                            if (tipo === 'pct' && formMeta[key]?.endsWith('%')) {
+                              setFormMeta(prev => ({ ...prev, [key]: prev[key].slice(0, -1) }))
+                            }
+                          }}
                           style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid rgba(56,120,200,0.4)', background: 'rgba(255,255,255,0.08)', color: 'white', fontSize: 13, boxSizing: 'border-box' }} />
                       </div>
                     ))}
