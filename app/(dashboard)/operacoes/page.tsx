@@ -115,6 +115,8 @@ export default function OperacoesPage() {
   const [filtroModalidade, setFiltroModalidade] = useState('')
   const [exportando, setExportando] = useState(false)
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
+  const [pdfPreviewLabel, setPdfPreviewLabel] = useState<string | null>(null)
+  const [pdfPreviewFilename, setPdfPreviewFilename] = useState(`FAM_Operacoes_${new Date().toISOString().slice(0, 10)}.pdf`)
   const [importando, setImportando] = useState(false)
   const [resultadoImport, setResultadoImport] = useState<{
     inseridos: number
@@ -1325,9 +1327,323 @@ export default function OperacoesPage() {
     }
 
     const dataUri = doc.output('datauristring')
+    setPdfPreviewLabel(null)
+    setPdfPreviewFilename(`FAM_Operacoes_${new Date().toISOString().slice(0, 10)}.pdf`)
     setPdfPreviewUrl(dataUri)
     } catch (err) {
       console.error('Erro ao gerar PDF:', err)
+    } finally {
+      setExportando(false)
+    }
+  }
+
+  async function exportarPDFEmitidas() {
+    if (operacoesEmitidas.length === 0) return
+    setExportando(true)
+    try {
+      const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+      ])
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+      const W = 297, H = 210, M = 8
+
+      const dataHoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
+      const horaAgora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+      doc.setFillColor(10, 22, 40)
+      doc.rect(0, 0, W, 26, 'F')
+      doc.setFillColor(39, 169, 108)
+      doc.rect(0, 0, W, 2.5, 'F')
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(22)
+      doc.setTextColor(255, 255, 255)
+      doc.text('FAM', M, 17)
+
+      doc.setDrawColor(232, 184, 75)
+      doc.setLineWidth(0.3)
+      doc.line(48, 7, 48, 23)
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7)
+      doc.setTextColor(232, 184, 75)
+      doc.text('S E G U R A D O R A', 52, 11)
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(13)
+      doc.setTextColor(255, 255, 255)
+      doc.text('Operações Emitidas', 52, 19)
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      doc.setTextColor(39, 169, 108)
+      doc.text('Relatório de Emissões', 52, 24)
+
+      doc.setFontSize(8)
+      doc.setTextColor(160, 192, 232)
+      doc.text(`Emitido em: ${dataHoje} às ${horaAgora}`, W - M, 11, { align: 'right' })
+      doc.setFontSize(6)
+      doc.setTextColor(120, 140, 160)
+      doc.text('Documento Confidencial · Gerado automaticamente pelo FAM CRM', W - M, 18, { align: 'right' })
+
+      const cardTop = 30, cardH = 22
+      const cardW = (W - M * 2 - 8) / 3
+
+      const cardsE = [
+        { label: 'EMITIDAS', value: String(kpisEmitido.count), sub: 'Total de operações emitidas', ar: [39, 169, 108] as [number,number,number], isCount: true },
+        { label: 'LMG TOTAL', value: fmtMoeda(kpisEmitido.lmg), sub: 'Limite Máximo de Garantia', ar: [16, 48, 96] as [number,number,number], isCount: false },
+        { label: 'PRÊMIO TOTAL', value: fmtMoeda(kpisEmitido.premio), sub: 'Prêmios realizados', ar: [232, 184, 75] as [number,number,number], isCount: false },
+      ]
+      cardsE.forEach((card, idx) => {
+        const cx = M + idx * (cardW + 4)
+        doc.setFillColor(248, 251, 255)
+        doc.roundedRect(cx, cardTop, cardW, cardH, 2, 2, 'F')
+        doc.setDrawColor(197, 213, 232)
+        doc.setLineWidth(0.3)
+        doc.roundedRect(cx, cardTop, cardW, cardH, 2, 2, 'S')
+        doc.setFillColor(...card.ar)
+        doc.rect(cx, cardTop, cardW, 1.5, 'F')
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(7.5)
+        doc.setTextColor(96, 128, 160)
+        doc.text(card.label, cx + cardW / 2, cardTop + 7.5, { align: 'center' })
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(card.isCount ? 14 : 9)
+        doc.setTextColor(10, 22, 40)
+        doc.text(card.value, cx + cardW / 2, cardTop + 14.5, { align: 'center' })
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(7)
+        doc.setTextColor(120, 140, 160)
+        doc.text(card.sub, cx + cardW / 2, cardTop + 20, { align: 'center' })
+      })
+
+      const startYE = cardTop + cardH + 5
+
+      autoTable(doc, {
+        startY: startYE,
+        margin: { left: M, right: M, bottom: 14 },
+        head: [['#', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG', 'Taxa', 'Vig.', 'Prêmio', 'Data Emissão']],
+        body: operacoesEmitidas.map((op, i) => [
+          i + 1,
+          op.tomador?.razao_social ?? '—',
+          op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—',
+          op.estado ?? '—',
+          op.modalidade ?? '—',
+          op.lmg ? fmtMoeda(op.lmg) : '—',
+          op.taxa ? fmtPercent(op.taxa / 100) : '—',
+          op.vigencia_anos ? `${op.vigencia_anos}${op.periodicidade_vigencia === 'Meses' ? 'm' : 'a'}` : '—',
+          op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
+          op.data_emissao ? fmtData(op.data_emissao) : '—',
+        ]),
+        foot: [['', '', '', '', 'TOTAL', fmtMoeda(kpisEmitido.lmg), '', '', fmtMoeda(kpisEmitido.premio), '']],
+        styles: { fontSize: 7.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 }, font: 'helvetica', textColor: [30, 40, 60], lineColor: [210, 220, 235], lineWidth: 0.15, overflow: 'hidden' },
+        headStyles: { fillColor: [39, 169, 108], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 } },
+        footStyles: { fillColor: [213, 250, 229], textColor: [16, 96, 48], fontStyle: 'bold', fontSize: 7.5 },
+        alternateRowStyles: { fillColor: [245, 252, 248] },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 8,  textColor: [100, 110, 130] },
+          1: { halign: 'left',   cellWidth: 60 },
+          2: { halign: 'left',   cellWidth: 42 },
+          3: { halign: 'center', cellWidth: 10, textColor: [60, 80, 120] },
+          4: { halign: 'left',   cellWidth: 42 },
+          5: { halign: 'right',  cellWidth: 32 },
+          6: { halign: 'center', cellWidth: 17 },
+          7: { halign: 'center', cellWidth: 12 },
+          8: { halign: 'right',  cellWidth: 37, textColor: [16, 96, 48] },
+          9: { halign: 'center', cellWidth: 21 },
+        },
+        didParseCell: (data: any) => {
+          if (data.section === 'head' || data.section === 'foot') {
+            const alignMap: Record<number, string> = { 0: 'center', 1: 'left', 2: 'left', 3: 'center', 4: 'left', 5: 'right', 6: 'center', 7: 'center', 8: 'right', 9: 'center' }
+            data.cell.styles.halign = alignMap[data.column.index] ?? 'left'
+          }
+        },
+        didDrawPage: () => {
+          doc.setDrawColor(39, 169, 108)
+          doc.setLineWidth(0.5)
+          doc.line(M, H - 8, W - M, H - 8)
+          doc.setFont('helvetica', 'normal')
+          doc.setFontSize(6)
+          doc.setTextColor(120, 140, 160)
+          doc.text('FAM Seguradora — Relatório Confidencial', M, H - 4)
+          doc.text(`${dataHoje} às ${horaAgora}`, W - M, H - 4, { align: 'right' })
+        },
+      })
+
+      const totalPagsE = (doc as any).internal.getNumberOfPages()
+      for (let i = 1; i <= totalPagsE; i++) {
+        doc.setPage(i)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(6)
+        doc.setTextColor(120, 140, 160)
+        doc.text(`Página ${i} de ${totalPagsE}`, W / 2, H - 4, { align: 'center' })
+      }
+
+      const filenameE = `FAM_Operacoes_Emitidas_${new Date().toISOString().slice(0, 10)}.pdf`
+      setPdfPreviewLabel(`Operações Emitidas — ${operacoesEmitidas.length} registro${operacoesEmitidas.length !== 1 ? 's' : ''}`)
+      setPdfPreviewFilename(filenameE)
+      setPdfPreviewUrl(doc.output('datauristring'))
+    } catch (err) {
+      console.error('Erro ao gerar PDF Emitidas:', err)
+    } finally {
+      setExportando(false)
+    }
+  }
+
+  async function exportarPDFPerdidas() {
+    if (operacoesPerdidas.length === 0) return
+    setExportando(true)
+    try {
+      const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+      ])
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+      const W = 297, H = 210, M = 8
+
+      const dataHoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
+      const horaAgora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+      doc.setFillColor(10, 22, 40)
+      doc.rect(0, 0, W, 26, 'F')
+      doc.setFillColor(120, 120, 135)
+      doc.rect(0, 0, W, 2.5, 'F')
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(22)
+      doc.setTextColor(255, 255, 255)
+      doc.text('FAM', M, 17)
+
+      doc.setDrawColor(232, 184, 75)
+      doc.setLineWidth(0.3)
+      doc.line(48, 7, 48, 23)
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7)
+      doc.setTextColor(232, 184, 75)
+      doc.text('S E G U R A D O R A', 52, 11)
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(13)
+      doc.setTextColor(255, 255, 255)
+      doc.text('Operações Perdidas / Recusadas', 52, 19)
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      doc.setTextColor(180, 180, 190)
+      doc.text('Relatório de Negócios Encerrados', 52, 24)
+
+      doc.setFontSize(8)
+      doc.setTextColor(160, 192, 232)
+      doc.text(`Emitido em: ${dataHoje} às ${horaAgora}`, W - M, 11, { align: 'right' })
+      doc.setFontSize(6)
+      doc.setTextColor(120, 140, 160)
+      doc.text('Documento Confidencial · Gerado automaticamente pelo FAM CRM', W - M, 18, { align: 'right' })
+
+      const cardTop = 30, cardH = 22
+      const qtdPerdidas = operacoesPerdidas.filter(op => op.status === 'Perdido').length
+      const qtdRecusadas = operacoesPerdidas.filter(op => op.status === 'Recusado').length
+      const cardW5 = (W - M * 2 - 16) / 5
+
+      const cardsP = [
+        { label: 'TOTAL',        value: String(kpisPerdido.count),   sub: 'Perdidas + Recusadas', ar: [100, 100, 115] as [number,number,number], isCount: true  },
+        { label: 'PERDIDAS',     value: String(qtdPerdidas),          sub: 'Status Perdido',       ar: [180, 60,  60]  as [number,number,number], isCount: true  },
+        { label: 'RECUSADAS',    value: String(qtdRecusadas),         sub: 'Status Recusado',      ar: [120, 80,  140] as [number,number,number], isCount: true  },
+        { label: 'LMG TOTAL',    value: fmtMoeda(kpisPerdido.lmg),   sub: 'Limite encerrado',     ar: [80,  80,  100] as [number,number,number], isCount: false },
+        { label: 'PRÊMIO PREV.', value: fmtMoeda(kpisPerdido.premio), sub: 'Prêmios previstos',   ar: [232, 184, 75]  as [number,number,number], isCount: false },
+      ]
+      cardsP.forEach((card, idx) => {
+        const cx = M + idx * (cardW5 + 4)
+        doc.setFillColor(248, 248, 252)
+        doc.roundedRect(cx, cardTop, cardW5, cardH, 2, 2, 'F')
+        doc.setDrawColor(200, 200, 210)
+        doc.setLineWidth(0.3)
+        doc.roundedRect(cx, cardTop, cardW5, cardH, 2, 2, 'S')
+        doc.setFillColor(...card.ar)
+        doc.rect(cx, cardTop, cardW5, 1.5, 'F')
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(7.5)
+        doc.setTextColor(96, 128, 160)
+        doc.text(card.label, cx + cardW5 / 2, cardTop + 7.5, { align: 'center' })
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(card.isCount ? 14 : 9)
+        doc.setTextColor(10, 22, 40)
+        doc.text(card.value, cx + cardW5 / 2, cardTop + 14.5, { align: 'center' })
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(7)
+        doc.setTextColor(120, 140, 160)
+        doc.text(card.sub, cx + cardW5 / 2, cardTop + 20, { align: 'center' })
+      })
+
+      const startYP = cardTop + cardH + 5
+
+      autoTable(doc, {
+        startY: startYP,
+        margin: { left: M, right: M, bottom: 14 },
+        head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG', 'Taxa', 'Vig.', 'Prêmio Prev.']],
+        body: operacoesPerdidas.map((op, i) => [
+          i + 1,
+          op.status,
+          op.tomador?.razao_social ?? '—',
+          op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—',
+          op.estado ?? '—',
+          op.modalidade ?? '—',
+          op.lmg ? fmtMoeda(op.lmg) : '—',
+          op.taxa ? fmtPercent(op.taxa / 100) : '—',
+          op.vigencia_anos ? `${op.vigencia_anos}${op.periodicidade_vigencia === 'Meses' ? 'm' : 'a'}` : '—',
+          op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
+        ]),
+        foot: [['', '', '', '', '', 'TOTAL', fmtMoeda(kpisPerdido.lmg), '', '', fmtMoeda(kpisPerdido.premio)]],
+        styles: { fontSize: 7.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 }, font: 'helvetica', textColor: [30, 40, 60], lineColor: [210, 215, 225], lineWidth: 0.15, overflow: 'hidden' },
+        headStyles: { fillColor: [100, 100, 115], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 } },
+        footStyles: { fillColor: [228, 228, 235], textColor: [60, 60, 80], fontStyle: 'bold', fontSize: 7.5 },
+        alternateRowStyles: { fillColor: [248, 248, 252] },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 8,  textColor: [100, 110, 130] },
+          1: { halign: 'left',   cellWidth: 22 },
+          2: { halign: 'left',   cellWidth: 60 },
+          3: { halign: 'left',   cellWidth: 40 },
+          4: { halign: 'center', cellWidth: 10, textColor: [60, 80, 120] },
+          5: { halign: 'left',   cellWidth: 44 },
+          6: { halign: 'right',  cellWidth: 32 },
+          7: { halign: 'center', cellWidth: 17 },
+          8: { halign: 'center', cellWidth: 12 },
+          9: { halign: 'right',  cellWidth: 36, textColor: [80, 60, 100] },
+        },
+        didParseCell: (data: any) => {
+          if (data.section === 'head' || data.section === 'foot') {
+            const alignMap: Record<number, string> = { 0: 'center', 1: 'left', 2: 'left', 3: 'left', 4: 'center', 5: 'left', 6: 'right', 7: 'center', 8: 'center', 9: 'right' }
+            data.cell.styles.halign = alignMap[data.column.index] ?? 'left'
+          }
+        },
+        didDrawPage: () => {
+          doc.setDrawColor(120, 120, 135)
+          doc.setLineWidth(0.5)
+          doc.line(M, H - 8, W - M, H - 8)
+          doc.setFont('helvetica', 'normal')
+          doc.setFontSize(6)
+          doc.setTextColor(120, 140, 160)
+          doc.text('FAM Seguradora — Relatório Confidencial', M, H - 4)
+          doc.text(`${dataHoje} às ${horaAgora}`, W - M, H - 4, { align: 'right' })
+        },
+      })
+
+      const totalPagsP = (doc as any).internal.getNumberOfPages()
+      for (let i = 1; i <= totalPagsP; i++) {
+        doc.setPage(i)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(6)
+        doc.setTextColor(120, 140, 160)
+        doc.text(`Página ${i} de ${totalPagsP}`, W / 2, H - 4, { align: 'center' })
+      }
+
+      const filenameP = `FAM_Operacoes_Perdidas_Recusadas_${new Date().toISOString().slice(0, 10)}.pdf`
+      setPdfPreviewLabel(`Perdidas / Recusadas — ${operacoesPerdidas.length} registro${operacoesPerdidas.length !== 1 ? 's' : ''}`)
+      setPdfPreviewFilename(filenameP)
+      setPdfPreviewUrl(doc.output('datauristring'))
+    } catch (err) {
+      console.error('Erro ao gerar PDF Perdidas/Recusadas:', err)
     } finally {
       setExportando(false)
     }
@@ -1592,6 +1908,17 @@ export default function OperacoesPage() {
           <div style={{ fontSize: 10, color: '#1a6040', marginTop: 5, fontStyle: 'italic', borderTop: '1px dashed #a8d8b8', paddingTop: 4 }}>
             Fora do funil
           </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); exportarPDFEmitidas() }}
+            disabled={exportando || kpisEmitido.count === 0}
+            style={{
+              marginTop: 8, width: '100%', padding: '5px 0', borderRadius: 6, cursor: 'pointer',
+              background: '#e8f8ef', border: '1px solid #a8d8b8', color: '#1a6040',
+              fontSize: 11, fontWeight: 600, transition: 'background 0.12s',
+            }}
+          >
+            📄 Exportar PDF
+          </button>
         </div>
         {/* Divisor + Card Perdidas/Recusadas — visual acinzentado */}
         <div style={{ borderLeft: '1.5px solid #d8d8e0', margin: '4px 4px', alignSelf: 'stretch' }} />
@@ -1622,6 +1949,17 @@ export default function OperacoesPage() {
           <div style={{ fontSize: 10, color: '#aaaaaa', marginTop: 5, fontStyle: 'italic', borderTop: '1px dashed #cccccc', paddingTop: 4 }}>
             Encerrados
           </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); exportarPDFPerdidas() }}
+            disabled={exportando || kpisPerdido.count === 0}
+            style={{
+              marginTop: 8, width: '100%', padding: '5px 0', borderRadius: 6, cursor: 'pointer',
+              background: '#f0f0f4', border: '1px solid #c8c8d0', color: '#555566',
+              fontSize: 11, fontWeight: 600, transition: 'background 0.12s',
+            }}
+          >
+            📄 Exportar PDF
+          </button>
         </div>
       </div>
 
@@ -3280,14 +3618,14 @@ export default function OperacoesPage() {
                 <div>
                   <div style={{ color: '#ffffff', fontWeight: 600, fontSize: 13 }}>Pré-visualização do Relatório</div>
                   <div style={{ color: '#6080a0', fontSize: 11 }}>
-                    Operações / Subscrição — {operacoesFiltradas.length} registro{operacoesFiltradas.length !== 1 ? 's' : ''}
+                    {pdfPreviewLabel ?? `Operações / Subscrição — ${operacoesFiltradas.length} registro${operacoesFiltradas.length !== 1 ? 's' : ''}`}
                   </div>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <a
                   href={pdfPreviewUrl}
-                  download={`FAM_Operacoes_${new Date().toISOString().slice(0, 10)}.pdf`}
+                  download={pdfPreviewFilename}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 6,
                     padding: '8px 20px', borderRadius: 8, textDecoration: 'none',
