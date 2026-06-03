@@ -313,10 +313,10 @@ export default function PerformancePage() {
 
     // Bloco 2 — Financeiro
     const premioTotal   = opsA.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
-    const lmgTotal      = opsA.reduce((s, o) => s + (o.lmg ?? 0), 0)
+    const lmgTotal      = opsA.reduce((s, o) => s + Math.min(o.lmg ?? 0, 80_000_000), 0)
     const ticketMedio   = novasOps > 0 ? lmgTotal / novasOps : 0
     const premioTotalB  = opsB.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
-    const lmgTotalB     = opsB.reduce((s, o) => s + (o.lmg ?? 0), 0)
+    const lmgTotalB     = opsB.reduce((s, o) => s + Math.min(o.lmg ?? 0, 80_000_000), 0)
     const ticketMedioB  = novasOpsB > 0 ? lmgTotalB / novasOpsB : 0
 
     // Bloco 3 — Eficiência

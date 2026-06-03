@@ -169,6 +169,7 @@ export default function OperacoesPage() {
   const [novoComentarioForm, setNovoComentarioForm] = useState<Record<string, { autor: string; comentario: string; tipo: string }>>({})
   const [salvandoComentario, setSalvandoComentario] = useState(false)
   const [modoBook, setModoBook] = useState<'emitidas' | 'book'>('emitidas')
+  const [showLmgLimiteFam, setShowLmgLimiteFam] = useState(false)
 
   // ── Cadastro Básico Tomador ──
   const [mostrarFormTomador, setMostrarFormTomador] = useState(false)
@@ -668,7 +669,7 @@ export default function OperacoesPage() {
   }, [operacoes, busca, filtroCorretora, filtroModalidade, sortEmitidas])
 
   const kpisEmitido = useMemo(() => {
-    const lmg = operacoesEmitidas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const lmg = operacoesEmitidas.reduce((s, op) => s + Math.min(op.lmg ?? 0, 80_000_000), 0)
     const premio = operacoesEmitidas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     return { count: operacoesEmitidas.length, lmg, premio }
   }, [operacoesEmitidas])
@@ -706,7 +707,7 @@ export default function OperacoesPage() {
   }, [operacoes, busca, filtroCorretora, filtroModalidade, sortPerdidas])
 
   const kpisPerdido = useMemo(() => {
-    const lmg = operacoesPerdidas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const lmg = operacoesPerdidas.reduce((s, op) => s + Math.min(op.lmg ?? 0, 80_000_000), 0)
     const premio = operacoesPerdidas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     return { count: operacoesPerdidas.length, lmg, premio }
   }, [operacoesPerdidas])
@@ -783,7 +784,7 @@ export default function OperacoesPage() {
       const s = op.status ?? ''
       if (!map[s]) map[s] = { count: 0, lmg: 0, premio: 0 }
       map[s].count++
-      map[s].lmg += op.lmg ?? 0
+      map[s].lmg += Math.min(op.lmg ?? 0, 80_000_000)
       map[s].premio += op.premio_previsto ?? 0
     })
     return map
@@ -791,18 +792,18 @@ export default function OperacoesPage() {
 
   const kpis = useMemo(() => {
     const CAP = 80_000_000
-    const lmgTotal = operacoesFiltradas.reduce((s, op) => s + (op.lmg ?? 0), 0)
-    const lmgLiquido = operacoesFiltradas.filter(op => !['Perdido', 'Recusado'].includes(op.status)).reduce((s, op) => s + (op.lmg ?? 0), 0)
-    const lmgCapeadoTotal = operacoesFiltradas.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
+    const lmgTotal = operacoesFiltradas.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
+    const lmgLiquido = operacoesFiltradas.filter(op => !['Perdido', 'Recusado'].includes(op.status)).reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
+    const lmgCapeadoTotal = lmgTotal
     const premioTotal = operacoesFiltradas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     const corretoras = new Set(operacoesFiltradas.map(op => op.corretora_id).filter(Boolean)).size
     const tomadores = new Set(operacoesFiltradas.map(op => op.tomador_id).filter(Boolean)).size
     const quente = operacoesFiltradas.filter(op => op.temperatura === 'Quente')
     const morno  = operacoesFiltradas.filter(op => op.temperatura === 'Morno')
     const frio   = operacoesFiltradas.filter(op => op.temperatura === 'Frio')
-    const lmgQuente    = quente.reduce((s, op) => s + (op.lmg ?? 0), 0)
-    const lmgMorno     = morno.reduce((s, op) => s + (op.lmg ?? 0), 0)
-    const lmgFrio      = frio.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const lmgQuente    = quente.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
+    const lmgMorno     = morno.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
+    const lmgFrio      = frio.reduce((s, op) => s + Math.min(op.lmg ?? 0, CAP), 0)
     const premioQuente = quente.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     const premioMorno  = morno.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
     const premioFrio   = frio.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
@@ -842,20 +843,20 @@ export default function OperacoesPage() {
       : operacoes.filter(op => op.status === 'Emitido'),
     [operacoes, modoBook])
 
-  const bookLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookAtualOps])
+  const bookLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + Math.min(op.lmg ?? 0, 80_000_000), 0), [bookAtualOps])
   const bookPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const bookTmpTotal = useMemo(() => {
-    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0) * Math.min(op.vigencia_anos ?? 1, 1), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * Math.min(op.lmg ?? 0, 80_000_000) * Math.min(op.vigencia_anos ?? 1, 1), 0)
     return bookLmgTotal > 0 ? wSum / bookLmgTotal : 0
   }, [bookAtualOps, bookLmgTotal])
 
   // emitidosOps é alias de bookAtualOps — usado em labels do JSX
   const emitidosOps = bookAtualOps
 
-  const emitidosLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.lmg ?? 0), 0), [bookAtualOps])
+  const emitidosLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + Math.min(op.lmg ?? 0, 80_000_000), 0), [bookAtualOps])
   const emitidosPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const emitidosTmpTotal = useMemo(() => {
-    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * (op.lmg ?? 0) * Math.min(op.vigencia_anos ?? 1, 1), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * Math.min(op.lmg ?? 0, 80_000_000) * Math.min(op.vigencia_anos ?? 1, 1), 0)
     return emitidosLmgTotal > 0 ? wSum / emitidosLmgTotal : 0
   }, [bookAtualOps, emitidosLmgTotal])
 
@@ -886,13 +887,14 @@ export default function OperacoesPage() {
     for (const op of bookAtualOps) {
       const m = op.modalidade ?? 'Não informada'
       if (!map[m]) map[m] = { qtd: 0, lmg: 0, premio: 0, taxaMin: Infinity, taxaMax: -Infinity, taxaLmg: 0 }
+      const lmgCap = Math.min(op.lmg ?? 0, 80_000_000)
       map[m].qtd++
-      map[m].lmg += op.lmg ?? 0
+      map[m].lmg += lmgCap
       map[m].premio += op.premio_previsto ?? 0
       if (op.taxa != null) {
         map[m].taxaMin = Math.min(map[m].taxaMin, op.taxa)
         map[m].taxaMax = Math.max(map[m].taxaMax, op.taxa)
-        map[m].taxaLmg += op.taxa * (op.lmg ?? 0)
+        map[m].taxaLmg += op.taxa * lmgCap
       }
     }
     return Object.entries(map).map(([modalidade, d]) => ({
@@ -913,10 +915,11 @@ export default function OperacoesPage() {
     for (const op of bookAtualOps) {
       const tid = op.tomador_id ?? '__sem__'
       if (!map[tid]) map[tid] = { nome: op.tomador?.razao_social ?? 'Não informado', qtd: 0, lmg: 0, premio: 0, taxaLmg: 0, limiteAprovado: op.tomador?.limite_aprovado ?? null }
+      const lmgCapT = Math.min(op.lmg ?? 0, 80_000_000)
       map[tid].qtd++
-      map[tid].lmg += op.lmg ?? 0
+      map[tid].lmg += lmgCapT
       map[tid].premio += op.premio_previsto ?? 0
-      if (op.taxa != null) map[tid].taxaLmg += op.taxa * (op.lmg ?? 0)
+      if (op.taxa != null) map[tid].taxaLmg += op.taxa * lmgCapT
     }
     return Object.values(map).map(d => ({
       nome: d.nome.length > 22 ? d.nome.slice(0, 20) + '…' : d.nome,
@@ -1255,13 +1258,13 @@ export default function OperacoesPage() {
     }
 
     // ── 4. TABELA PRINCIPAL ────────────────────────────────────────────────
-    const lmgFiltrado = operacoesFiltradas.reduce((s, op) => s + (op.lmg ?? 0), 0)
+    const lmgFiltrado = operacoesFiltradas.reduce((s, op) => s + Math.min(op.lmg ?? 0, 80_000_000), 0)
     const premioFiltrado = operacoesFiltradas.reduce((s, op) => s + (op.premio_previsto ?? 0), 0)
 
     autoTable(doc, {
       startY,
       margin: { left: M, right: M, bottom: 14 },
-      head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'Temp.', 'LMG', 'Taxa', 'Vig.', 'Prêmio']],
+      head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'Temp.', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio']],
       body: operacoesFiltradas.map((op, i) => [
         i + 1,
         op.status,
@@ -1270,7 +1273,7 @@ export default function OperacoesPage() {
         op.estado ?? '—',
         op.modalidade ?? '—',
         op.temperatura ?? '—',
-        op.lmg ? fmtMoeda(op.lmg) : '—',
+        fmtMoeda(Math.min(op.lmg ?? 0, 80_000_000)),
         op.taxa ? fmtPercent(op.taxa / 100) : '—',
         op.vigencia_anos ? `${op.vigencia_anos}${op.periodicidade_vigencia === 'Meses' ? 'm' : 'a'}` : '—',
         op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
@@ -1437,14 +1440,14 @@ export default function OperacoesPage() {
       autoTable(doc, {
         startY: startYE,
         margin: { left: M, right: M, bottom: 14 },
-        head: [['#', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG', 'Taxa', 'Vig.', 'Prêmio', 'Data Emissão']],
+        head: [['#', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio', 'Data Emissão']],
         body: operacoesEmitidas.map((op, i) => [
           i + 1,
           op.tomador?.razao_social ?? '—',
           op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—',
           op.estado ?? '—',
           op.modalidade ?? '—',
-          op.lmg ? fmtMoeda(op.lmg) : '—',
+          fmtMoeda(Math.min(op.lmg ?? 0, 80_000_000)),
           op.taxa ? fmtPercent(op.taxa / 100) : '—',
           op.vigencia_anos ? `${op.vigencia_anos}${op.periodicidade_vigencia === 'Meses' ? 'm' : 'a'}` : '—',
           op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
@@ -1595,7 +1598,7 @@ export default function OperacoesPage() {
       autoTable(doc, {
         startY: startYP,
         margin: { left: M, right: M, bottom: 14 },
-        head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG', 'Taxa', 'Vig.', 'Prêmio Prev.']],
+        head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio Prev.']],
         body: operacoesPerdidas.map((op, i) => [
           i + 1,
           op.status,
@@ -1603,7 +1606,7 @@ export default function OperacoesPage() {
           op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—',
           op.estado ?? '—',
           op.modalidade ?? '—',
-          op.lmg ? fmtMoeda(op.lmg) : '—',
+          fmtMoeda(Math.min(op.lmg ?? 0, 80_000_000)),
           op.taxa ? fmtPercent(op.taxa / 100) : '—',
           op.vigencia_anos ? `${op.vigencia_anos}${op.periodicidade_vigencia === 'Meses' ? 'm' : 'a'}` : '—',
           op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
@@ -2567,6 +2570,14 @@ export default function OperacoesPage() {
           </div>
 
           {/* Tabela */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <button
+              onClick={() => setShowLmgLimiteFam(v => !v)}
+              style={{ fontSize: 12, fontWeight: 600, padding: '4px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: showLmgLimiteFam ? '#e8f0fa' : 'white', color: showLmgLimiteFam ? '#1e4080' : '#6080a0', cursor: 'pointer' }}
+            >
+              LMG Original: {showLmgLimiteFam ? 'ON' : 'OFF'}
+            </button>
+          </div>
           <div className="fam-table-wrap">
             <table className="fam-table">
               <thead>
@@ -2575,25 +2586,26 @@ export default function OperacoesPage() {
                   <th style={thSort} onClick={() => handleSort('tomador')}>Tomador{sortIcon('tomador')}</th>
                   <th style={thSort} onClick={() => handleSort('corretora')}>Corretora{sortIcon('corretora')}</th>
                   <th style={thSort} onClick={() => handleSort('cobertura')}>Cobertura / Modalidade{sortIcon('cobertura')}</th>
-                  <th style={thSort} onClick={() => handleSort('lmg')}>LMG{sortIcon('lmg')}</th>
+                  <th style={thSort} onClick={() => handleSort('lmg')}>LMG - Limite FAM{sortIcon('lmg')}</th>
+                  {showLmgLimiteFam && <th style={thSort} onClick={() => handleSort('lmg')}>LMG Original{sortIcon('lmg')}</th>}
                   <th style={thSort} onClick={() => handleSort('taxa')}>Taxa{sortIcon('taxa')}</th>
                   <th style={thSort} onClick={() => handleSort('temperatura')}>Temp.{sortIcon('temperatura')}</th>
-                  <th style={thSort} onClick={() => handleSort('prioridade')}>Prioridade{sortIcon('prioridade')}</th>
                   <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
                   <th style={thSort} onClick={() => handleSort('data_entrada')}>Data Entrada{sortIcon('data_entrada')}</th>
-                  <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {carregando ? (
-                  <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={9 + (showLmgLimiteFam ? 1 : 0)} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : operacoesFiltradas.length === 0 ? (
-                  <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                  <tr><td colSpan={9 + (showLmgLimiteFam ? 1 : 0)} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                     {busca || filtroStatus.length > 0 || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade
                       ? 'Nenhuma operação encontrada para os filtros selecionados.'
                       : 'Nenhuma operação registrada ainda.'}
                   </td></tr>
                 ) : operacoesFiltradas.map((op, i) => {
+                  const lmgLimiteFam = Math.min(op.lmg ?? 0, 80_000_000)
+                  const temCap = (op.lmg ?? 0) > 80_000_000
                   return (
                     <tr key={op.id} onClick={() => abrirEditar(op)} style={{ cursor: 'pointer' }}>
                       <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
@@ -2606,9 +2618,15 @@ export default function OperacoesPage() {
                         <div>{op.produto?.nome ?? '—'}</div>
                         {op.modalidade && <div style={{ fontSize: 11, color: '#6080a0' }}>{op.modalidade}</div>}
                       </td>
-                      <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                        {op.lmg ? fmtMoeda(op.lmg) : '—'}
+                      <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: temCap ? '#a05010' : undefined }}>
+                        {fmtMoeda(lmgLimiteFam)}
+                        {temCap && <div style={{ fontSize: 10, color: '#a05010', fontWeight: 500 }}>↑ orig. {fmtMoeda(op.lmg ?? 0)}</div>}
                       </td>
+                      {showLmgLimiteFam && (
+                        <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: '#6080a0' }}>
+                          {op.lmg ? fmtMoeda(op.lmg) : '—'}
+                        </td>
+                      )}
                       <td style={{ fontSize: 13 }}>
                         {op.taxa ? fmtPercent(op.taxa / 100) : '—'}
                       </td>
@@ -2616,11 +2634,6 @@ export default function OperacoesPage() {
                         {op.temperatura
                           ? <span className={`badge ${badgeTemperatura(op.temperatura)}`}>{op.temperatura}</span>
                           : <span style={{ color: '#6080a0', fontSize: 13 }}>—</span>}
-                      </td>
-                      <td>
-                        {op.prioridade && op.prioridade !== 'Fluxo Normal'
-                          ? <span className={`badge ${badgePrioridade(op.prioridade)}`}>{op.prioridade}</span>
-                          : <span style={{ color: '#6080a0', fontSize: 12 }}>Normal</span>}
                       </td>
                       <td>
                         <span className="badge" style={{
@@ -2633,12 +2646,6 @@ export default function OperacoesPage() {
                       </td>
                       <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
                         {op.data_entrada ? fmtData(op.data_entrada) : '—'}
-                      </td>
-                      <td>
-                        <button onClick={() => abrirEditar(op)}
-                          style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
-                          Editar
-                        </button>
                       </td>
                     </tr>
                   )
@@ -2674,15 +2681,18 @@ export default function OperacoesPage() {
                       <th style={thSort} onClick={() => handleSortEmitidas('tomador')}>Tomador{sortIconEmitidas('tomador')}</th>
                       <th style={thSort} onClick={() => handleSortEmitidas('corretora')}>Corretora{sortIconEmitidas('corretora')}</th>
                       <th style={thSort} onClick={() => handleSortEmitidas('cobertura')}>Cobertura / Modalidade{sortIconEmitidas('cobertura')}</th>
-                      <th style={thSort} onClick={() => handleSortEmitidas('lmg')}>LMG{sortIconEmitidas('lmg')}</th>
+                      <th style={thSort} onClick={() => handleSortEmitidas('lmg')}>LMG - Limite FAM{sortIconEmitidas('lmg')}</th>
+                      {showLmgLimiteFam && <th style={thSort} onClick={() => handleSortEmitidas('lmg')}>LMG Original{sortIconEmitidas('lmg')}</th>}
                       <th style={thSort} onClick={() => handleSortEmitidas('taxa')}>Taxa{sortIconEmitidas('taxa')}</th>
                       <th style={thSort} onClick={() => handleSortEmitidas('premio')}>Prêmio Previsto{sortIconEmitidas('premio')}</th>
                       <th style={thSort} onClick={() => handleSortEmitidas('data_entrada')}>Data Entrada{sortIconEmitidas('data_entrada')}</th>
-                      <th>Ações</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {operacoesEmitidas.map((op, i) => (
+                    {operacoesEmitidas.map((op, i) => {
+                      const lmgLimiteFam = Math.min(op.lmg ?? 0, 80_000_000)
+                      const temCap = (op.lmg ?? 0) > 80_000_000
+                      return (
                       <tr key={op.id} onClick={() => abrirEditar(op)} style={{ cursor: 'pointer' }}>
                         <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
                         <td>
@@ -2694,9 +2704,15 @@ export default function OperacoesPage() {
                           <div>{op.produto?.nome ?? '—'}</div>
                           {op.modalidade && <div style={{ fontSize: 11, color: '#6080a0' }}>{op.modalidade}</div>}
                         </td>
-                        <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: '#27a96c' }}>
-                          {op.lmg ? fmtMoeda(op.lmg) : '—'}
+                        <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: temCap ? '#a05010' : '#27a96c' }}>
+                          {fmtMoeda(lmgLimiteFam)}
+                          {temCap && <div style={{ fontSize: 10, color: '#a05010', fontWeight: 500 }}>↑ orig. {fmtMoeda(op.lmg ?? 0)}</div>}
                         </td>
+                        {showLmgLimiteFam && (
+                          <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: '#6080a0' }}>
+                            {op.lmg ? fmtMoeda(op.lmg) : '—'}
+                          </td>
+                        )}
                         <td style={{ fontSize: 13 }}>
                           {op.taxa ? fmtPercent(op.taxa / 100) : '—'}
                         </td>
@@ -2706,14 +2722,9 @@ export default function OperacoesPage() {
                         <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
                           {op.data_entrada ? fmtData(op.data_entrada) : '—'}
                         </td>
-                        <td>
-                          <button onClick={() => abrirEditar(op)}
-                            style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #a8d8b8', background: '#f0faf4', color: '#1a6040', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
-                            Editar
-                          </button>
-                        </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2748,15 +2759,18 @@ export default function OperacoesPage() {
                       <th style={thSort} onClick={() => handleSortPerdidas('corretora')}>Corretora{sortIconPerdidas('corretora')}</th>
                       <th style={thSort} onClick={() => handleSortPerdidas('cobertura')}>Cobertura / Modalidade{sortIconPerdidas('cobertura')}</th>
                       <th style={thSort} onClick={() => handleSortPerdidas('status')}>Status{sortIconPerdidas('status')}</th>
-                      <th style={thSort} onClick={() => handleSortPerdidas('lmg')}>LMG{sortIconPerdidas('lmg')}</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('lmg')}>LMG - Limite FAM{sortIconPerdidas('lmg')}</th>
+                      {showLmgLimiteFam && <th style={thSort} onClick={() => handleSortPerdidas('lmg')}>LMG Original{sortIconPerdidas('lmg')}</th>}
                       <th style={thSort} onClick={() => handleSortPerdidas('taxa')}>Taxa{sortIconPerdidas('taxa')}</th>
                       <th style={thSort} onClick={() => handleSortPerdidas('premio')}>Prêmio Previsto{sortIconPerdidas('premio')}</th>
                       <th style={thSort} onClick={() => handleSortPerdidas('data_entrada')}>Data Entrada{sortIconPerdidas('data_entrada')}</th>
-                      <th>Ações</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {operacoesPerdidas.map((op, i) => (
+                    {operacoesPerdidas.map((op, i) => {
+                      const lmgLimiteFam = Math.min(op.lmg ?? 0, 80_000_000)
+                      const temCap = (op.lmg ?? 0) > 80_000_000
+                      return (
                       <tr key={op.id} onClick={() => abrirEditar(op)} style={{ cursor: 'pointer', opacity: 0.82 }}>
                         <td style={{ color: '#888899', fontSize: 13 }}>{i + 1}</td>
                         <td>
@@ -2779,8 +2793,14 @@ export default function OperacoesPage() {
                           </span>
                         </td>
                         <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: '#888899' }}>
-                          {op.lmg ? fmtMoeda(op.lmg) : '—'}
+                          {fmtMoeda(lmgLimiteFam)}
+                          {temCap && <div style={{ fontSize: 10, color: '#a05010', fontWeight: 500 }}>↑ orig. {fmtMoeda(op.lmg ?? 0)}</div>}
                         </td>
+                        {showLmgLimiteFam && (
+                          <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: '#6080a0' }}>
+                            {op.lmg ? fmtMoeda(op.lmg) : '—'}
+                          </td>
+                        )}
                         <td style={{ fontSize: 13, color: '#888899' }}>
                           {op.taxa ? fmtPercent(op.taxa / 100) : '—'}
                         </td>
@@ -2790,14 +2810,9 @@ export default function OperacoesPage() {
                         <td style={{ fontSize: 13, color: '#888899', whiteSpace: 'nowrap' }}>
                           {op.data_entrada ? fmtData(op.data_entrada) : '—'}
                         </td>
-                        <td>
-                          <button onClick={() => abrirEditar(op)}
-                            style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5c5d0', background: '#f4f4f6', color: '#666677', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
-                            Editar
-                          </button>
-                        </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

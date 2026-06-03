@@ -191,11 +191,12 @@ export default function DashboardPage() {
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
 
+  const CAP_LMG = 80_000_000
   const opsFechadas = operacoes.filter(o => o.status === 'Emitido')
   const premioFechado = opsFechadas.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
-  const lmgFechado = opsFechadas.reduce((s, o) => s + (o.lmg ?? 0), 0)
+  const lmgFechado = opsFechadas.reduce((s, o) => s + Math.min(o.lmg ?? 0, CAP_LMG), 0)
   const taxaMediaFechada = lmgFechado > 0
-    ? opsFechadas.reduce((s, o) => s + (o.taxa ?? 0) * (o.lmg ?? 0) * Math.min(o.vigencia_anos ?? 1, 1), 0) / lmgFechado
+    ? opsFechadas.reduce((s, o) => s + (o.taxa ?? 0) * Math.min(o.lmg ?? 0, CAP_LMG) * Math.min(o.vigencia_anos ?? 1, 1), 0) / lmgFechado
     : 0
 
   const corretorasComTomadores = new Set(tomadores.map(t => t.corretora_id).filter(Boolean)).size
@@ -204,9 +205,9 @@ export default function DashboardPage() {
   const limiteAprovadoTotal = tomadoresAtivos.reduce((s, t) => s + (t.limite_aprovado ?? 0), 0)
 
   const corretoresUnicos = new Set(operacoes.map(o => o.corretora_id).filter(Boolean)).size
-  const lmgTotal = operacoes.reduce((s, o) => s + (o.lmg ?? 0), 0)
+  const lmgTotal = operacoes.reduce((s, o) => s + Math.min(o.lmg ?? 0, CAP_LMG), 0)
   const opsPotencial = operacoes.filter(o => !['Emitido', 'Recusado', 'Perdido'].includes(o.status ?? ''))
-  const lmgLiquido = opsPotencial.reduce((s, o) => s + (o.lmg ?? 0), 0)
+  const lmgLiquido = opsPotencial.reduce((s, o) => s + Math.min(o.lmg ?? 0, CAP_LMG), 0)
   const premioTotal = opsPotencial.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
 
   // ── chart data ────────────────────────────────────────────────────────────
