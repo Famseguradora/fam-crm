@@ -1140,10 +1140,24 @@ export default function OperacoesPage() {
     doc.setTextColor(232, 184, 75)
     doc.text('S E G U R A D O R A', 52, 11)
 
+    const statusSufixo: Record<string, string> = {
+      'Para Analisar': 'Para Analisar',
+      'Em Análise':    'Em Análise',
+      'Interrompido':  'Interrompidas',
+      'Comitê':        'Comitê',
+      'Aprovado':      'Aprovadas',
+      'Emitido':       'Emitidas',
+      'Perdido':       'Perdidas',
+      'Recusado':      'Recusadas',
+    }
+    const tituloPrincipal = filtroStatus.length > 0
+      ? 'Operações ' + filtroStatus.map(s => statusSufixo[s] ?? s).join(' / ')
+      : 'Operações / Subscrição'
+
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(13)
     doc.setTextColor(255, 255, 255)
-    doc.text('Operações / Subscrição', 52, 19)
+    doc.text(tituloPrincipal, 52, 19)
 
     const tituloFiltros: string[] = []
     if (filtroStatus.length > 0) tituloFiltros.push(filtroStatus.join('/'))
@@ -1378,7 +1392,7 @@ export default function OperacoesPage() {
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(8)
       doc.setTextColor(39, 169, 108)
-      doc.text('Relatório de Emissões', 52, 24)
+      doc.text('Relatório: "Emitidas"', 52, 24)
 
       doc.setFontSize(8)
       doc.setTextColor(160, 192, 232)
@@ -1532,7 +1546,7 @@ export default function OperacoesPage() {
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(8)
       doc.setTextColor(180, 180, 190)
-      doc.text('Relatório de Negócios Encerrados', 52, 24)
+      doc.text('Relatório: "Perdidas/Recusadas"', 52, 24)
 
       doc.setFontSize(8)
       doc.setTextColor(160, 192, 232)
