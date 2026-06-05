@@ -389,22 +389,22 @@ export default function DashboardPage() {
           <div style={{ fontSize: 11, fontWeight: 700, color: '#e8b84b', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 18 }}>
             🏆 Operações Fechadas — Destaque
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 20, alignItems: 'start' }}>
-            <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 20, alignItems: 'start' }}>
+            <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>QTD. Fechadas</div>
-              <div style={{ fontSize: 40, fontWeight: 900, color: 'white', lineHeight: 1 }}>{opsFechadas.length}</div>
+              <div style={{ fontSize: 'clamp(28px, 8vw, 40px)', fontWeight: 900, color: 'white', lineHeight: 1 }}>{opsFechadas.length}</div>
             </div>
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>Prêmio Total Fechado</div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: '#e8b84b', lineHeight: 1 }}>{fmtBRL(premioFechado)}</div>
+              <div style={{ fontSize: 'clamp(19px, 5vw, 28px)', fontWeight: 800, color: '#e8b84b', lineHeight: 1.05, overflowWrap: 'anywhere' }}>{fmtBRL(premioFechado)}</div>
             </div>
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>LMG Total Fechado</div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: '#6ab0e8', lineHeight: 1 }}>{fmtBRL(lmgFechado)}</div>
+              <div style={{ fontSize: 'clamp(19px, 5vw, 28px)', fontWeight: 800, color: '#6ab0e8', lineHeight: 1.05, overflowWrap: 'anywhere' }}>{fmtBRL(lmgFechado)}</div>
             </div>
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>Taxa Méd. Ponderada</div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: '#e8b84b', lineHeight: 1 }}>{fmtPercent(taxaMediaFechada / 100)}</div>
+              <div style={{ fontSize: 'clamp(19px, 5vw, 28px)', fontWeight: 800, color: '#e8b84b', lineHeight: 1.05, overflowWrap: 'anywhere' }}>{fmtPercent(taxaMediaFechada / 100)}</div>
             </div>
           </div>
         </div>

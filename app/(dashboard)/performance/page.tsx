@@ -496,7 +496,7 @@ export default function PerformancePage() {
           {(show('novas_operacoes') || show('ops_emitidas') || show('ops_recusadas')) && (
             <div style={{ marginBottom: 28 }}>
               <SectionTitle icon="📋" label="Produção" cor="#2255a4" />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
                 {show('novas_operacoes') && (
                   <KPICard
                     label="Novas Operações"
@@ -531,7 +531,7 @@ export default function PerformancePage() {
           {(show('premio_total') || show('lmg_total') || show('ticket_medio')) && (
             <div style={{ marginBottom: 28 }}>
               <SectionTitle icon="💰" label="Financeiro" cor="#e8b84b" />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
                 {show('premio_total') && (
                   <KPICard
                     label="Prêmio Previsto Total"
@@ -569,7 +569,7 @@ export default function PerformancePage() {
           {(show('taxa_aprovacao') || show('taxa_perda')) && (
             <div style={{ marginBottom: 28 }}>
               <SectionTitle icon="📈" label="Eficiência" cor="#16a34a" />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
                 {show('taxa_aprovacao') && (
                   <div style={{ ...cardBase, borderTop: '3px solid #16a34a' }}>
                     <div style={kpiLabel}>Taxa de Aprovação</div>
@@ -622,9 +622,7 @@ export default function PerformancePage() {
               <SectionTitle icon="🔻" label="Pipeline" cor="#3070c8" />
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: [show('temperatura'), show('prioridade'), show('funil_texto')].filter(Boolean).length === 3
-                  ? 'repeat(3,1fr)' : [show('temperatura'), show('prioridade'), show('funil_texto')].filter(Boolean).length === 2
-                  ? 'repeat(2,1fr)' : '1fr',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
                 gap: 14,
               }}>
                 {show('temperatura') && (
@@ -675,9 +673,7 @@ export default function PerformancePage() {
               <SectionTitle icon="👥" label="Carteira" cor="#6030a0" />
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: [show('novos_tomadores'), show('tomadores_ativos'), show('porte_tomadores')].filter(Boolean).length === 3
-                  ? 'repeat(3,1fr)' : [show('novos_tomadores'), show('tomadores_ativos'), show('porte_tomadores')].filter(Boolean).length === 2
-                  ? 'repeat(2,1fr)' : '1fr',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
                 gap: 14,
               }}>
                 {show('novos_tomadores') && (
@@ -749,7 +745,7 @@ export default function PerformancePage() {
                   </div>
                 )}
 
-                <div style={{ display: 'grid', gridTemplateColumns: show('grafico_modalidades') && show('grafico_corretoras') ? '1fr 1fr' : '1fr', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14 }}>
                   {show('grafico_modalidades') && (
                     <div style={cardBase}>
                       <div style={{ fontSize: 13, fontWeight: 700, color: '#102040', marginBottom: 16 }}>

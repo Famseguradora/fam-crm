@@ -2062,7 +2062,7 @@ export default function OperacoesPage() {
       )}
 
       {/* Abas internas */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: '2px solid #d0e4f5', alignItems: 'flex-end' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', rowGap: 6, gap: 4, marginBottom: 24, borderBottom: '2px solid #d0e4f5', alignItems: 'flex-end' }}>
         {([
           { id: 'operacoes', label: '📋 Operações' },
           { id: 'comite', label: '🏛 Comitê' },
