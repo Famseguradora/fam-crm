@@ -24,7 +24,7 @@ export default function InstallPrompt() {
       (window.navigator as unknown as { standalone?: boolean }).standalone === true
     if (standalone) return // já instalado
     if (localStorage.getItem(DISMISS_KEY)) return // já dispensado
-    const isMobile = window.matchMedia('(max-width: 768px)').matches
+    const isMobile = window.matchMedia('(max-width: 768px), (max-height: 600px)').matches
     if (!isMobile) return // foco no celular
 
     const ios = /iPad|iPhone|iPod/.test(navigator.userAgent)

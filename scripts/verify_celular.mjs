@@ -82,6 +82,22 @@ async function checarOverflow(page, tela) {
   }
 }
 
+// Confere se o app está em modo CELULAR: hambúrguer ☰ visível e SEM a barra
+// lateral / abas de desktop. É justamente em PAISAGEM que o layout de desktop
+// costuma "vazar" (a tela fica larga e o app se acha um computador).
+async function assertModoCelular(page, tela) {
+  const burger = await page.locator('button[aria-label="Abrir menu"]').first().isVisible().catch(() => false)
+  const abasDesktop = await page.locator('button:has-text("📊 Dashboard")').first().isVisible().catch(() => false)
+  if (!burger || abasDesktop) {
+    const motivo = !burger ? 'sem hambúrguer ☰ (layout desktop vazou)' : 'abas/barra de desktop visíveis no celular'
+    problemas.push({ tela, achados: [{ tag: 'layout', cls: '', right: 0, vw: 0, txt: motivo }] })
+    console.log(`  ⚠ ${tela}: LAYOUT DESKTOP VAZOU — ${motivo} (☰=${burger}, abasDesktop=${abasDesktop})`)
+    return false
+  }
+  console.log(`  ✓ ${tela}: modo celular correto (☰ visível, sem barra/abas de desktop)`)
+  return true
+}
+
 // Rola a tela inteira devagar (você vê) e tira prints de topo + fim.
 async function percorrerTela(page, nome) {
   console.log(`\n▶ Tela: ${nome}`)
@@ -153,8 +169,9 @@ try {
   try { writeFileSync(SESSION, JSON.stringify(await ctx.storageState(), null, 2)) } catch { /* ok */ }
   console.log('  ✓ autenticado')
 
-  // ── Dashboard ──
+  // ── Dashboard (retrato) ──
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' })
+  await assertModoCelular(page, 'retrato-dashboard')
   await percorrerTela(page, 'dashboard')
 
   // ── Drawer (menu hambúrguer) ──
@@ -201,13 +218,43 @@ try {
     }
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // VARREDURA EM PAISAGEM (celular DEITADO) — aqui o layout de desktop costuma
+  // vazar (barra lateral + abas de topo). Giramos a tela e conferimos cada uma.
+  // ════════════════════════════════════════════════════════════════════════
+  console.log('\n📱↺ Girando para PAISAGEM (celular deitado, 844×390)…')
+  await page.setViewportSize({ width: 844, height: 390 })
+  await pause(page, 800)
+  for (const [rota, nome] of [
+    ['/', 'dashboard'],
+    ['/operacoes', 'operacoes'],
+    ['/tomadores', 'tomadores'],
+  ]) {
+    await page.goto(`${BASE}${rota}`, { waitUntil: 'networkidle' })
+    await pause(page, 1100)
+    console.log(`\n▶ Paisagem: ${nome}`)
+    await page.evaluate(() => window.scrollTo(0, 0)); await pause(page, 300)
+    await page.screenshot({ path: `${OUT}/cel-paisagem-${nome}.png` })
+    await assertModoCelular(page, `paisagem-${nome}`)
+    await checarOverflow(page, `paisagem-${nome}`)
+  }
+  // Abre o menu em paisagem p/ garantir que o drawer (e não a barra fixa) é o caminho.
+  try {
+    const bp = page.locator('button[aria-label="Abrir menu"]')
+    if (await bp.first().isVisible().catch(() => false)) {
+      await bp.first().click(); await pause(page, 700)
+      await page.screenshot({ path: `${OUT}/cel-paisagem-drawer.png` })
+    }
+  } catch { /* ok */ }
+  await page.setViewportSize({ width: 390, height: 844 }) // volta ao retrato
+
   // ── Relatório final ──
   console.log('\n══════════════════════════════════════════')
   if (problemas.length === 0) {
-    console.log('✅ RESULTADO: nenhuma tela estourou a largura do celular.')
+    console.log('✅ RESULTADO: tudo certo — retrato E paisagem, sem barra de desktop e sem estouro de largura.')
   } else {
-    console.log(`⚠ RESULTADO: ${problemas.length} tela(s) com estouro de largura — revisar:`)
-    for (const p of problemas) console.log(`   • ${p.tela} (${p.achados.length})`)
+    console.log(`⚠ RESULTADO: ${problemas.length} problema(s) — revisar:`)
+    for (const p of problemas) console.log(`   • ${p.tela}: ${p.achados[0].txt}`)
   }
   console.log(`\n📸 Prints salvos em: ${OUT}/cel-*.png`)
   console.log('══════════════════════════════════════════')

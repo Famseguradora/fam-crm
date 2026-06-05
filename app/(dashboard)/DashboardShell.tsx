@@ -58,7 +58,11 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   useEffect(() => {
-    const mq = window.matchMedia('(max-width: 768px)')
+    // Celular em QUALQUER orientação: largura pequena (retrato) OU altura
+    // pequena (paisagem — ao deitar o celular a largura passa de 768px, mas a
+    // altura cai p/ ~390px). Sem o 2º critério, o celular deitado virava
+    // "desktop" e aparecia a barra lateral + abas de cima.
+    const mq = window.matchMedia('(max-width: 768px), (max-height: 600px)')
     const apply = () => setIsMobile(mq.matches)
     apply()
     mq.addEventListener('change', apply)

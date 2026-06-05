@@ -248,8 +248,8 @@ body {
   .form-field.full { grid-column: 1; }
 }
 
-/* ── Ajustes mobile (≤768px) ── */
-@media (max-width: 768px) {
+/* ── Ajustes mobile (≤768px de largura OU ≤600px de altura = celular deitado) ── */
+@media (max-width: 768px), (max-height: 600px) {
   body { font-size: 14px; }
 
   /* KPI cards: menos padding, empilham 1–2 por linha */
