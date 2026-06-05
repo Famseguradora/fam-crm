@@ -183,3 +183,14 @@ export interface DashboardConfig {
   habilitado: boolean
   posicao: number
 }
+
+// Voto do Comitê (votação remota dos diretores via WhatsApp) — estrutura futura.
+export interface ComiteVoto {
+  id: string
+  operacao_id: string
+  usuario_id: string
+  voto: 'aprovar' | 'reprovar'
+  canal: string
+  observacao: string | null
+  created_at: string
+}

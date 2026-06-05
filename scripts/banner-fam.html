@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1024px; height: 536px; }
+  .banner {
+    width: 1024px;
+    height: 536px;
+    background: linear-gradient(135deg, #0a1628 0%, #102040 45%, #1e4080 100%);
+    display: flex;
+    align-items: center;
+    gap: 44px;
+    padding: 0 80px;
+    position: relative;
+    overflow: hidden;
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+  /* brilho decorativo */
+  .glow {
+    position: absolute;
+    width: 520px; height: 520px;
+    right: -120px; top: -160px;
+    background: radial-gradient(circle, rgba(232,184,75,0.18) 0%, rgba(232,184,75,0) 70%);
+    border-radius: 50%;
+  }
+  .mark {
+    width: 168px; height: 168px;
+    background: #0a1628;
+    border: 3px solid #e8b84b;
+    border-radius: 28px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+  }
+  .mark span {
+    color: #e8b84b;
+    font-size: 116px;
+    font-weight: bold;
+    line-height: 1;
+    margin-top: 6px;
+  }
+  .text { position: relative; z-index: 2; }
+  .brand {
+    color: #ffffff;
+    font-size: 76px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    line-height: 1;
+  }
+  .brand .gold { color: #e8b84b; }
+  .sub {
+    margin-top: 18px;
+    color: #a0c0e8;
+    font-size: 30px;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+  .rule {
+    margin-top: 22px;
+    width: 220px; height: 4px;
+    background: #e8b84b;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+  <div class="banner">
+    <div class="glow"></div>
+    <div class="mark"><span>F</span></div>
+    <div class="text">
+      <div class="brand">FAM <span class="gold">Seguradora</span></div>
+      <div class="sub">Painel de Operações</div>
+      <div class="rule"></div>
+    </div>
+  </div>
+</body>
+</html>
