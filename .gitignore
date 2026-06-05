@@ -46,3 +46,7 @@ next-env.d.ts
 /mobile-shots/
 /verify_*.png
 /playwright-state.json
+
+# backup do CRM: arquivos de backup, caso alguém gere dentro do repo por engano
+*.json.gz
+*.dump
