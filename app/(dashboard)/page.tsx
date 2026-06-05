@@ -389,7 +389,7 @@ export default function DashboardPage() {
           <div style={{ fontSize: 11, fontWeight: 700, color: '#e8b84b', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 18 }}>
             🏆 Operações Fechadas — Destaque
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 1fr', gap: 32, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 20, alignItems: 'start' }}>
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>QTD. Fechadas</div>
               <div style={{ fontSize: 40, fontWeight: 900, color: 'white', lineHeight: 1 }}>{opsFechadas.length}</div>
@@ -417,7 +417,7 @@ export default function DashboardPage() {
             <span style={dot('#2255a4')} />
             Tomadores — Resumo
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 12, marginBottom: 24 }}>
             {[
               { label: 'Corretoras', value: fmtNum(totalCorretoras), sub: 'Total recebidas', accent: '#2255a4', gold: false },
               { label: 'Corretoras com Tomadores Cadastrados', value: fmtNum(corretorasComTomadores), sub: 'Cadastradas únicas', accent: '#2255a4', gold: false },
@@ -443,7 +443,7 @@ export default function DashboardPage() {
             <span style={dot('#16a34a')} />
             Operações — Resumo
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 28 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 12, marginBottom: 28 }}>
             {[
               { label: 'Corretoras', value: fmtNum(corretoresUnicos), sub: 'Únicas em operações', dark: false },
               { label: 'Total de Operações', value: fmtNum(operacoes.length), sub: 'Todas as operações', dark: false },
@@ -473,7 +473,7 @@ export default function DashboardPage() {
 
       {/* ── Charts 2-col ── */}
       {showChartsGrid && (
-        <div style={{ display: 'grid', gridTemplateColumns: showLeftCol && showRightCol ? '1fr 1fr' : '1fr', gap: 20, marginBottom: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: showLeftCol && showRightCol ? 'repeat(auto-fit, minmax(320px, 1fr))' : '1fr', gap: 20, marginBottom: 20 }}>
 
           {/* LEFT: TOMADORES */}
           {showLeftCol && (
