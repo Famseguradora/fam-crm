@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fmtDataExtenso } from '@/lib/utils'
 import { DateRangeProvider } from '@/lib/context/date-range-context'
+import InstallPrompt from './InstallPrompt'
 // import NewsTicker from './NewsTicker'
 
 interface Props {
@@ -32,6 +33,9 @@ const TABS: Tab[] = [
   { label: '📦 Produtos',   href: '/produtos',   adminOnly: true },
 ]
 
+// Telas essenciais que aparecem no menu do app no celular (as demais ficam só no desktop)
+const MOBILE_NAV_HREFS = ['/', '/operacoes', '/tomadores']
+
 const SUBSCRICAO_ITEMS: { label: string; href: string; icon: string; disabled?: boolean }[] = []
 
 const PERFORMANCE_ITEMS = [
@@ -50,6 +54,19 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
   const isAdmin = perfilUsuario === 'admin'
   const hoje = fmtDataExtenso()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [isMobile, setIsMobile] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)')
+    const apply = () => setIsMobile(mq.matches)
+    apply()
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
+  }, [])
+
+  // Fecha o drawer ao navegar
+  useEffect(() => { setDrawerOpen(false) }, [pathname])
 
   async function handleLogout() {
     await supabase.auth.signOut()
@@ -144,32 +161,44 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
       {/* ── Header ── */}
       <div style={{
         background: 'linear-gradient(135deg,#0a1628 0%,#1a3560 60%,#2255a4 100%)',
-        padding: '0 32px',
+        padding: isMobile ? '0 14px' : '0 32px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        height: 64,
+        height: isMobile ? 56 : 64,
         boxShadow: '0 2px 16px rgba(10,22,40,.4)',
         flexShrink: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12 }}>
+          {isMobile && (
+            <button
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Abrir menu"
+              style={{
+                background: 'transparent', border: 'none', color: 'white',
+                fontSize: 24, lineHeight: 1, cursor: 'pointer', padding: '6px 8px 6px 0',
+              }}
+            >☰</button>
+          )}
           <div style={{
-            width: 38, height: 38,
+            width: isMobile ? 32 : 38, height: isMobile ? 32 : 38,
             background: 'linear-gradient(135deg,#3070c8,#a0c0e8)',
             borderRadius: 8,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 700, fontSize: 18, color: 'white',
+            fontWeight: 700, fontSize: isMobile ? 16 : 18, color: 'white', flexShrink: 0,
           }}>F</div>
           <div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: 'white' }}>FAM Seguradora</div>
-            <div style={{ fontSize: 11, color: '#a0c0e8', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
-              Controle Comercial
-            </div>
+            <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: 'white' }}>FAM Seguradora</div>
+            {!isMobile && (
+              <div style={{ fontSize: 11, color: '#a0c0e8', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+                Controle Comercial
+              </div>
+            )}
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          <div style={{ color: '#a0c0e8', fontSize: 13 }}>{hoje}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20 }}>
+          {!isMobile && <div style={{ color: '#a0c0e8', fontSize: 13 }}>{hoje}</div>}
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
             borderLeft: '1px solid rgba(255,255,255,.15)', paddingLeft: 20,
@@ -223,7 +252,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
       <div style={{
         background: '#102040',
         padding: '0 32px',
-        display: 'flex',
+        display: isMobile ? 'none' : 'flex',
         gap: 4,
         borderBottom: '2px solid #1e4080',
         overflowX: 'auto',
@@ -314,7 +343,8 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
       {/* ── Body row ── */}
       <div style={{ display: 'flex', flex: 1 }}>
 
-        {/* ── Sidebar ── */}
+        {/* ── Sidebar (desktop) ── */}
+        {!isMobile && (
         <div style={{
           width: sidebarW,
           minWidth: sidebarW,
@@ -400,14 +430,69 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
             <SidebarBtn href="/usuarios" icon="⚙️" label="Usuários" />
           )}
         </div>
+        )}
 
         {/* ── Conteúdo ── */}
-        <div style={{ flex: 1, padding: '28px 32px', minWidth: 0 }}>
+        <div style={{ flex: 1, padding: isMobile ? '16px 12px' : '28px 32px', minWidth: 0 }}>
           <DateRangeProvider initialDate={dataInicio}>
             {children}
           </DateRangeProvider>
         </div>
       </div>
+
+      {/* ── Drawer de navegação (mobile) ── */}
+      {isMobile && drawerOpen && (
+        <>
+          <div
+            onClick={() => setDrawerOpen(false)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(5,12,25,.55)', zIndex: 200 }}
+          />
+          <div style={{
+            position: 'fixed', top: 0, left: 0, bottom: 0, width: 256, maxWidth: '82vw',
+            background: '#0d1e3a', borderRight: '1px solid #1a3560', zIndex: 201,
+            display: 'flex', flexDirection: 'column', overflowY: 'auto',
+            boxShadow: '2px 0 24px rgba(0,0,0,.5)',
+          }}>
+            {/* Cabeçalho do drawer */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '14px 16px', borderBottom: '1px solid #1a3560',
+            }}>
+              <span style={{ color: 'white', fontWeight: 700, fontSize: 15 }}>Menu</span>
+              <button
+                onClick={() => setDrawerOpen(false)}
+                aria-label="Fechar menu"
+                style={{ background: 'transparent', border: 'none', color: '#a0c0e8', fontSize: 22, lineHeight: 1, cursor: 'pointer', padding: 4 }}
+              >✕</button>
+            </div>
+
+            {/* Navegação essencial no mobile: Dashboard, Operações, Tomadores.
+                Telas de admin/cadastro (Corretoras, Produtos, Sistema, Usuários…)
+                ficam disponíveis só no desktop. */}
+            <div style={{ paddingTop: 8 }}>
+              {TABS.filter((t) => MOBILE_NAV_HREFS.includes(t.href)).map((tab) => {
+                const isActive = tab.href === '/' ? pathname === '/' : pathname.startsWith(tab.href)
+                return (
+                  <button
+                    key={tab.href}
+                    onClick={() => { router.push(tab.href); setDrawerOpen(false) }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                      padding: '14px 16px', background: isActive ? 'rgba(232,184,75,.08)' : 'transparent',
+                      border: 'none', borderLeft: isActive ? '3px solid #e8b84b' : '3px solid transparent',
+                      color: isActive ? 'white' : '#a0c0e8', fontFamily: 'inherit', fontSize: 16,
+                      fontWeight: 600, cursor: 'pointer', textAlign: 'left', whiteSpace: 'nowrap',
+                    }}
+                  >{tab.label}</button>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Banner de instalação do app (mobile) */}
+      <InstallPrompt />
 
     </div>
   )

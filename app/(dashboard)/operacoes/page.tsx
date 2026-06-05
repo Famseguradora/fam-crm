@@ -170,6 +170,7 @@ export default function OperacoesPage() {
   const [salvandoComentario, setSalvandoComentario] = useState(false)
   const [modoBook, setModoBook] = useState<'emitidas' | 'book'>('emitidas')
   const [showLmgLimiteFam, setShowLmgLimiteFam] = useState(false)
+  const [exposicaoAberta, setExposicaoAberta] = useState(true)
 
   // ── Cadastro Básico Tomador ──
   const [mostrarFormTomador, setMostrarFormTomador] = useState(false)
@@ -2979,11 +2980,36 @@ export default function OperacoesPage() {
 
             {/* ── EXPOSIÇÃO DO PORTFÓLIO ── */}
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#1a2a3a', marginBottom: 12 }}>
-                📊 Exposição do Portfólio — {modoBook === 'book' ? 'Book: Aprovadas + Emitidas' : 'Só Emitidas'}
-                <span style={{ fontSize: 12, fontWeight: 400, color: '#6080a0', marginLeft: 6 }}>{modoBook === 'book' ? '(Aprovadas + Emitidas)' : '(apenas Emitidas)'}</span>
-              </div>
-              {bookAtualOps.length === 0 ? (
+              <button
+                onClick={() => setExposicaoAberta(v => !v)}
+                title={exposicaoAberta ? 'Recolher exposição do portfólio' : 'Expandir exposição do portfólio'}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                  background: exposicaoAberta ? 'transparent' : '#f0f6ff',
+                  border: exposicaoAberta ? 'none' : '1.5px solid #d0e4f5',
+                  borderRadius: 10, padding: exposicaoAberta ? '0 0 12px' : '10px 14px',
+                  marginBottom: exposicaoAberta ? 0 : 0, cursor: 'pointer', textAlign: 'left',
+                  fontFamily: 'inherit',
+                }}
+              >
+                <span style={{ fontSize: 12, color: '#3070c8', flexShrink: 0, transition: 'transform .15s' }}>{exposicaoAberta ? '▼' : '▶'}</span>
+                <span style={{ fontWeight: 700, fontSize: 14, color: '#1a2a3a' }}>
+                  📊 Exposição do Portfólio — {modoBook === 'book' ? 'Book: Aprovadas + Emitidas' : 'Só Emitidas'}
+                </span>
+                {exposicaoAberta ? (
+                  <span style={{ fontSize: 12, fontWeight: 400, color: '#6080a0' }}>{modoBook === 'book' ? '(Aprovadas + Emitidas)' : '(apenas Emitidas)'}</span>
+                ) : bookAtualOps.length > 0 ? (
+                  <span style={{ fontSize: 12, fontWeight: 400, color: '#6080a0', marginLeft: 'auto', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                    <span><b style={{ color: '#e8b84b' }}>{fmtMoeda(bookPremioTotal)}</b> prêmio</span>
+                    <span>TMP <b style={{ color: '#3070c8' }}>{fmtPercent(bookTmpTotal / 100)}</b></span>
+                    <span><b style={{ color: '#1a4080' }}>{bookAtualOps.length}</b> oper.</span>
+                    <span style={{ color: '#3070c8', fontWeight: 600 }}>ver gráficos ▸</span>
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 12, fontWeight: 400, color: '#6080a0', marginLeft: 'auto' }}>sem operações no book</span>
+                )}
+              </button>
+              {!exposicaoAberta ? null : bookAtualOps.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: 28, color: '#6080a0', background: '#f8fafc', borderRadius: 10, border: '1.5px dashed #c5d5e8' }}>Nenhuma operação {modoBook === 'book' ? 'aprovada ou emitida' : 'emitida'} no book ainda.</div>
               ) : (
                 <>
@@ -3050,9 +3076,9 @@ export default function OperacoesPage() {
                   </div>
                   {/* Gráficos */}
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                    <div style={{ flex: '2 1 380px', background: 'white', borderRadius: 10, border: '1.5px solid #d0e4f5', padding: '14px', minHeight: 240 }}>
+                    <div style={{ flex: '1 1 420px', background: 'white', borderRadius: 10, border: '1.5px solid #d0e4f5', padding: '14px', minHeight: 340 }}>
                       <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 8 }}>Prêmio e Taxa Média Ponderada por Modalidade</div>
-                      <ResponsiveContainer width="100%" height={195}>
+                      <ResponsiveContainer width="100%" height={285}>
                         <ComposedChart data={exposicaoPorModalidade} margin={{ top: 4, right: 30, bottom: 36, left: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#e0ecff" />
                           <XAxis dataKey="modalidade" tick={{ fontSize: 10, fill: '#6080a0' }} angle={-28} textAnchor="end" interval={0} />
@@ -3064,9 +3090,9 @@ export default function OperacoesPage() {
                         </ComposedChart>
                       </ResponsiveContainer>
                     </div>
-                    <div style={{ flex: '1 1 260px', background: 'white', borderRadius: 10, border: '1.5px solid #d0e4f5', padding: '14px', minHeight: 240 }}>
+                    <div style={{ flex: '1 1 380px', background: 'white', borderRadius: 10, border: '1.5px solid #d0e4f5', padding: '14px', minHeight: 340 }}>
                       <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 8 }}>Top Tomadores — Prêmio</div>
-                      <ResponsiveContainer width="100%" height={195}>
+                      <ResponsiveContainer width="100%" height={285}>
                         <BarChart layout="vertical" data={exposicaoPorTomador} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
                           <XAxis type="number" tickFormatter={(v: number) => `${(v/1000).toFixed(0)}k`} tick={{ fontSize: 10, fill: '#6080a0' }} />
                           <YAxis type="category" dataKey="nome" tick={{ fontSize: 10, fill: '#1a2a3a' }} width={88} />

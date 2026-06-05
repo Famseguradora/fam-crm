@@ -1,0 +1,92 @@
+name: Backup Supabase DB
+
+# Backup automatico do FAM CRM (Supabase tier gratuito).
+# Roda Segunda / Quarta / Sexta as 03:00 BRT.
+# Mantem 3 geracoes (retention-days: 8 + cadencia 3x/semana = 3 backups disponiveis,
+# cada um de um dia diferente => 3 linhas de defesa).
+#
+# Secrets necessarios (Settings -> Secrets and variables -> Actions):
+#   SUPABASE_DB_URL        (obrigatorio) URI do Session Pooler. Ver BACKUP.md.
+#   BACKUP_PASSPHRASE      (opcional)    se definido, criptografa os dumps com AES256.
+#   SUPABASE_URL           (opcional)    necessario p/ trilha 2 (backup do bucket fam-anexos).
+#   SUPABASE_SERVICE_ROLE_KEY (opcional) necessario p/ trilha 2.
+
+on:
+  schedule:
+    # 06:00 UTC = 03:00 BRT — Segunda(1), Quarta(3), Sexta(5)
+    - cron: "0 6 * * 1,3,5"
+  workflow_dispatch: {}   # permite rodar manualmente pelo botao "Run workflow"
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (para o script de storage)
+        uses: actions/checkout@v4
+
+      - name: Instalar pg_dump (PostgreSQL client 17)
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Gerar dump do banco
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::Secret SUPABASE_DB_URL nao configurado. Veja BACKUP.md."
+            exit 1
+          fi
+          STAMP=$(date +%Y-%m-%d)
+          pg_dump "$SUPABASE_DB_URL" \
+            --schema=public \
+            --clean --if-exists --no-owner --no-privileges \
+            | gzip > "fam-crm-backup-$STAMP.sql.gz"
+          echo "Dump gerado:"
+          ls -lh fam-crm-backup-*.sql.gz
+
+      - name: Backup do bucket fam-anexos (trilha 2, se configurado)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Trilha 2 (storage) nao configurada (faltam SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY). Pulando."
+            exit 0
+          fi
+          npm install --no-save @supabase/supabase-js@2
+          STAMP=$(date +%Y-%m-%d)
+          node scripts/backup-storage.mjs "fam-crm-anexos-$STAMP"
+          echo "Backup do storage gerado:"
+          ls -lh fam-crm-anexos-*.tar.gz || echo "Nenhum arquivo no bucket."
+
+      - name: Criptografar dumps (opcional, se BACKUP_PASSPHRASE definido)
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "BACKUP_PASSPHRASE nao definido. Backups ficam sem criptografia (artifacts de repo privado ja sao restritos)."
+            exit 0
+          fi
+          for f in fam-crm-backup-*.sql.gz fam-crm-anexos-*.tar.gz; do
+            [ -e "$f" ] || continue
+            gpg --batch --yes --symmetric --cipher-algo AES256 \
+              --passphrase "$BACKUP_PASSPHRASE" "$f"
+            rm -f "$f"
+          done
+          echo "Arquivos criptografados:"
+          ls -lh *.gpg
+
+      - name: Publicar artifact (mantem 8 dias = 3 geracoes)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fam-crm-backup-${{ github.run_id }}
+          path: |
+            fam-crm-backup-*.sql.gz
+            fam-crm-backup-*.sql.gz.gpg
+            fam-crm-anexos-*.tar.gz
+            fam-crm-anexos-*.tar.gz.gpg
+          if-no-files-found: error
+          retention-days: 8

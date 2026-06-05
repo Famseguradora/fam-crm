@@ -41,3 +41,8 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# artefatos de verificação visual (Playwright)
+/mobile-shots/
+/verify_*.png
+/playwright-state.json

@@ -247,3 +247,37 @@ body {
   .form-grid { grid-template-columns: 1fr; }
   .form-field.full { grid-column: 1; }
 }
+
+/* ── Ajustes mobile (≤768px) ── */
+@media (max-width: 768px) {
+  body { font-size: 14px; }
+
+  /* KPI cards: menos padding, empilham 1–2 por linha */
+  .kpi-card { min-width: 140px; padding: 14px 16px 12px; }
+  .kpi-value { font-size: 19px; }
+
+  /* Tabelas: fonte e padding compactos (o wrap já rola na horizontal) */
+  .fam-table { font-size: 13px; }
+  .fam-table thead th { padding: 9px 10px; }
+  .fam-table tbody td { padding: 8px 10px; }
+
+  /* Filtros: cada grupo ocupa a linha de forma confortável */
+  .filter-row { padding: 12px 14px; gap: 10px; }
+  .filter-group { flex: 1 1 150px; }
+
+  /* Cards e títulos */
+  .card-panel { padding: 16px; }
+  .section-title { font-size: 14px; }
+
+  /* Modal: ocupa a tela com folga nas bordas, ancorado embaixo */
+  .modal-overlay { align-items: flex-end; padding: 0; }
+  .modal-box {
+    padding: 20px 18px;
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: 16px 16px 0 0;
+  }
+
+  /* Botões com área de toque maior */
+  .btn-primary, .btn-secondary, .btn-export, .btn-danger { padding: 11px 18px; }
+}
