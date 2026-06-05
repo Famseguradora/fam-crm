@@ -402,7 +402,9 @@ export default function OperacoesPage() {
     const t = parseFloat(taxa.replace(',', '.'))
     const v = parseFloat(vigencia.replace(',', '.'))
     if (!isNaN(l) && !isNaN(t) && !isNaN(v) && t > 0 && v > 0) {
-      const premioAnual = l * t / 100
+      // Teto FAM: prêmio calculado sobre o LMG limitado a R$ 80 milhões.
+      const lCap = Math.min(l, 80_000_000)
+      const premioAnual = lCap * t / 100
       const total = periodo === 'Meses' ? (premioAnual / 12) * v : premioAnual * v
       return String(total.toFixed(2))
     }

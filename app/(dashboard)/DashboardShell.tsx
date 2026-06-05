@@ -406,6 +406,26 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
             ))}
           </div>
 
+          {/* Auditoria — OCULTA por enquanto (agente de análise financeira).
+              Para reativar: descomentar o bloco abaixo e reabilitar a tarefa
+              agendada (Enable-ScheduledTask "FAM CRM - Analise Financeira").
+          {(isAdmin || proprietario) && (
+            <div style={{ paddingTop: 8 }}>
+              {sidebarOpen && (
+                <div style={{
+                  fontSize: 10, fontWeight: 700, color: '#4a7ab5',
+                  letterSpacing: '1.5px', textTransform: 'uppercase',
+                  padding: '0 16px 8px',
+                  whiteSpace: 'nowrap',
+                }}>
+                  Auditoria
+                </div>
+              )}
+              <SidebarBtn href="/analise-financeira" icon="🔎" label="Análise Financeira" />
+            </div>
+          )}
+          */}
+
           {/* Configurações */}
           <div style={{ paddingTop: 8 }}>
             {sidebarOpen && (
