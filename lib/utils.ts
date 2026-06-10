@@ -160,6 +160,14 @@ export function badgeClassStatus(status: string): string {
 // Formata data para exibição: 2026-05-10 → 10/05/2026
 export function fmtData(iso: string): string {
   if (!iso) return '—'
+  // Datas puras (coluna DATE → 'YYYY-MM-DD') devem ser exibidas exatamente como
+  // gravadas. new Date('2026-06-10') é interpretado como meia-noite UTC e, ao
+  // formatar em pt-BR (UTC-3), volta um dia (09/06). Por isso formatamos direto.
+  const soData = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  if (soData) {
+    const [, ano, mes, dia] = soData
+    return `${dia}/${mes}/${ano}`
+  }
   const d = new Date(iso)
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }

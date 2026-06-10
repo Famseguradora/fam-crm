@@ -50,7 +50,7 @@ const FORM_TOM_INICIAL: FormTomador = {
   email: '', telefone: '', celular: '',
   cep: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '',
   responsavel: '', porte: '', prioridade: 'Normal', limite_aprovado: '', observacao: '',
-  status: 'Triagem', ativo: true, data_entrada: '',
+  status: 'Cadastro Basico', ativo: true, data_entrada: '',
 }
 
 const FORM_STATUS_INICIAL: FormStatus = { nome: '', cor: '#6080a0', ordem: '99', ativo: true }
@@ -566,7 +566,7 @@ export default function TomadoresPage() {
         limite_aprovado,
         observacao: col(row, 'observacao') || null,
         corretora_id,
-        status: statusCsv?.nome ?? 'Triagem',
+        status: statusCsv?.nome ?? 'Cadastro Basico',
         ativo: true,
         ...(created_at ? { created_at, updated_at: created_at } : {}),
       }
