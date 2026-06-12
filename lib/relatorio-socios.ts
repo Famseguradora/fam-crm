@@ -65,8 +65,9 @@ export function somaPercentualFilhos(filhos: SocioNode[]): number {
 }
 
 // ── PDF do organograma VISUAL (screenshot do DOM → jsPDF paisagem) ───────────
-// Captura o elemento (#id) via html2canvas e monta um PDF A4 paisagem com o
-// cabeçalho padrão FAM. Retorna um blob URL (suporta PDF grande no iframe/download).
+// Captura o elemento (#id) com html-to-image (renderização NATIVA do navegador
+// via SVG foreignObject = "foto" fiel, sem os erros de texto/emoji do html2canvas)
+// e monta um PDF A4 paisagem com o cabeçalho padrão FAM. Retorna um blob URL.
 export async function gerarPdfImagemOrganograma(
   elementId: string,
   subtitulo: string,
@@ -74,16 +75,15 @@ export async function gerarPdfImagemOrganograma(
   const el = document.getElementById(elementId)
   if (!el) return null
 
-  const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+  const [{ default: jsPDF }, { toCanvas }] = await Promise.all([
     import('jspdf'),
-    import('html2canvas'),
+    import('html-to-image'),
   ])
 
-  const canvas = await html2canvas(el, {
-    scale: 2,
-    useCORS: true,
-    logging: false,
+  const canvas = await toCanvas(el, {
+    pixelRatio: 2,
     backgroundColor: '#ffffff',
+    cacheBust: true,
   })
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })

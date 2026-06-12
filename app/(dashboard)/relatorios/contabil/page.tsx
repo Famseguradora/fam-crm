@@ -397,6 +397,158 @@ export default function RelatorioContabilPage() {
     }
   }
 
+  // ─── PDF do DOSSIÊ de UM tomador (cadastro + operações + organograma) ─────────
+  // Documento completo por tomador: cabeçalho FAM, dados cadastrais, operações
+  // emitidas vinculadas e o organograma societário (imagem ajustada p/ caber na página).
+  async function exportarPdfTomador(r: RelatorioTomador) {
+    setExportando(true)
+    try {
+      await new Promise(res => setTimeout(res, 60)) // garante o render offscreen do organograma
+      const [{ default: jsPDF }, { default: autoTable }, { toCanvas }] = await Promise.all([
+        import('jspdf'), import('jspdf-autotable'), import('html-to-image'),
+      ])
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+      const W = 297, H = 210, M = 8
+      const dataHoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
+      const horaAgora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+      const cabecalho = (subtitulo: string) => {
+        doc.setFillColor(10, 22, 40); doc.rect(0, 0, W, 26, 'F')
+        doc.setFillColor(232, 184, 75); doc.rect(0, 0, W, 2.5, 'F')
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(22); doc.setTextColor(255, 255, 255); doc.text('FAM', M, 17)
+        doc.setDrawColor(232, 184, 75); doc.setLineWidth(0.3); doc.line(48, 7, 48, 23)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(232, 184, 75); doc.text('S E G U R A D O R A', 52, 11)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(255, 255, 255); doc.text('Dossiê do Tomador', 52, 19)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(232, 184, 75)
+        doc.text(doc.splitTextToSize(subtitulo, 150)[0] ?? subtitulo, 52, 24)
+        doc.setFontSize(8); doc.setTextColor(160, 192, 232); doc.text(`Emitido em: ${dataHoje} às ${horaAgora}`, W - M, 11, { align: 'right' })
+        doc.setFontSize(6); doc.setTextColor(120, 140, 160); doc.text('Documento Confidencial · Gerado automaticamente pelo FAM CRM', W - M, 18, { align: 'right' })
+      }
+      const rodape = () => {
+        doc.setDrawColor(232, 184, 75); doc.setLineWidth(0.5); doc.line(M, H - 8, W - M, H - 8)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6); doc.setTextColor(120, 140, 160)
+        doc.text('FAM Seguradora — Relatório Confidencial', M, H - 4)
+        doc.text(`${dataHoje} às ${horaAgora}`, W - M, H - 4, { align: 'right' })
+      }
+      type DocLast = { lastAutoTable: { finalY: number } }
+      const t = r.tomador
+
+      // ── Página 1: cabeçalho + dados cadastrais ──────────────────────────────
+      cabecalho(t.razao_social)
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(16, 48, 96)
+      doc.text('Dados Cadastrais do Tomador', M, 34)
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const L = (txt: string): any => ({ content: txt, styles: { fontStyle: 'bold', fillColor: [238, 243, 249], textColor: [96, 128, 160] } })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const V = (txt: string | null | undefined): any => ({ content: (txt && String(txt).trim()) ? txt : '—' })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const full = (label: string, val: string | null | undefined): any[] => [L(label), { content: (val && String(val).trim()) ? val : '—', colSpan: 3 }]
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pair = (l1: string, v1: string | null | undefined, l2: string, v2: string | null | undefined): any[] => [L(l1), V(v1), L(l2), V(v2)]
+
+      const cidadeUF = [t.cidade, t.estado].filter(Boolean).join(' / ')
+      const portePrio = [t.porte, t.prioridade].filter(Boolean).join(' · ')
+      const telCel = [t.telefone && maskTelefone(t.telefone), t.celular && maskTelefone(t.celular)].filter(Boolean).join(' · ')
+      const endereco = [t.endereco, t.numero, t.complemento, t.bairro].filter(Boolean).join(', ')
+      const corretora = t.corretora?.nome_fantasia ?? t.corretora?.razao_social ?? ''
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dadosBody: any[][] = [
+        full('Razão Social', t.razao_social),
+        pair('Nome Fantasia', t.nome_fantasia, 'Status', t.status),
+        pair('CNPJ', t.cnpj ? maskCNPJ(t.cnpj) : '—', 'Corretora', corretora),
+        pair('Cidade / UF', cidadeUF, 'Limite Aprovado', t.limite_aprovado != null ? fmtMoeda(t.limite_aprovado) : '—'),
+        pair('Porte / Prioridade', portePrio, 'Data de Entrada', t.data_entrada ? fmtData(t.data_entrada) : '—'),
+        pair('Responsável', t.responsavel, 'E-mail', t.email),
+        full('Telefone / Celular', telCel),
+        full('Endereço', endereco),
+        ...(t.observacao ? [full('Observação', t.observacao)] : []),
+      ]
+
+      autoTable(doc, {
+        startY: 37,
+        margin: { left: M, right: M, bottom: 14 },
+        theme: 'grid',
+        body: dadosBody,
+        styles: { fontSize: 8, cellPadding: { top: 2.4, bottom: 2.4, left: 3, right: 3 }, font: 'helvetica', textColor: [30, 40, 60], lineColor: [219, 231, 243], lineWidth: 0.15, overflow: 'linebreak', valign: 'middle' },
+        columnStyles: { 0: { cellWidth: 42 }, 1: { cellWidth: 'auto' }, 2: { cellWidth: 42 }, 3: { cellWidth: 'auto' } },
+        didDrawPage: rodape,
+      })
+
+      // ── Operações emitidas vinculadas ───────────────────────────────────────
+      const colsOp = CAMPOS_OP.filter(c => c.key !== 'cnpj') // CNPJ já consta nos dados cadastrais
+      const tot = totaisTomador(r)
+      let y = (doc as unknown as DocLast).lastAutoTable.finalY + 8
+      if (y > H - 45) { doc.addPage(); y = 18 }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(16, 48, 96)
+      doc.text(`Operações Emitidas (${r.operacoes.length})`, M, y)
+
+      const bodyOp = r.operacoes.map(o => colsOp.map(c => c.pdf(o)))
+      const footOp = colsOp.map((c, i) => i === 0 ? 'TOTAL' : c.key === 'lmg' ? fmtMoeda(tot.lmg) : c.key === 'premio' ? fmtMoeda(tot.premio) : '')
+
+      autoTable(doc, {
+        startY: y + 3,
+        margin: { left: M, right: M, bottom: 14 },
+        head: [colsOp.map(c => c.label)],
+        body: bodyOp.length > 0 ? bodyOp : [colsOp.map((c, i) => i === 0 ? '(Nenhuma operação emitida)' : '—')],
+        foot: bodyOp.length > 0 ? [footOp] : undefined,
+        styles: { fontSize: 7, cellPadding: { top: 2.5, bottom: 2.5, left: 2.5, right: 2.5 }, font: 'helvetica', textColor: [30, 40, 60], lineColor: [210, 220, 235], lineWidth: 0.15, overflow: 'linebreak' },
+        headStyles: { fillColor: [48, 112, 200], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7 },
+        footStyles: { fillColor: [213, 229, 250], textColor: [16, 48, 96], fontStyle: 'bold', fontSize: 7 },
+        alternateRowStyles: { fillColor: [245, 247, 252] },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        didParseCell: (data: any) => { data.cell.styles.halign = colsOp[data.column.index]?.align ?? 'left' },
+        didDrawPage: rodape,
+      })
+
+      // ── Organograma societário (imagem ajustada p/ caber na página) ──────────
+      const temOrg = contarSocios(r.arvore) > 0 || r.diretores.length > 0
+      if (temOrg) {
+        let cap: { imgData: string; wpx: number; hpx: number } | null = null
+        const el = document.getElementById(`org-cap-${t.id}`)
+        if (el) {
+          const canvas = await toCanvas(el, { pixelRatio: 2, backgroundColor: '#ffffff', cacheBust: true })
+          cap = { imgData: canvas.toDataURL('image/jpeg', 0.92), wpx: canvas.width, hpx: canvas.height }
+        }
+        doc.addPage()
+        cabecalho(`${t.razao_social} — Estrutura Societária`)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(16, 48, 96)
+        doc.text('Organograma Societário', M, 34)
+        if (cap) {
+          const top = 38
+          const availW = W - M * 2
+          const availH = (H - 12) - top
+          const ratio = cap.wpx / cap.hpx
+          let drawW = availW
+          let drawH = drawW / ratio
+          if (drawH > availH) { drawH = availH; drawW = drawH * ratio } // caber em altura
+          const x = M + (availW - drawW) / 2 // centraliza horizontalmente
+          const yImg = top + (availH - drawH) / 2 // centraliza verticalmente na área útil
+          doc.addImage(cap.imgData, 'JPEG', x, yImg, drawW, drawH)
+        }
+        rodape()
+      }
+
+      // ── Numeração de páginas ────────────────────────────────────────────────
+      const totalPags = (doc as unknown as { internal: { getNumberOfPages: () => number } }).internal.getNumberOfPages()
+      for (let i = 1; i <= totalPags; i++) {
+        doc.setPage(i)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6); doc.setTextColor(120, 140, 160)
+        doc.text(`Página ${i} de ${totalPags}`, W / 2, H - 4, { align: 'center' })
+      }
+
+      const slug = t.razao_social.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'tomador'
+      setPdfPreviewLabel(`Dossiê — ${t.razao_social} · ${r.operacoes.length} operação(ões) emitida(s)`)
+      setPdfPreviewFilename(`FAM_Dossie_${slug}_${new Date().toISOString().slice(0, 10)}.pdf`)
+      setPdfPreviewUrl(URL.createObjectURL(doc.output('blob')))
+    } catch (err) {
+      console.error('Erro PDF do tomador:', err)
+    } finally {
+      setExportando(false)
+    }
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginBottom: 20 }}>
@@ -455,7 +607,14 @@ export default function RelatorioContabilPage() {
             {relatorio.map(r => {
               const tot = totaisTomador(r)
               return (
-                <button key={r.tomador.id} type="button" onClick={() => abrirDetalhe(r)} className="dossie-card">
+                <div
+                  key={r.tomador.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => abrirDetalhe(r)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirDetalhe(r) } }}
+                  className="dossie-card"
+                >
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
                     <strong style={{ fontSize: 15, color: '#0a1628', lineHeight: 1.25 }}>{r.tomador.razao_social}</strong>
                     <span className={`badge ${badgeClassTomador(r.tomador.status)}`} style={{ flexShrink: 0 }}>{r.tomador.status}</span>
@@ -471,8 +630,20 @@ export default function RelatorioContabilPage() {
                     <div><div className="dossie-mini-label">LMG (Limite FAM)</div><div className="dossie-mini-val">{fmtMoeda(tot.lmg)}</div></div>
                     <div style={{ textAlign: 'right' }}><div className="dossie-mini-label">Prêmio Previsto</div><div className="dossie-mini-val" style={{ color: '#16407a' }}>{fmtMoeda(tot.premio)}</div></div>
                   </div>
-                  <div style={{ marginTop: 12, fontSize: 12, fontWeight: 700, color: '#3070c8' }}>Ver dossiê →</div>
-                </button>
+                  <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#3070c8' }}>Ver dossiê →</span>
+                    <button
+                      type="button"
+                      className="btn-export"
+                      style={{ padding: '6px 12px', fontSize: 11.5 }}
+                      disabled={exportando}
+                      title="Exportar dossiê deste tomador em PDF (cadastro, operações e organograma)"
+                      onClick={(e) => { e.stopPropagation(); exportarPdfTomador(r) }}
+                    >
+                      📄 PDF
+                    </button>
+                  </div>
+                </div>
               )
             })}
           </div>
@@ -489,7 +660,18 @@ export default function RelatorioContabilPage() {
                 <span style={{ fontSize: 12, color: '#6080a0', fontWeight: 500 }}>{detalhe.tomador.cnpj ? maskCNPJ(detalhe.tomador.cnpj) : '—'}</span>
                 <span className={`badge ${badgeClassTomador(detalhe.tomador.status)}`}>{detalhe.tomador.status}</span>
               </div>
-              <button onClick={() => setDetalhe(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn-export"
+                  disabled={exportando}
+                  title="Exportar dossiê deste tomador em PDF (cadastro, operações e organograma)"
+                  onClick={() => exportarPdfTomador(detalhe)}
+                >
+                  📄 PDF do Tomador
+                </button>
+                <button onClick={() => setDetalhe(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
+              </div>
             </div>
 
             {/* Lado a lado: Tomador | Operações */}
@@ -566,9 +748,12 @@ export default function RelatorioContabilPage() {
         {relatorio.map(r => (
           <div key={r.tomador.id} style={{ marginBottom: 26, paddingBottom: 16, borderBottom: '1px solid #e0ecf8' }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: '#16407a', marginBottom: 6 }}>{r.tomador.razao_social}</div>
-            {contarSocios(r.arvore) === 0 && r.diretores.length === 0
-              ? <div style={{ color: '#6080a0', fontSize: 12 }}>Sem organograma cadastrado.</div>
-              : <OrganogramaView tomadorNome={r.tomador.razao_social} tomadorDoc={r.tomador.cnpj} arvore={r.arvore} diretores={r.diretores} readOnly />}
+            {/* wrapper com id próprio: fonte da captura individual no "PDF do Tomador" */}
+            <div id={`org-cap-${r.tomador.id}`} style={{ background: '#fff', display: 'inline-block', padding: 8 }}>
+              {contarSocios(r.arvore) === 0 && r.diretores.length === 0
+                ? <div style={{ color: '#6080a0', fontSize: 12 }}>Sem organograma cadastrado.</div>
+                : <OrganogramaView tomadorNome={r.tomador.razao_social} tomadorDoc={r.tomador.cnpj} arvore={r.arvore} diretores={r.diretores} readOnly />}
+            </div>
           </div>
         ))}
       </div>
