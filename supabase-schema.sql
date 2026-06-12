@@ -108,9 +108,10 @@ CREATE TRIGGER tomadores_updated_at
 -- ============================================================
 -- TABELA 5: OPERACOES
 -- Operações / Subscrições de seguro garantia
--- premio_previsto = min(lmg, 80M) × taxa ÷ 100 × vigencia_anos (automático)
+-- premio_previsto = min(lmg, 80M) × taxa ÷ 100 × vigencia_dias ÷ 365 (automático)
 --   • taxa em pontos percentuais (0,5 = 0,5%), por isso o ÷100
 --   • LMG limitado a R$ 80M (teto FAM) também no prêmio
+--   • pró-rata por DIAS exatos → precisão de ano bissexto (29/fev)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.operacoes (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -123,9 +124,11 @@ CREATE TABLE IF NOT EXISTS public.operacoes (
   temperatura      TEXT CHECK (temperatura IN ('Quente', 'Morno', 'Frio')),
   lmg              NUMERIC(18,2) NOT NULL DEFAULT 0,
   taxa             NUMERIC(8,6)  NOT NULL DEFAULT 0,
-  vigencia_anos    NUMERIC(5,2)  NOT NULL DEFAULT 1,
+  vigencia_anos    NUMERIC(10,2) NOT NULL DEFAULT 1,  -- valor digitado na unidade (anos/meses/dias)
+  vigencia_dias    INTEGER,                            -- nº EXATO de dias (precisão de ano bissexto)
   premio_previsto  NUMERIC(18,2) GENERATED ALWAYS AS
-                   (ROUND(LEAST(lmg, 80000000) * taxa * vigencia_anos / 100, 2)) STORED,
+                   (ROUND(LEAST(lmg, 80000000) * taxa / 100
+                          * COALESCE(vigencia_dias, ROUND(vigencia_anos * 365.0)) / 365.0, 2)) STORED,
   status           TEXT NOT NULL DEFAULT 'Em Análise',
   data_entrada     DATE,
   ativo            BOOLEAN NOT NULL DEFAULT TRUE,

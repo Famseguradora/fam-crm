@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskMoeda, fmtMoeda, fmtMoedaCurta, fmtData, fmtPercent, titleCase } from '@/lib/utils'
@@ -86,6 +86,74 @@ function autoTemp(novoStatus: string, tempAtual: string | null): string | null {
   return tempAtual
 }
 
+// ─── Vigência: cálculo de prazo com precisão de ano bissexto ───────────────────
+// O JavaScript Date já trata 29/fev nativamente (sem biblioteca externa). Toda a
+// conversão Anos↔Meses↔Dias↔Data é ancorada na DATA DE ENTRADA da operação, então
+// "1 ano" que cruza um 29/fev resulta em 366 dias e o prêmio fica exato.
+function parseDataLocal(iso: string | null | undefined): Date | null {
+  if (!iso) return null
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return null
+  return new Date(y, m - 1, d) // meia-noite local, sem deslocamento de fuso
+}
+function toISODate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+function addAnos(d: Date, n: number): Date { const r = new Date(d); r.setFullYear(r.getFullYear() + n); return r }
+function addMeses(d: Date, n: number): Date {
+  const r = new Date(d); const diaOrig = r.getDate()
+  r.setDate(1); r.setMonth(r.getMonth() + n)
+  // limita ao último dia do mês de destino (ex.: 31/jan + 1 mês = 28/29 fev)
+  const ultimoDia = new Date(r.getFullYear(), r.getMonth() + 1, 0).getDate()
+  r.setDate(Math.min(diaOrig, ultimoDia))
+  return r
+}
+function addDias(d: Date, n: number): Date { const r = new Date(d); r.setDate(r.getDate() + n); return r }
+function diffDias(a: Date, b: Date): number { return Math.round((b.getTime() - a.getTime()) / 86_400_000) }
+
+// Converte o valor digitado (na unidade escolhida) em nº EXATO de dias de cobertura.
+function vigParaDias(valor: string | number, unidade: string | null, dataEntradaISO: string | null): number | null {
+  const v = typeof valor === 'number' ? valor : parseFloat((valor || '').replace(',', '.'))
+  if (isNaN(v) || v <= 0) return null
+  if (unidade === 'Dias' || unidade === 'Data') return Math.round(v)
+  const ini = parseDataLocal(dataEntradaISO) ?? new Date()
+  const inteiro = Math.floor(v); const frac = v - inteiro
+  const passo = unidade === 'Meses' ? addMeses : addAnos
+  const e1 = passo(ini, inteiro)
+  const fim = frac > 0 ? addDias(e1, Math.round(frac * diffDias(e1, passo(e1, 1)))) : e1
+  return diffDias(ini, fim)
+}
+
+// Decompõe um total de dias (ancorado na data de entrada) em anos/meses/dias de calendário.
+function decomporVig(dias: number, dataEntradaISO: string | null): { anos: number; meses: number; dias: number } {
+  const ini = parseDataLocal(dataEntradaISO) ?? new Date()
+  const fim = addDias(ini, dias)
+  let meses = (fim.getFullYear() - ini.getFullYear()) * 12 + (fim.getMonth() - ini.getMonth())
+  let ancora = addMeses(ini, meses)
+  if (ancora.getTime() > fim.getTime()) { meses--; ancora = addMeses(ini, meses) }
+  return { anos: Math.floor(meses / 12), meses: ((meses % 12) + 12) % 12, dias: diffDias(ancora, fim) }
+}
+
+// Anos-equivalente de uma operação (para cálculos que pensam em anos), tolerante a dados antigos.
+function anosVig(op: { vigencia_dias?: number | null; vigencia_anos?: number | null; periodicidade_vigencia?: string | null }): number {
+  if (op.vigencia_dias != null) return op.vigencia_dias / 365
+  const v = op.vigencia_anos ?? 1
+  const p = op.periodicidade_vigencia
+  if (p === 'Meses') return v / 12
+  if (p === 'Dias' || p === 'Data') return v / 365
+  return v
+}
+
+// Sufixo curto da unidade de vigência (para tabelas/PDF).
+function sufVig(p: string | null | undefined): string {
+  if (p === 'Meses') return 'm'
+  if (p === 'Dias' || p === 'Data') return 'd'
+  return 'a'
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OperacoesPage() {
@@ -107,8 +175,9 @@ export default function OperacoesPage() {
   const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
   const [busca, setBusca] = useState('')
   const [filtroStatus, setFiltroStatus] = useState<string[]>([])
-  const [incluirEmitidas, setIncluirEmitidas] = useState(false)
-  const [incluirPerdidas, setIncluirPerdidas] = useState(false)
+  // Vista especial: ao clicar em Emitidas / Perdidas / Recusadas, a tabela do topo
+  // passa a mostrar APENAS aquele subconjunto (foco para reunião de comitê).
+  const [vistaEspecial, setVistaEspecial] = useState<'Emitido' | 'Perdido' | 'Recusado' | null>(null)
   const [filtroPrioridade, setFiltroPrioridade] = useState('')
   const [filtroTemperatura, setFiltroTemperatura] = useState<string[]>([])
   const [filtroCorretora, setFiltroCorretora] = useState('')
@@ -283,7 +352,7 @@ export default function OperacoesPage() {
       taxa: taxaStr,
       vigencia_anos: vigStr,
       periodicidade_vigencia: periodoStr,
-      premio_previsto: calcPremio(lmgStr, taxaStr, vigStr, periodoStr),
+      premio_previsto: calcPremio(lmgStr, taxaStr, vigStr, periodoStr, op.data_entrada ?? ''),
       temperatura: op.temperatura ?? 'Frio',
       prioridade: op.prioridade ?? 'Fluxo Normal',
       estado: op.estado ?? '',
@@ -397,15 +466,16 @@ export default function OperacoesPage() {
     }))
   }
 
-  function calcPremio(lmg: string, taxa: string, vigencia: string, periodo: string): string {
+  function calcPremio(lmg: string, taxa: string, vigencia: string, periodo: string, dataEntrada?: string): string {
     const l = parseFloat(lmg.replace(/\./g, '').replace(',', '.'))
     const t = parseFloat(taxa.replace(',', '.'))
-    const v = parseFloat(vigencia.replace(',', '.'))
-    if (!isNaN(l) && !isNaN(t) && !isNaN(v) && t > 0 && v > 0) {
+    const dias = vigParaDias(vigencia, periodo, dataEntrada ?? form.data_entrada)
+    if (!isNaN(l) && !isNaN(t) && t > 0 && dias && dias > 0) {
       // Teto FAM: prêmio calculado sobre o LMG limitado a R$ 80 milhões.
+      // Pró-rata por DIAS exatos (÷365): captura 29/fev em anos bissextos.
       const lCap = Math.min(l, 80_000_000)
       const premioAnual = lCap * t / 100
-      const total = periodo === 'Meses' ? (premioAnual / 12) * v : premioAnual * v
+      const total = premioAnual * dias / 365
       return String(total.toFixed(2))
     }
     return ''
@@ -446,6 +516,7 @@ export default function OperacoesPage() {
       lmg: lmgNum,
       taxa: taxaNum,
       vigencia_anos: form.vigencia_anos ? parseFloat(form.vigencia_anos.replace(',', '.')) : null,
+      vigencia_dias: vigParaDias(form.vigencia_anos, form.periodicidade_vigencia, form.data_entrada),
       periodicidade_vigencia: form.periodicidade_vigencia,
       temperatura: autoTemp(form.status, form.temperatura || null),
       prioridade: form.prioridade,
@@ -715,9 +786,27 @@ export default function OperacoesPage() {
     return { count: operacoesPerdidas.length, lmg, premio }
   }, [operacoesPerdidas])
 
+  // KPIs desmembrados: Perdidas e Recusadas em separado (para os dois sub-cards)
+  const kpisPorEncerramento = useMemo(() => {
+    const calc = (st: 'Perdido' | 'Recusado') => {
+      const ops = operacoesPerdidas.filter((op) => op.status === st)
+      return {
+        count: ops.length,
+        lmg: ops.reduce((s, op) => s + Math.min(op.lmg ?? 0, 80_000_000), 0),
+        premio: ops.reduce((s, op) => s + (op.premio_previsto ?? 0), 0),
+      }
+    }
+    return { Perdido: calc('Perdido'), Recusado: calc('Recusado') }
+  }, [operacoesPerdidas])
+
   const operacoesFiltradas = useMemo(() => {
     const filtered = operacoes.filter((op) => {
-      if (op.status === 'Emitido' || op.status === 'Perdido' || op.status === 'Recusado') return false
+      if (vistaEspecial) {
+        // Foco: só as operações daquele status (Emitido / Perdido / Recusado)
+        if (op.status !== vistaEspecial) return false
+      } else if (op.status === 'Emitido' || op.status === 'Perdido' || op.status === 'Recusado') {
+        return false
+      }
       const buscaLow = busca.toLowerCase()
       const buscaDigitos = busca.replace(/\D/g, '')
       const textMatch = !busca ||
@@ -726,7 +815,7 @@ export default function OperacoesPage() {
         (op.corretora?.razao_social ?? '').toLowerCase().includes(buscaLow) ||
         (op.corretora?.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
         (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
-      const statusMatch = filtroStatus.length === 0 || filtroStatus.includes(op.status ?? '')
+      const statusMatch = vistaEspecial ? true : (filtroStatus.length === 0 || filtroStatus.includes(op.status ?? ''))
       const priorMatch = !filtroPrioridade || op.prioridade === filtroPrioridade
       const tempMatch = filtroTemperatura.length === 0 || filtroTemperatura.includes(op.temperatura ?? '')
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
@@ -765,7 +854,7 @@ export default function OperacoesPage() {
       if (pa !== pb) return pa - pb
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     })
-  }, [operacoes, busca, filtroStatus, filtroPrioridade, filtroTemperatura, filtroCorretora, filtroModalidade, sortField, sortDir])
+  }, [operacoes, busca, filtroStatus, filtroPrioridade, filtroTemperatura, filtroCorretora, filtroModalidade, sortField, sortDir, vistaEspecial])
 
   const kpisPerStatus = useMemo(() => {
     const map: Record<string, { count: number; lmg: number; premio: number }> = {}
@@ -821,16 +910,13 @@ export default function OperacoesPage() {
   }, [operacoesFiltradas])
 
   const kpisFiltroAtivo = useMemo(() => {
-    const anyFilter = filtroTemperatura.length > 0 || incluirEmitidas || incluirPerdidas
-    if (!anyFilter) return null
+    if (filtroTemperatura.length === 0) return null
     let lmg = 0, premio = 0, count = 0
     if (filtroTemperatura.includes('Quente'))  { lmg += kpis.lmgQuente;  premio += kpis.premioQuente;  count += kpis.qtdQuente }
     if (filtroTemperatura.includes('Morno'))   { lmg += kpis.lmgMorno;   premio += kpis.premioMorno;   count += kpis.qtdMorno }
     if (filtroTemperatura.includes('Frio'))    { lmg += kpis.lmgFrio;    premio += kpis.premioFrio;    count += kpis.qtdFrio }
-    if (incluirEmitidas) { lmg += kpisEmitido.lmg;  premio += kpisEmitido.premio;  count += kpisEmitido.count }
-    if (incluirPerdidas) { lmg += kpisPerdido.lmg;  premio += kpisPerdido.premio;  count += kpisPerdido.count }
     return { lmg, premio, count }
-  }, [filtroTemperatura, incluirEmitidas, incluirPerdidas, kpis, kpisEmitido, kpisPerdido])
+  }, [filtroTemperatura, kpis])
 
   // ─── Comitê — Book & Portfolio Memos ────────────────────────────────────────
 
@@ -849,7 +935,7 @@ export default function OperacoesPage() {
   const bookLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + Math.min(op.lmg ?? 0, 80_000_000), 0), [bookAtualOps])
   const bookPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const bookTmpTotal = useMemo(() => {
-    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * Math.min(op.lmg ?? 0, 80_000_000) * Math.min(op.vigencia_anos ?? 1, 1), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * Math.min(op.lmg ?? 0, 80_000_000) * Math.min(anosVig(op), 1), 0)
     return bookLmgTotal > 0 ? wSum / bookLmgTotal : 0
   }, [bookAtualOps, bookLmgTotal])
 
@@ -859,7 +945,7 @@ export default function OperacoesPage() {
   const emitidosLmgTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + Math.min(op.lmg ?? 0, 80_000_000), 0), [bookAtualOps])
   const emitidosPremioTotal = useMemo(() => bookAtualOps.reduce((s, op) => s + (op.premio_previsto ?? 0), 0), [bookAtualOps])
   const emitidosTmpTotal = useMemo(() => {
-    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * Math.min(op.lmg ?? 0, 80_000_000) * Math.min(op.vigencia_anos ?? 1, 1), 0)
+    const wSum = bookAtualOps.reduce((s, op) => s + (op.taxa ?? 0) * Math.min(op.lmg ?? 0, 80_000_000) * Math.min(anosVig(op), 1), 0)
     return emitidosLmgTotal > 0 ? wSum / emitidosLmgTotal : 0
   }, [bookAtualOps, emitidosLmgTotal])
 
@@ -1061,7 +1147,8 @@ export default function OperacoesPage() {
         estado: col(row, 'estado').toUpperCase().slice(0, 2) || null,
         lmg: lmgRaw && !isNaN(parseFloat(lmgRaw)) ? parseFloat(lmgRaw) : null,
         taxa: taxaRaw && !isNaN(parseFloat(taxaRaw)) ? parseFloat(taxaRaw) : null,
-        vigencia_anos: col(row, 'vigencia_anos') ? parseInt(col(row, 'vigencia_anos')) || null : null,
+        vigencia_anos: col(row, 'vigencia_anos') ? parseFloat(col(row, 'vigencia_anos').replace(',', '.')) || null : null,
+        vigencia_dias: vigParaDias(col(row, 'vigencia_anos'), col(row, 'periodicidade_vigencia') || 'Anos', col(row, 'data_entrada') || null),
         periodicidade_vigencia: col(row, 'periodicidade_vigencia') || 'Anos',
         temperatura: temperaturasValidas.includes(tempRaw) ? tempRaw : null,
         prioridade: prioridadesValidas.includes(priRaw) ? priRaw : 'Fluxo Normal',
@@ -1278,7 +1365,7 @@ export default function OperacoesPage() {
         op.temperatura ?? '—',
         fmtMoeda(Math.min(op.lmg ?? 0, 80_000_000)),
         op.taxa ? fmtPercent(op.taxa / 100) : '—',
-        op.vigencia_anos ? `${op.vigencia_anos}${op.periodicidade_vigencia === 'Meses' ? 'm' : 'a'}` : '—',
+        op.vigencia_anos ? `${op.vigencia_anos}${sufVig(op.periodicidade_vigencia)}` : '—',
         op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
       ]),
       foot: [['', '', '', '', '', '', 'TOTAL', fmtMoeda(lmgFiltrado), '', '', fmtMoeda(premioFiltrado)]],
@@ -1452,7 +1539,7 @@ export default function OperacoesPage() {
           op.modalidade ?? '—',
           fmtMoeda(Math.min(op.lmg ?? 0, 80_000_000)),
           op.taxa ? fmtPercent(op.taxa / 100) : '—',
-          op.vigencia_anos ? `${op.vigencia_anos}${op.periodicidade_vigencia === 'Meses' ? 'm' : 'a'}` : '—',
+          op.vigencia_anos ? `${op.vigencia_anos}${sufVig(op.periodicidade_vigencia)}` : '—',
           op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
           op.data_emissao ? fmtData(op.data_emissao) : '—',
         ]),
@@ -1511,8 +1598,15 @@ export default function OperacoesPage() {
     }
   }
 
-  async function exportarPDFPerdidas() {
-    if (operacoesPerdidas.length === 0) return
+  async function exportarPDFPerdidas(tipo?: 'Perdido' | 'Recusado') {
+    const lista = tipo ? operacoesPerdidas.filter((op) => op.status === tipo) : operacoesPerdidas
+    if (lista.length === 0) return
+    const kp = {
+      count: lista.length,
+      lmg: lista.reduce((s, op) => s + Math.min(op.lmg ?? 0, 80_000_000), 0),
+      premio: lista.reduce((s, op) => s + (op.premio_previsto ?? 0), 0),
+    }
+    const tituloRel = tipo === 'Perdido' ? 'Operações Perdidas' : tipo === 'Recusado' ? 'Operações Recusadas' : 'Operações Perdidas / Recusadas'
     setExportando(true)
     try {
       const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
@@ -1547,12 +1641,12 @@ export default function OperacoesPage() {
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(13)
       doc.setTextColor(255, 255, 255)
-      doc.text('Operações Perdidas / Recusadas', 52, 19)
+      doc.text(tituloRel, 52, 19)
 
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(8)
       doc.setTextColor(180, 180, 190)
-      doc.text('Relatório: "Perdidas/Recusadas"', 52, 24)
+      doc.text(`Relatório: "${tituloRel}"`, 52, 24)
 
       doc.setFontSize(8)
       doc.setTextColor(160, 192, 232)
@@ -1562,16 +1656,16 @@ export default function OperacoesPage() {
       doc.text('Documento Confidencial · Gerado automaticamente pelo FAM CRM', W - M, 18, { align: 'right' })
 
       const cardTop = 30, cardH = 22
-      const qtdPerdidas = operacoesPerdidas.filter(op => op.status === 'Perdido').length
-      const qtdRecusadas = operacoesPerdidas.filter(op => op.status === 'Recusado').length
+      const qtdPerdidas = lista.filter(op => op.status === 'Perdido').length
+      const qtdRecusadas = lista.filter(op => op.status === 'Recusado').length
       const cardW5 = (W - M * 2 - 16) / 5
 
       const cardsP = [
-        { label: 'TOTAL',        value: String(kpisPerdido.count),   sub: 'Perdidas + Recusadas', ar: [100, 100, 115] as [number,number,number], isCount: true  },
+        { label: 'TOTAL',        value: String(kp.count),   sub: tipo ? 'Total do relatório' : 'Perdidas + Recusadas', ar: [100, 100, 115] as [number,number,number], isCount: true  },
         { label: 'PERDIDAS',     value: String(qtdPerdidas),          sub: 'Status Perdido',       ar: [180, 60,  60]  as [number,number,number], isCount: true  },
         { label: 'RECUSADAS',    value: String(qtdRecusadas),         sub: 'Status Recusado',      ar: [120, 80,  140] as [number,number,number], isCount: true  },
-        { label: 'LMG TOTAL',    value: fmtMoeda(kpisPerdido.lmg),   sub: 'Limite encerrado',     ar: [80,  80,  100] as [number,number,number], isCount: false },
-        { label: 'PRÊMIO PREV.', value: fmtMoeda(kpisPerdido.premio), sub: 'Prêmios previstos',   ar: [232, 184, 75]  as [number,number,number], isCount: false },
+        { label: 'LMG TOTAL',    value: fmtMoeda(kp.lmg),   sub: 'Limite encerrado',     ar: [80,  80,  100] as [number,number,number], isCount: false },
+        { label: 'PRÊMIO PREV.', value: fmtMoeda(kp.premio), sub: 'Prêmios previstos',   ar: [232, 184, 75]  as [number,number,number], isCount: false },
       ]
       cardsP.forEach((card, idx) => {
         const cx = M + idx * (cardW5 + 4)
@@ -1602,7 +1696,7 @@ export default function OperacoesPage() {
         startY: startYP,
         margin: { left: M, right: M, bottom: 14 },
         head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio Prev.']],
-        body: operacoesPerdidas.map((op, i) => [
+        body: lista.map((op, i) => [
           i + 1,
           op.status,
           op.tomador?.razao_social ?? '—',
@@ -1611,10 +1705,10 @@ export default function OperacoesPage() {
           op.modalidade ?? '—',
           fmtMoeda(Math.min(op.lmg ?? 0, 80_000_000)),
           op.taxa ? fmtPercent(op.taxa / 100) : '—',
-          op.vigencia_anos ? `${op.vigencia_anos}${op.periodicidade_vigencia === 'Meses' ? 'm' : 'a'}` : '—',
+          op.vigencia_anos ? `${op.vigencia_anos}${sufVig(op.periodicidade_vigencia)}` : '—',
           op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
         ]),
-        foot: [['', '', '', '', '', 'TOTAL', fmtMoeda(kpisPerdido.lmg), '', '', fmtMoeda(kpisPerdido.premio)]],
+        foot: [['', '', '', '', '', 'TOTAL', fmtMoeda(kp.lmg), '', '', fmtMoeda(kp.premio)]],
         styles: { fontSize: 7.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 }, font: 'helvetica', textColor: [30, 40, 60], lineColor: [210, 215, 225], lineWidth: 0.15, overflow: 'hidden' },
         headStyles: { fillColor: [100, 100, 115], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 } },
         footStyles: { fillColor: [228, 228, 235], textColor: [60, 60, 80], fontStyle: 'bold', fontSize: 7.5 },
@@ -1658,8 +1752,9 @@ export default function OperacoesPage() {
         doc.text(`Página ${i} de ${totalPagsP}`, W / 2, H - 4, { align: 'center' })
       }
 
-      const filenameP = `FAM_Operacoes_Perdidas_Recusadas_${new Date().toISOString().slice(0, 10)}.pdf`
-      setPdfPreviewLabel(`Perdidas / Recusadas — ${operacoesPerdidas.length} registro${operacoesPerdidas.length !== 1 ? 's' : ''}`)
+      const slugRel = tipo === 'Perdido' ? 'Perdidas' : tipo === 'Recusado' ? 'Recusadas' : 'Perdidas_Recusadas'
+      const filenameP = `FAM_Operacoes_${slugRel}_${new Date().toISOString().slice(0, 10)}.pdf`
+      setPdfPreviewLabel(`${tituloRel} — ${lista.length} registro${lista.length !== 1 ? 's' : ''}`)
       setPdfPreviewFilename(filenameP)
       setPdfPreviewUrl(doc.output('datauristring'))
     } catch (err) {
@@ -1787,8 +1882,8 @@ export default function OperacoesPage() {
           background: '#0d2040', border: '1px solid rgba(56,120,200,0.3)',
         }}>
           <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: 'rgba(180,200,220,0.7)', marginBottom: 6 }}>LMG Total em Potencial</div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpisFiltroAtivo ? kpisFiltroAtivo.lmg : kpis.lmgLiquido)}</div>
-          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>{kpisFiltroAtivo ? 'LMG da seleção ativa' : 'LMG Total − Perdidos/Recusados'}</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(vistaEspecial ? kpis.lmgTotal : kpisFiltroAtivo ? kpisFiltroAtivo.lmg : kpis.lmgLiquido)}</div>
+          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>{vistaEspecial ? `LMG das ${vistaEspecial === 'Emitido' ? 'Emitidas' : vistaEspecial === 'Perdido' ? 'Perdidas' : 'Recusadas'}` : kpisFiltroAtivo ? 'LMG da seleção ativa' : 'LMG Total − Perdidos/Recusados'}</div>
         </div>
         {/* Card: Prêmio Previsto Total */}
         <div style={{
@@ -1796,8 +1891,8 @@ export default function OperacoesPage() {
           background: '#0d2040', border: '1px solid rgba(56,120,200,0.3)',
         }}>
           <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: 'rgba(180,200,220,0.7)', marginBottom: 6 }}>Prêmio Previsto Total</div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(kpisFiltroAtivo ? kpisFiltroAtivo.premio : kpis.premioTotal)}</div>
-          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>{kpisFiltroAtivo ? 'Prêmio da seleção ativa' : 'Soma prêmios previstos'}</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#e8b84b', lineHeight: 1.1 }}>{fmtMoeda(vistaEspecial ? kpis.premioTotal : kpisFiltroAtivo ? kpisFiltroAtivo.premio : kpis.premioTotal)}</div>
+          <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.6)', marginTop: 4 }}>{vistaEspecial ? `Prêmio das ${vistaEspecial === 'Emitido' ? 'Emitidas' : vistaEspecial === 'Perdido' ? 'Perdidas' : 'Recusadas'}` : kpisFiltroAtivo ? 'Prêmio da seleção ativa' : 'Soma prêmios previstos'}</div>
         </div>
       </div>
 
@@ -1903,16 +1998,29 @@ export default function OperacoesPage() {
         {/* Divisor + Card Emitidas */}
         <div style={{ borderLeft: '1.5px solid #d0e4f5', margin: '4px 4px', alignSelf: 'stretch' }} />
         <div
-          onClick={() => setIncluirEmitidas(prev => !prev)}
+          onClick={() => setVistaEspecial(prev => prev === 'Emitido' ? null : 'Emitido')}
           style={{
             padding: '10px 14px', borderRadius: 10, minWidth: 148, flex: '1 1 148px', cursor: 'pointer', transition: 'all 0.15s',
-            background: incluirEmitidas ? '#b8f0d4' : '#f0faf4',
-            border: incluirEmitidas ? '2px solid #27a96c' : '1.5px solid #a8d8b8',
-            boxShadow: incluirEmitidas ? '0 2px 6px rgba(39,169,108,0.20)' : '0 1px 3px rgba(39,169,108,0.08)',
+            background: vistaEspecial === 'Emitido' ? '#b8f0d4' : '#f0faf4',
+            border: vistaEspecial === 'Emitido' ? '2px solid #27a96c' : '1.5px solid #a8d8b8',
+            boxShadow: vistaEspecial === 'Emitido' ? '0 2px 6px rgba(39,169,108,0.20)' : '0 1px 3px rgba(39,169,108,0.08)',
           }}
         >
-          <div style={{ fontSize: 10, fontWeight: 700, color: '#1a6040', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 5 }}>
-            ✅ Emitidas {incluirEmitidas && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 5 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#1a6040', letterSpacing: '1px', textTransform: 'uppercase' }}>
+              ✅ Emitidas {vistaEspecial === 'Emitido' && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
+            </span>
+            <button
+              onClick={(e) => { e.stopPropagation(); exportarPDFEmitidas() }}
+              disabled={exportando || kpisEmitido.count === 0}
+              style={{
+                flexShrink: 0, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+                background: '#e8f8ef', border: '1px solid #a8d8b8', color: '#1a6040',
+                fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', transition: 'background 0.12s',
+              }}
+            >
+              📄 Exportar PDF
+            </button>
           </div>
           <div style={{ marginBottom: 3 }}>
             <span style={{ fontSize: 28, fontWeight: 800, color: '#27a96c', lineHeight: 1 }}>{kpisEmitido.count}</span>
@@ -1928,69 +2036,71 @@ export default function OperacoesPage() {
           <div style={{ fontSize: 10, color: '#1a6040', marginTop: 5, fontStyle: 'italic', borderTop: '1px dashed #a8d8b8', paddingTop: 4 }}>
             Fora do funil
           </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); exportarPDFEmitidas() }}
-            disabled={exportando || kpisEmitido.count === 0}
-            style={{
-              marginTop: 8, width: '100%', padding: '5px 0', borderRadius: 6, cursor: 'pointer',
-              background: '#e8f8ef', border: '1px solid #a8d8b8', color: '#1a6040',
-              fontSize: 11, fontWeight: 600, transition: 'background 0.12s',
-            }}
-          >
-            📄 Exportar PDF
-          </button>
         </div>
-        {/* Divisor + Card Perdidas/Recusadas — visual acinzentado */}
+        {/* Divisor + Card Perdidas / Recusadas — desmembrado, compacto, com linha divisória entre itens */}
         <div style={{ borderLeft: '1.5px solid #d8d8e0', margin: '4px 4px', alignSelf: 'stretch' }} />
-        <div
-          onClick={() => setIncluirPerdidas(prev => !prev)}
-          style={{
-            padding: '10px 14px', borderRadius: 10, minWidth: 148, flex: '1 1 148px', cursor: 'pointer', transition: 'all 0.15s',
-            background: incluirPerdidas ? '#e2e2e6' : '#f2f2f4',
-            border: incluirPerdidas ? '1.5px solid #aaaaaa' : '1.5px solid #d0d0d4',
-            boxShadow: 'none',
-            opacity: incluirPerdidas ? 1 : 0.85,
-          }}
-        >
-          <div style={{ fontSize: 10, fontWeight: 600, color: '#777788', letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 5 }}>
-            ✕ Perdidas/Recusadas {incluirPerdidas && <span style={{ fontWeight: 400, fontSize: 9 }}>— limpar</span>}
-          </div>
-          <div style={{ marginBottom: 3 }}>
-            <span style={{ fontSize: 28, fontWeight: 700, color: '#aaaaaa', lineHeight: 1 }}>{kpisPerdido.count}</span>
-          </div>
-          <div style={{ marginBottom: 1 }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: '#888888' }}>{fmtMoeda(kpisPerdido.premio)}</span>
-            <span style={{ fontSize: 10, color: '#aaaaaa', marginLeft: 3 }}>Prêmio</span>
-          </div>
-          <div>
-            <span style={{ fontSize: 11, fontWeight: 500, color: '#aaaaaa' }}>{fmtMoeda(kpisPerdido.lmg)}</span>
-            <span style={{ fontSize: 10, color: '#aaaaaa', marginLeft: 3 }}>LMG</span>
-          </div>
-          <div style={{ fontSize: 10, color: '#aaaaaa', marginTop: 5, fontStyle: 'italic', borderTop: '1px dashed #cccccc', paddingTop: 4 }}>
-            Encerrados
-          </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); exportarPDFPerdidas() }}
-            disabled={exportando || kpisPerdido.count === 0}
-            style={{
-              marginTop: 8, width: '100%', padding: '5px 0', borderRadius: 6, cursor: 'pointer',
-              background: '#f0f0f4', border: '1px solid #c8c8d0', color: '#555566',
-              fontSize: 11, fontWeight: 600, transition: 'background 0.12s',
-            }}
-          >
-            📄 Exportar PDF
-          </button>
+        <div style={{
+          padding: '4px 8px', borderRadius: 10, minWidth: 210, flex: '0 1 260px', alignSelf: 'center',
+          background: '#f2f2f4', border: '1.5px solid #d0d0d4',
+          display: 'flex', flexDirection: 'column', justifyContent: 'center',
+        }}>
+          {([
+            { tipo: 'Perdido'  as const, label: 'Perdidas',  k: kpisPorEncerramento.Perdido },
+            { tipo: 'Recusado' as const, label: 'Recusadas', k: kpisPorEncerramento.Recusado },
+          ]).map(({ tipo, label, k }, i) => {
+            const ativo = vistaEspecial === tipo
+            return (
+              <Fragment key={tipo}>
+                {i > 0 && <div style={{ borderTop: '1px solid #dcdce2', margin: '2px 4px' }} />}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
+                  <div
+                    onClick={() => setVistaEspecial(prev => prev === tipo ? null : tipo)}
+                    title={`Ver apenas ${label} na tabela acima`}
+                    style={{
+                      flex: 1, display: 'flex', flexDirection: 'column', gap: 2, cursor: 'pointer',
+                      padding: '3px 7px', borderRadius: 7,
+                      background: ativo ? '#e2e2e6' : 'transparent',
+                      border: ativo ? '1.5px solid #999999' : '1.5px solid transparent',
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#666677', letterSpacing: '0.3px' }}>✕ {label}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: '#888899' }}>{k.count}</span>
+                      {ativo && <span style={{ fontSize: 9, color: '#777788', fontWeight: 400 }}>— limpar</span>}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#888888', whiteSpace: 'nowrap' }}>{fmtMoeda(k.premio)}</span>
+                      <span style={{ fontSize: 9, color: '#aaaaaa' }}>Prêmio</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 500, color: '#aaaaaa', whiteSpace: 'nowrap' }}>{fmtMoeda(k.lmg)}</span>
+                      <span style={{ fontSize: 9, color: '#aaaaaa' }}>LMG</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); exportarPDFPerdidas(tipo) }}
+                    disabled={exportando || k.count === 0}
+                    title={`Exportar PDF — ${label}`}
+                    style={{
+                      flexShrink: 0, padding: '4px 9px', borderRadius: 6, cursor: 'pointer',
+                      background: '#f0f0f4', border: '1px solid #c8c8d0', color: '#555566',
+                      fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+                    }}
+                  >📄 PDF</button>
+                </div>
+              </Fragment>
+            )
+          })}
         </div>
       </div>
 
-      {/* Banner de totais — aparece quando qualquer seleção especial está ativa */}
-      {(filtroTemperatura.length > 0 || incluirEmitidas || incluirPerdidas) && (() => {
+      {/* Banner de totais — aparece quando há seleção de temperatura combinada */}
+      {filtroTemperatura.length > 0 && (() => {
         const partes: { label: string; count: number; lmg: number; premio: number }[] = []
         if (filtroTemperatura.includes('Quente')) partes.push({ label: '🔥 Quente', count: kpis.qtdQuente, lmg: kpis.lmgQuente, premio: kpis.premioQuente })
         if (filtroTemperatura.includes('Morno')) partes.push({ label: '🌤 Morno', count: kpis.qtdMorno, lmg: kpis.lmgMorno, premio: kpis.premioMorno })
         if (filtroTemperatura.includes('Frio')) partes.push({ label: '❄ Frio', count: kpis.qtdFrio, lmg: kpis.lmgFrio, premio: kpis.premioFrio })
-        if (incluirEmitidas) partes.push({ label: '✅ Emitidas', count: kpisEmitido.count, lmg: kpisEmitido.lmg, premio: kpisEmitido.premio })
-        if (incluirPerdidas) partes.push({ label: '✕ Perdidas/Recusadas', count: kpisPerdido.count, lmg: kpisPerdido.lmg, premio: kpisPerdido.premio })
         if (partes.length === 0) return null
         const totalCount = partes.reduce((s, p) => s + p.count, 0)
         const totalLmg = partes.reduce((s, p) => s + p.lmg, 0)
@@ -2020,31 +2130,28 @@ export default function OperacoesPage() {
           {statusOpcoes.filter(s => s.ativo && s.nome !== 'Perdido' && s.nome !== 'Recusado' && s.nome !== 'Emitido').map((s) => {
             const stats = kpisPerStatus[s.nome]
             const sel = filtroStatus.includes(s.nome)
-            const count = s.nome === 'Emitido' ? kpisEmitido.count : (stats?.count ?? 0)
+            const count = stats?.count ?? 0
             return (
               <button
                 key={s.id}
                 onClick={() => {
-                  if (s.nome === 'Emitido') {
-                    setIncluirEmitidas(prev => !prev)
-                  } else {
-                    setFiltroStatus(prev => sel ? prev.filter(x => x !== s.nome) : [...prev, s.nome])
-                  }
+                  setVistaEspecial(null)
+                  setFiltroStatus(prev => sel ? prev.filter(x => x !== s.nome) : [...prev, s.nome])
                 }}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   padding: '4px 10px', borderRadius: 20, cursor: 'pointer', transition: 'all 0.12s',
-                  background: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? s.cor + '33' : s.cor + '11',
-                  border: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? `2px solid ${s.cor}` : `1.5px solid ${s.cor}55`,
-                  color: s.cor, fontWeight: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? 800 : 600, fontSize: 12,
+                  background: sel ? s.cor + '33' : s.cor + '11',
+                  border: sel ? `2px solid ${s.cor}` : `1.5px solid ${s.cor}55`,
+                  color: s.cor, fontWeight: sel ? 800 : 600, fontSize: 12,
                   fontFamily: "'Calibri','Segoe UI',sans-serif",
-                  boxShadow: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? `0 2px 6px ${s.cor}44` : 'none',
+                  boxShadow: sel ? `0 2px 6px ${s.cor}44` : 'none',
                 }}
               >
                 {s.nome}
                 <span style={{
-                  background: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? s.cor : s.cor + '33',
-                  color: (sel || (s.nome === 'Emitido' && incluirEmitidas)) ? 'white' : s.cor,
+                  background: sel ? s.cor : s.cor + '33',
+                  color: sel ? 'white' : s.cor,
                   borderRadius: 10, padding: '1px 6px', fontSize: 11, fontWeight: 700,
                 }}>
                   {count}
@@ -2290,12 +2397,23 @@ export default function OperacoesPage() {
                     </div>
                     <div className="form-field">
                       <label className="form-label">Periodicidade</label>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        {(['Anos', 'Meses'] as const).map((p) => (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {(['Anos', 'Meses', 'Dias', 'Data'] as const).map((p) => (
                           <button key={p} type="button" disabled={opFinalizada}
-                            onClick={() => setForm((f) => ({ ...f, periodicidade_vigencia: p, premio_previsto: calcPremio(f.lmg, f.taxa, f.vigencia_anos, p) }))}
+                            title={p === 'Data' ? 'Informar por data de início e fim' : `Informar em ${p.toLowerCase()}`}
+                            onClick={() => setForm((f) => {
+                              // converte o valor atual para a nova unidade (mantém a mesma duração real)
+                              const diasAtual = vigParaDias(f.vigencia_anos, f.periodicidade_vigencia, f.data_entrada)
+                              let nv = f.vigencia_anos
+                              if (diasAtual && diasAtual > 0) {
+                                if (p === 'Dias' || p === 'Data') nv = String(diasAtual)
+                                else if (p === 'Meses') nv = String(+(diasAtual * 12 / 365).toFixed(1)).replace('.', ',')
+                                else nv = String(+(diasAtual / 365).toFixed(2)).replace('.', ',')
+                              }
+                              return { ...f, periodicidade_vigencia: p, vigencia_anos: nv, premio_previsto: calcPremio(f.lmg, f.taxa, nv, p, f.data_entrada) }
+                            })}
                             style={{
-                              flex: 1, padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
+                              flex: '1 1 58px', padding: '9px 8px', borderRadius: 8, cursor: 'pointer',
                               fontFamily: "'Calibri','Segoe UI',sans-serif", fontSize: 13, fontWeight: 700,
                               border: form.periodicidade_vigencia === p ? '2px solid #1a5fa0' : '2px solid #d0e4f5',
                               background: form.periodicidade_vigencia === p ? '#dbeafe' : '#f8fafc',
@@ -2307,18 +2425,72 @@ export default function OperacoesPage() {
                       </div>
                     </div>
                     <div className="form-field">
-                      <label className="form-label">Vigência ({form.periodicidade_vigencia === 'Meses' ? 'meses' : 'anos'})</label>
-                      <input className="fam-input" type="text" disabled={opFinalizada}
-                        inputMode="decimal"
-                        placeholder={form.periodicidade_vigencia === 'Meses' ? 'Ex: 18' : 'Ex: 0,6'}
-                        value={form.vigencia_anos}
-                        onChange={(e) => {
-                          const raw = e.target.value
-                          if (raw === '' || /^[\d.,]*$/.test(raw)) {
-                            const vigencia_anos = raw
-                            setForm((f) => ({ ...f, vigencia_anos, premio_previsto: calcPremio(f.lmg, f.taxa, vigencia_anos, f.periodicidade_vigencia) }))
-                          }
-                        }} />
+                      {form.periodicidade_vigencia === 'Data' ? (
+                        <>
+                          <label className="form-label">Vigência (por data)</label>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 10, color: '#6080a0', marginBottom: 2 }}>Início (entrada)</div>
+                              <input className="fam-input" type="date" disabled={opFinalizada}
+                                value={form.data_entrada}
+                                onChange={(e) => setForm((f) => {
+                                  const di = e.target.value
+                                  return { ...f, data_entrada: di, premio_previsto: calcPremio(f.lmg, f.taxa, f.vigencia_anos, f.periodicidade_vigencia, di) }
+                                })} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 10, color: '#6080a0', marginBottom: 2 }}>Fim</div>
+                              <input className="fam-input" type="date" disabled={opFinalizada}
+                                value={(() => {
+                                  const ini = parseDataLocal(form.data_entrada)
+                                  const d = parseInt(form.vigencia_anos.replace(',', '.'), 10)
+                                  if (!ini || isNaN(d)) return ''
+                                  return toISODate(addDias(ini, d))
+                                })()}
+                                onChange={(e) => setForm((f) => {
+                                  const ini = parseDataLocal(f.data_entrada)
+                                  const fim = parseDataLocal(e.target.value)
+                                  if (!ini || !fim) return f
+                                  const nv = String(Math.max(0, diffDias(ini, fim)))
+                                  return { ...f, vigencia_anos: nv, premio_previsto: calcPremio(f.lmg, f.taxa, nv, 'Data', f.data_entrada) }
+                                })} />
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <label className="form-label">Vigência ({form.periodicidade_vigencia === 'Meses' ? 'meses' : form.periodicidade_vigencia === 'Dias' ? 'dias' : 'anos'})</label>
+                          <input className="fam-input" type="text" disabled={opFinalizada}
+                            inputMode="decimal"
+                            placeholder={form.periodicidade_vigencia === 'Meses' ? 'Ex: 18' : form.periodicidade_vigencia === 'Dias' ? 'Ex: 366' : 'Ex: 1'}
+                            value={form.vigencia_anos}
+                            onChange={(e) => {
+                              const raw = e.target.value
+                              if (raw === '' || /^[\d.,]*$/.test(raw)) {
+                                setForm((f) => ({ ...f, vigencia_anos: raw, premio_previsto: calcPremio(f.lmg, f.taxa, raw, f.periodicidade_vigencia, f.data_entrada) }))
+                              }
+                            }} />
+                        </>
+                      )}
+                      {/* Conversão automática Anos · Meses · Dias (ancorada na data de entrada) */}
+                      {(() => {
+                        const dias = vigParaDias(form.vigencia_anos, form.periodicidade_vigencia, form.data_entrada)
+                        if (!dias || dias <= 0) return null
+                        const bd = decomporVig(dias, form.data_entrada)
+                        const ini = parseDataLocal(form.data_entrada)
+                        const partes = [
+                          bd.anos > 0 ? `${bd.anos} ano${bd.anos > 1 ? 's' : ''}` : '',
+                          bd.meses > 0 ? `${bd.meses} ${bd.meses > 1 ? 'meses' : 'mês'}` : '',
+                          bd.dias > 0 ? `${bd.dias} dia${bd.dias > 1 ? 's' : ''}` : '',
+                        ].filter(Boolean).join(' · ')
+                        return (
+                          <div style={{ fontSize: 11, color: '#6080a0', marginTop: 4, lineHeight: 1.4 }}>
+                            ≈ <strong>{partes || '0 dias'}</strong> &nbsp;|&nbsp; total <strong>{dias}</strong> dia{dias > 1 ? 's' : ''}
+                            {ini ? <> &nbsp;|&nbsp; até {addDias(ini, dias).toLocaleDateString('pt-BR')}</>
+                                 : <span style={{ color: '#c08030' }}> &nbsp;(defina a data de entrada p/ exatidão do bissexto)</span>}
+                          </div>
+                        )
+                      })()}
                     </div>
                     <div className="form-field">
                       <label className="form-label">Prêmio Previsto (R$)</label>
@@ -2346,7 +2518,7 @@ export default function OperacoesPage() {
                     <div className="form-field">
                       <label className="form-label">Data de Entrada na FAM</label>
                       <input className="fam-input" type="date" disabled={opFinalizada} value={form.data_entrada}
-                        onChange={(e) => setForm({ ...form, data_entrada: e.target.value })} />
+                        onChange={(e) => setForm((f) => ({ ...f, data_entrada: e.target.value, premio_previsto: calcPremio(f.lmg, f.taxa, f.vigencia_anos, f.periodicidade_vigencia, e.target.value) }))} />
                     </div>
                     <div className="form-field">
                       <label className="form-label">Prioridade</label>
@@ -2561,16 +2733,32 @@ export default function OperacoesPage() {
                 {modalidades.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
               </select>
             </div>
-            {(busca || filtroStatus.length > 0 || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade || incluirEmitidas) && (
+            {(busca || filtroStatus.length > 0 || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade || vistaEspecial) && (
               <div className="filter-group" style={{ justifyContent: 'flex-end' }}>
                 <label className="filter-label">&nbsp;</label>
-                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus([]); setFiltroPrioridade(''); setFiltroTemperatura([]); setFiltroCorretora(''); setFiltroModalidade(''); setIncluirEmitidas(false) }}>Limpar</button>
+                <button className="btn-clear" onClick={() => { setBusca(''); setFiltroStatus([]); setFiltroPrioridade(''); setFiltroTemperatura([]); setFiltroCorretora(''); setFiltroModalidade(''); setVistaEspecial(null) }}>Limpar</button>
               </div>
             )}
             <div style={{ marginLeft: 'auto', fontSize: 13, color: '#6080a0', alignSelf: 'flex-end', paddingBottom: 2 }}>
               {operacoesFiltradas.length} operaç{operacoesFiltradas.length !== 1 ? 'ões' : 'ão'}
             </div>
           </div>
+
+          {/* Banner de foco — vista especial (Emitidas / Perdidas / Recusadas) */}
+          {vistaEspecial && (() => {
+            const meta = {
+              Emitido:  { label: '✅ Emitidas',  cor: '#1a6040', bg: '#eafaf1', bd: '#a8d8b8' },
+              Perdido:  { label: '✕ Perdidas',  cor: '#b03030', bg: '#fdeaea', bd: '#f0b8b8' },
+              Recusado: { label: '🚫 Recusadas', cor: '#a06010', bg: '#fdf3e6', bd: '#f0d0a0' },
+            }[vistaEspecial]
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: meta.bg, border: `1.5px solid ${meta.bd}`, borderRadius: 10, padding: '8px 16px', marginBottom: 14 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: meta.cor }}>Mostrando apenas: {meta.label}</span>
+                <span style={{ fontSize: 12, color: '#6a6a78', fontStyle: 'italic' }}>fora do funil — foco para a reunião de comitê</span>
+                <button onClick={() => setVistaEspecial(null)} style={{ marginLeft: 'auto', padding: '4px 12px', borderRadius: 6, border: `1.5px solid ${meta.bd}`, background: 'white', color: meta.cor, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>← Voltar ao funil</button>
+              </div>
+            )
+          })()}
 
           {/* Tabela */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
@@ -2657,8 +2845,8 @@ export default function OperacoesPage() {
             </table>
           </div>
 
-          {/* ── Seção Operações Emitidas (sempre visível) ── */}
-          <div style={{ marginTop: 32, borderTop: '2px solid #a8d8b8', paddingTop: 20 }}>
+          {/* ── Seção Operações Emitidas (oculta durante a vista especial de foco) ── */}
+          <div style={{ marginTop: 32, borderTop: '2px solid #a8d8b8', paddingTop: 20, display: vistaEspecial ? 'none' : undefined }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: '#1a6040' }}>
                 ✅ Operações Emitidas
@@ -2734,8 +2922,8 @@ export default function OperacoesPage() {
             )}
           </div>
 
-          {/* ── Seção Operações Perdidas / Recusadas (sempre visível) ── */}
-          <div style={{ marginTop: 32, borderTop: '2px solid #c5c5d0', paddingTop: 20 }}>
+          {/* ── Seção Operações Perdidas / Recusadas (oculta durante a vista especial de foco) ── */}
+          <div style={{ marginTop: 32, borderTop: '2px solid #c5c5d0', paddingTop: 20, display: vistaEspecial ? 'none' : undefined }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: '#666677' }}>
                 ⚫ Operações Perdidas / Recusadas
@@ -3129,10 +3317,12 @@ export default function OperacoesPage() {
                     // taxaMin = (inp.sinistralidade + inp.carregamento + inp.margem) — taxa total do período
                     // taxaMinAnual = taxaMin / vigencia_anos — para comparação anualizada
                     const _taxaMinPeriodo = inp.sinistralidade + inp.carregamento + inp.margem
-                    const _taxaMinAnual = _taxaMinPeriodo / Math.max(op.vigencia_anos ?? 1, 0.001)
+                    const _taxaMinAnual = _taxaMinPeriodo / Math.max(anosVig(op), 0.001)
                     void _taxaMinPeriodo; void _taxaMinAnual
                     const comissaoPct = comissaoInputs[op.id] ?? 25
-                    const opL = op.lmg ?? 0; const opP = op.premio_previsto ?? 0; const opT = op.taxa ?? 0; const opV = op.vigencia_anos ?? 1
+                    const opL = op.lmg ?? 0; const opP = op.premio_previsto ?? 0; const opT = op.taxa ?? 0; const opV = anosVig(op)
+                    const opDias = op.vigencia_dias ?? Math.round(opV * 365)
+                    const opVtxt = op.vigencia_anos != null ? `${op.vigencia_anos}${sufVig(op.periodicidade_vigencia)}` : (op.vigencia_dias != null ? `${op.vigencia_dias}d` : '—')
                     const taxaSim = taxaSimInputs[op.id] ?? opT
                     const simPremio = opL * (taxaSim / 100) * opV
                     const simulando = Math.abs(taxaSim - opT) > 1e-9
@@ -3165,7 +3355,7 @@ export default function OperacoesPage() {
                           </div>
                           <div style={{ textAlign: 'center', minWidth: 70 }}>
                             <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 1 }}>Vigência</div>
-                            <div style={{ fontSize: 14, fontWeight: 600, color: '#1a4080' }}>{opV > 0 ? `${opV}a` : '—'}</div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: '#1a4080' }}>{opV > 0 ? opVtxt : '—'}</div>
                           </div>
                           <div style={{ textAlign: 'center', minWidth: 90 }}>
                             <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 1 }}>LMG</div>
@@ -3194,7 +3384,7 @@ export default function OperacoesPage() {
                                     <div style={{ color: '#e8b84b', fontWeight: 700, marginBottom: 12, fontFamily: 'sans-serif', letterSpacing: 1 }}>DEMONSTRAÇÃO DO CÁLCULO</div>
                                     <div style={{ color: 'rgba(180,200,220,0.7)' }}>LMG Solicitado ........ <span style={{ color: 'white', fontWeight: 700 }}>{opL > 0 ? fmtMoeda(opL) : '—'}</span></div>
                                     <div style={{ color: 'rgba(180,200,220,0.7)' }}>× Taxa Aplicada ....... <span style={{ color: 'white', fontWeight: 700 }}>× {opT > 0 ? fmtPercent(opT / 100) : '—'}</span></div>
-                                    <div style={{ color: 'rgba(180,200,220,0.7)' }}>× Vigência ............ <span style={{ color: 'white', fontWeight: 700 }}>× {opV} anos</span></div>
+                                    <div style={{ color: 'rgba(180,200,220,0.7)' }}>× Vigência ............ <span style={{ color: 'white', fontWeight: 700 }}>× {opDias} dias ÷ 365</span></div>
                                     <div style={{ borderTop: '1px solid rgba(56,120,200,0.4)', paddingTop: 8, marginTop: 2 }}>
                                       <span style={{ color: 'rgba(180,200,220,0.7)' }}>Prêmio Previsto ....... </span>
                                       <span style={{ color: '#e8b84b', fontWeight: 900, fontSize: 15 }}>{opP > 0 ? fmtMoeda(opP) : '—'}</span>

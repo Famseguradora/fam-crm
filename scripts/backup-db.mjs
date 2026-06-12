@@ -27,16 +27,25 @@ const PREFIX = 'fam-crm-backup-'
 const KEEP = 3
 const PAGE = 1000
 
-// Tabelas em ordem de dependencia (mesma ordem usada na restauracao).
+// TODAS as tabelas do schema public, em ordem de dependencia (mesma ordem usada
+// na restauracao). Tabelas que nao existirem no banco sao ignoradas com aviso.
 const TABLES = [
   'produtos',
+  'modalidades',
   'corretoras',
   'usuarios',
+  'user_profiles',
+  'configuracoes_sistema',
+  'status_fluxo_operacao',
+  'status_fluxo_tomador',
+  'metas_negocio',
   'tomadores',
   'operacoes',
-  'dashboard_config',
   'anexos',
-  'comite_votos',
+  'comite_comentarios',
+  'fam_skills_global',
+  'fam_skills_usuario',
+  'audit_log',
 ]
 
 // --- Carrega .env.local (parser simples de dotenv) ---

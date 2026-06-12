@@ -60,8 +60,12 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
   -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
   -MultipleInstances IgnoreNew
+# S4U = "executar estando o usuario logado ou nao", sem armazenar senha. Assim o
+# backup NAO morre se a sessao for bloqueada/deslogada (o Interactive morria com
+# erro 0xC000013A) e roda mesmo fora da sessao interativa. Acesso a internet
+# (Supabase via HTTPS) funciona normalmente sob S4U.
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
-  -LogonType Interactive -RunLevel Limited
+  -LogonType S4U -RunLevel Limited
 
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
   -Settings $settings -Principal $principal `

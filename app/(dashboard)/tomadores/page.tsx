@@ -8,6 +8,7 @@ import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCas
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
 import { useDateRange } from '@/lib/context/date-range-context'
 import AnexosSection from '@/components/AnexosSection'
+import OrganogramaModal from '@/components/OrganogramaModal'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,7 @@ export default function TomadoresPage() {
   const [usuarioInfo, setUsuarioInfo] = useState<{ authId: string; nome: string | null; email: string | null } | null>(null)
   const [confirmExcluirTomador, setConfirmExcluirTomador] = useState<Tomador | null>(null)
   const [excluindoTomador, setExcluindoTomador] = useState(false)
+  const [organogramaTomador, setOrganogramaTomador] = useState<Tomador | null>(null)
 
   // ─── Loaders ────────────────────────────────────────────────────────────────
 
@@ -925,6 +927,11 @@ export default function TomadoresPage() {
                         🗑 Excluir Tomador
                       </button>
                     )}
+                    {editando && (
+                      <button type="button" className="btn-export" onClick={() => setOrganogramaTomador(editando)}>
+                        🏛️ Organograma Societário
+                      </button>
+                    )}
                     <button type="button" className="btn-secondary" onClick={fecharForm}>Cancelar</button>
                     <button type="submit" className="btn-primary" disabled={enviando}>
                       {enviando ? 'Salvando...' : editando ? 'Salvar Alterações' : 'Cadastrar Tomador'}
@@ -940,6 +947,15 @@ export default function TomadoresPage() {
                 )}
               </div>
             </div>
+          )}
+
+          {/* Modal Organograma Societário */}
+          {organogramaTomador && (
+            <OrganogramaModal
+              tomador={organogramaTomador}
+              usuarioInfo={usuarioInfo}
+              onClose={() => setOrganogramaTomador(null)}
+            />
           )}
 
           {/* Modal confirmar exclusão de tomador */}

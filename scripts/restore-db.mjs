@@ -24,16 +24,24 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = join(__dirname, '..')
 
-// Ordem de insercao respeitando as chaves estrangeiras.
+// Ordem de insercao respeitando as chaves estrangeiras (pais antes de filhos).
 const TABLES = [
   'produtos',
+  'modalidades',
   'corretoras',
   'usuarios',
+  'user_profiles',
+  'configuracoes_sistema',
+  'status_fluxo_operacao',
+  'status_fluxo_tomador',
+  'metas_negocio',
   'tomadores',
   'operacoes',
-  'dashboard_config',
   'anexos',
-  'comite_votos',
+  'comite_comentarios',
+  'fam_skills_global',
+  'fam_skills_usuario',
+  'audit_log',
 ]
 
 // Colunas geradas (calculadas pelo banco) - nao devem ser inseridas.

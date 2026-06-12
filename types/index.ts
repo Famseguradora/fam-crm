@@ -120,6 +120,7 @@ export interface Operacao {
   lmg: number | null
   taxa: number | null
   vigencia_anos: number | null
+  vigencia_dias: number | null
   periodicidade_vigencia: string | null
   premio_previsto: number | null
   observacao: string | null
@@ -137,6 +138,29 @@ export interface Operacao {
   comite_variacao_lmg_just: string | null
   created_at: string
   updated_at: string
+}
+
+// Sócio do organograma societário de um tomador (árvore de profundidade livre).
+// tomador_id aponta sempre para a raiz; parent_socio_id NULL = sócio direto do tomador.
+export interface Socio {
+  id: string
+  tomador_id: string
+  parent_socio_id: string | null
+  nome_razao_social: string
+  documento: string | null
+  tipo_pessoa: 'PF' | 'PJ' | null
+  percentual: number | null
+  categoria: 'socio' | 'diretor'
+  cargo: string | null
+  ordem: number
+  ativo: boolean
+  created_at: string
+  updated_at: string
+}
+
+// Nó da árvore montada em memória (Socio + filhos recursivos)
+export interface SocioNode extends Socio {
+  filhos: SocioNode[]
 }
 
 export interface MetaNegocio {

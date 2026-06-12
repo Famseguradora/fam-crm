@@ -281,3 +281,169 @@ body {
   /* Botões com área de toque maior */
   .btn-primary, .btn-secondary, .btn-export, .btn-danger { padding: 11px 18px; }
 }
+
+/* ── Organograma Societário (árvore CSS pura, top-down) ───────────────────── */
+ul.org-tree,
+ul.org-tree ul.org-children {
+  display: flex;
+  justify-content: center;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+ul.org-tree ul.org-children { padding-top: 22px; position: relative; }
+
+li.org-subtree {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 22px 8px 0;
+}
+/* Conectores horizontais entre irmãos + vertical até cada filho */
+li.org-subtree::before,
+li.org-subtree::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 50%;
+  width: 50%;
+  height: 22px;
+  border-top: 2px solid #c5d5e8;
+}
+li.org-subtree::after { right: auto; left: 50%; border-left: 2px solid #c5d5e8; }
+li.org-subtree:only-child::before,
+li.org-subtree:only-child::after { display: none; }
+li.org-subtree:first-child::before { border: 0 none; }
+li.org-subtree:last-child::after { border: 0 none; }
+li.org-subtree:last-child::before { border-right: 2px solid #c5d5e8; }
+/* Vertical descendo do nó pai até a barra dos filhos */
+ul.org-tree ul.org-children::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0;
+  height: 22px;
+  border-left: 2px solid #c5d5e8;
+  transform: translateX(-1px);
+}
+/* O nó raiz (tomador) não tem conector acima */
+ul.org-tree > li.org-subtree { padding-top: 0; }
+ul.org-tree > li.org-subtree::before,
+ul.org-tree > li.org-subtree::after { display: none; }
+
+.org-wrapper { display: inline-flex; flex-direction: column; align-items: center; }
+
+.org-node {
+  position: relative;
+  z-index: 1;
+  min-width: 160px;
+  max-width: 230px;
+  background: linear-gradient(180deg, #ffffff 0%, #f3f8fd 100%);
+  border: 1px solid #cfdcec;
+  border-top: 3px solid #3070c8;
+  border-radius: 10px;
+  padding: 9px 12px;
+  box-shadow: 0 3px 10px rgba(16, 32, 64, 0.10);
+  text-align: center;
+}
+.org-node-pj { border-top-color: #1e4080; }
+/* Nó raiz = o TOMADOR: caixa azul sólida em destaque (estilo corporativo) */
+.org-node-raiz {
+  background: linear-gradient(135deg, #102a52 0%, #1e4d8c 100%);
+  border: 1px solid #0a1f3d;
+  border-top: 3px solid #e8b84b;
+  min-width: 210px;
+}
+.org-node-raiz .org-node-nome { color: #ffffff; }
+.org-node-raiz .org-node-doc { color: #b9d2ef; }
+.org-node-top { display: flex; justify-content: center; align-items: center; gap: 6px; margin-bottom: 5px; min-height: 16px; }
+.org-node-badge { font-size: 9px; font-weight: 800; letter-spacing: .5px; color: #fff; background: #3070c8; border-radius: 5px; padding: 2px 8px; }
+.org-node-pct {
+  position: absolute; top: -9px; right: 8px;
+  font-size: 11px; font-weight: 800; color: #ffffff; background: #16407a;
+  border-radius: 10px; padding: 1px 8px; box-shadow: 0 1px 3px rgba(16,32,64,0.25);
+}
+.org-node-nome { font-size: 13px; font-weight: 700; color: #0a1628; line-height: 1.25; word-break: break-word; }
+.org-node-doc { font-size: 11px; color: #6080a0; margin-top: 2px; }
+.org-node-actions { display: flex; justify-content: center; gap: 4px; margin-top: 6px; }
+
+/* ── Grupo de DIRETORES (opcional, ligado por linha pontilhada) ───────────── */
+.org-diretores {
+  position: relative;
+  margin-top: 30px;
+  border: 2px dashed #e8b84b;
+  border-radius: 12px;
+  padding: 14px 16px 16px;
+  background: #fffdf6;
+}
+.org-diretores::before {
+  content: '';
+  position: absolute;
+  top: -22px; left: 50%;
+  width: 0; height: 22px;
+  border-left: 2px dashed #e8b84b;
+  transform: translateX(-1px);
+}
+.org-diretores-head {
+  font-size: 11px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase;
+  color: #8a6d1f; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; justify-content: center;
+}
+.org-diretores-cards { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.org-diretor-card {
+  min-width: 170px; max-width: 240px;
+  background: linear-gradient(180deg, #ffffff 0%, #fff7e6 100%);
+  border: 1px solid #ecd9a8; border-top: 3px solid #e8b84b; border-radius: 10px;
+  padding: 9px 12px; box-shadow: 0 2px 8px rgba(120, 90, 20, 0.10); text-align: center;
+}
+.org-diretor-icon { font-size: 18px; line-height: 1; }
+.org-diretor-nome { font-size: 13px; font-weight: 700; color: #0a1628; margin-top: 2px; }
+.org-diretor-cargo { font-size: 11.5px; font-weight: 600; color: #a07b1e; margin-top: 1px; }
+.org-diretor-doc { font-size: 11px; color: #8a7a55; margin-top: 2px; }
+.org-diretor-actions { display: flex; justify-content: center; gap: 4px; margin-top: 6px; }
+
+.org-act {
+  width: 24px; height: 22px;
+  border-radius: 5px;
+  border: 1px solid #d0ddec;
+  background: #f0f5fb;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.org-act + .org-act { margin-left: 3px; }
+.org-act-add { color: #1f8f4e; font-weight: 800; }
+.org-act-edit { color: #2a5a95; }
+.org-act-del { color: #d64545; font-weight: 800; }
+.org-act:hover { filter: brightness(0.96); }
+
+/* ── Dossiê do Tomador (cards clicáveis do Relatório Contábil) ─────────────── */
+.dossie-card {
+  text-align: left;
+  background: #ffffff;
+  border: 1.5px solid #dce7f3;
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, transform .15s;
+  box-shadow: 0 1px 3px rgba(16, 32, 64, 0.05);
+  display: block;
+  width: 100%;
+  font-family: inherit;
+}
+.dossie-card:hover {
+  border-color: #3070c8;
+  box-shadow: 0 6px 20px rgba(16, 32, 64, 0.12);
+  transform: translateY(-2px);
+}
+.dossie-chip {
+  font-size: 11.5px; font-weight: 600; color: #3a5a85;
+  background: #eef4fb; border-radius: 6px; padding: 3px 8px; white-space: nowrap;
+}
+.dossie-mini-label { font-size: 10px; font-weight: 700; color: #6080a0; text-transform: uppercase; letter-spacing: .4px; }
+.dossie-mini-val { font-size: 14px; font-weight: 700; color: #0a1628; }
+.dossie-op-val { font-size: 13px; font-weight: 600; color: #0a1628; word-break: break-word; }
