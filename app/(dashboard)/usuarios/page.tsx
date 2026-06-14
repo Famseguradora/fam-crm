@@ -31,15 +31,37 @@ export default function UsuariosPage() {
   const [enviando, setEnviando] = useState(false)
   const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
   const [busca, setBusca] = useState('')
+  const [souProprietario, setSouProprietario] = useState(false)
+  const [togglingAvisoId, setTogglingAvisoId] = useState<string | null>(null)
 
   // Supabase só é criado dentro de funções (evita SSR durante build)
   const carregarUsuarios = useCallback(async () => {
     setCarregando(true)
     const supabase = createClient()
-    const { data } = await supabase.from('usuarios').select('*').order('nome')
+    const { data: { user } } = await supabase.auth.getUser()
+    const [{ data }, euRes] = await Promise.all([
+      supabase.from('usuarios').select('*').order('nome'),
+      user
+        ? supabase.from('usuarios').select('proprietario').eq('auth_id', user.id).single()
+        : Promise.resolve({ data: null }),
+    ])
     setUsuarios(data ?? [])
+    setSouProprietario(euRes.data?.proprietario ?? false)
     setCarregando(false)
   }, [])
+
+  // Liga/desliga o direito de publicar avisos. Só o proprietário enxerga e usa.
+  async function toggleAvisos(u: Usuario) {
+    if (!souProprietario) return
+    setTogglingAvisoId(u.id)
+    const supabase = createClient()
+    const novo = !u.pode_publicar_avisos
+    const { error } = await supabase.from('usuarios').update({ pode_publicar_avisos: novo }).eq('id', u.id)
+    if (!error) {
+      setUsuarios(prev => prev.map(x => x.id === u.id ? { ...x, pode_publicar_avisos: novo } : x))
+    }
+    setTogglingAvisoId(null)
+  }
 
   useEffect(() => { carregarUsuarios() }, [carregarUsuarios])
 
@@ -329,6 +351,7 @@ export default function UsuariosPage() {
               <th>Cargo</th>
               <th>Perfil</th>
               <th>Status</th>
+              {souProprietario && <th>Avisos</th>}
               <th>Cadastrado em</th>
               <th>Ações</th>
             </tr>
@@ -336,13 +359,13 @@ export default function UsuariosPage() {
           <tbody>
             {carregando ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                <td colSpan={souProprietario ? 9 : 8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                   Carregando usuários...
                 </td>
               </tr>
             ) : usuariosFiltrados.length === 0 ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                <td colSpan={souProprietario ? 9 : 8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                   {busca ? 'Nenhum usuário encontrado para esta busca.' : 'Nenhum usuário cadastrado ainda.'}
                 </td>
               </tr>
@@ -363,6 +386,26 @@ export default function UsuariosPage() {
                       {u.status === 'ativo' ? 'ATIVO' : 'INATIVO'}
                     </span>
                   </td>
+                  {souProprietario && (
+                    <td>
+                      <button
+                        onClick={() => toggleAvisos(u)}
+                        disabled={togglingAvisoId === u.id}
+                        title={u.pode_publicar_avisos ? 'Pode publicar avisos — clique para revogar' : 'Sem permissão — clique para conceder'}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 6,
+                          padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                          fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif",
+                          background: u.pode_publicar_avisos ? '#fdf6e6' : '#eef2f7',
+                          color: u.pode_publicar_avisos ? '#a07810' : '#6080a0',
+                          opacity: togglingAvisoId === u.id ? 0.6 : 1,
+                        }}
+                      >
+                        <span>{u.pode_publicar_avisos ? '🔔' : '○'}</span>
+                        {togglingAvisoId === u.id ? '...' : u.pode_publicar_avisos ? 'Pode' : 'Não'}
+                      </button>
+                    </td>
+                  )}
                   <td style={{ fontSize: 13, color: '#6080a0' }}>{fmtData(u.created_at)}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 6 }}>

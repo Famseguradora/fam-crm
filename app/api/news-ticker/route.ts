@@ -12,6 +12,7 @@ interface NewsItem {
 // geral + setor de seguros, que é o que interessa para a FAM Seguradora.
 const FEEDS = [
   { url: 'https://g1.globo.com/rss/g1/economia/', source: 'G1 Economia' },
+  { url: 'https://g1.globo.com/rss/g1/politica/', source: 'G1 Política' },
   { url: 'https://www.infomoney.com.br/feed/', source: 'InfoMoney' },
   { url: 'https://agenciabrasil.ebc.com.br/rss/economia/feed.xml', source: 'Ag. Brasil' },
   { url: 'https://www.cqcs.com.br/feed/', source: 'CQCS Seguros' },

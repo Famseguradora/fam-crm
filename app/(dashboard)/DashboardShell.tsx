@@ -7,11 +7,13 @@ import { fmtDataExtenso } from '@/lib/utils'
 import { DateRangeProvider } from '@/lib/context/date-range-context'
 import InstallPrompt from './InstallPrompt'
 import NewsTicker from './NewsTicker'
+import MarketTicker from './MarketTicker'
 
 interface Props {
   nomeUsuario: string
   perfilUsuario: string
   proprietario: boolean
+  podePublicarAvisos: boolean
   emailUsuario: string
   userId: string
   dataInicio: string | null
@@ -42,12 +44,16 @@ const PERFORMANCE_ITEMS = [
   { label: 'Performance', href: '/performance', icon: '📊', disabled: true },
 ]
 
-const CONFIG_ITEMS = [
+const CONFIG_ITEMS: {
+  label: string; href: string; icon: string;
+  proprietarioOnly?: boolean; emailOnly?: string; avisosOnly?: boolean; disabled?: boolean
+}[] = [
+  { label: 'Central de Avisos', href: '/configuracoes/avisos', icon: '📢', avisosOnly: true },
   { label: 'Skills de IA', href: '/configuracoes/skills',  icon: '🧠', proprietarioOnly: false, emailOnly: 'marcodragone@gmail.com', disabled: true },
   { label: 'Sistema',      href: '/configuracoes/sistema', icon: '⚙️', proprietarioOnly: true },
 ]
 
-export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, emailUsuario, userId, dataInicio, children }: Props) {
+export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, podePublicarAvisos, emailUsuario, userId, dataInicio, children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -247,7 +253,8 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
         </div>
       </div>
 
-      {/* ── News Ticker ── */}
+      {/* ── Faixa de cotações (rolando) + notícias (rolando), acima das abas ── */}
+      <MarketTicker />
       <NewsTicker userId={userId} />
 
       </div>{/* end sticky zone */}
@@ -361,46 +368,44 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
           flexShrink: 0,
         }}>
 
-          {/* Toggle */}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            title={sidebarOpen ? 'Recolher menu' : 'Expandir menu'}
-            style={{
+          {/* Performance — com a seta de recolher na mesma linha do título
+              (evita a linha vazia que a seta ocupava sozinha). */}
+          <div style={{ paddingTop: 10 }}>
+            <div style={{
               display: 'flex',
               alignItems: 'center',
-              justifyContent: sidebarOpen ? 'flex-end' : 'center',
-              padding: '12px 14px',
-              background: 'transparent',
-              border: 'none',
-              borderBottom: '1px solid #1a3560',
-              color: '#6090b8',
-              cursor: 'pointer',
-              fontSize: 14,
-              lineHeight: 1,
-              width: '100%',
-              transition: 'color 0.15s',
-              flexShrink: 0,
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = '#a0c0e8')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = '#6090b8')}
-          >
-            {sidebarOpen ? '◀' : '▶'}
-          </button>
-
-          {/* Subscrição */}
-
-          {/* Performance */}
-          <div style={{ paddingTop: 8 }}>
-            {sidebarOpen && (
-              <div style={{
-                fontSize: 10, fontWeight: 700, color: '#4a7ab5',
-                letterSpacing: '1.5px', textTransform: 'uppercase',
-                padding: '0 16px 8px',
-                whiteSpace: 'nowrap',
-              }}>
-                Performance
-              </div>
-            )}
+              justifyContent: sidebarOpen ? 'space-between' : 'center',
+              padding: sidebarOpen ? '0 10px 8px 16px' : '0 0 8px',
+            }}>
+              {sidebarOpen && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, color: '#4a7ab5',
+                  letterSpacing: '1.5px', textTransform: 'uppercase',
+                  whiteSpace: 'nowrap',
+                }}>
+                  Performance
+                </span>
+              )}
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                title={sidebarOpen ? 'Recolher menu' : 'Expandir menu'}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#6090b8',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  lineHeight: 1,
+                  padding: 4,
+                  transition: 'color 0.15s',
+                  flexShrink: 0,
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#a0c0e8')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = '#6090b8')}
+              >
+                {sidebarOpen ? '◀' : '▶'}
+              </button>
+            </div>
             {PERFORMANCE_ITEMS.map((item) => (
               <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} disabled={item.disabled} />
             ))}
@@ -457,7 +462,8 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
             )}
             {CONFIG_ITEMS.filter(item =>
               (!item.proprietarioOnly || proprietario) &&
-              (!item.emailOnly || item.emailOnly === emailUsuario)
+              (!item.emailOnly || item.emailOnly === emailUsuario) &&
+              (!item.avisosOnly || podePublicarAvisos || proprietario)
             ).map((item) => (
               <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} disabled={item.disabled} />
             ))}

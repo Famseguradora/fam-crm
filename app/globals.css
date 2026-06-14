@@ -15,6 +15,24 @@
   will-change: transform;
 }
 
+/* ── Faixa de cotações: marquee contínuo, efeito "cobrinha" ──
+   O conteúdo é duplicado e a animação anda exatamente 1 cópia (-50%): o
+   início reaparece à direita antes de o fim sair pela esquerda, sem vão.
+   inline-block + nowrap garante que TUDO fique numa única linha. */
+@keyframes fam-marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.fam-marquee-track {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+.fam-marquee-group {
+  display: inline-block;
+  white-space: nowrap;
+}
+
 /* Afeta só o título sob o cursor — sinaliza que a matéria é clicável. */
 .fam-ticker-scroll a:hover .fam-ticker-title {
   text-decoration: underline;

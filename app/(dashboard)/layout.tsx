@@ -11,7 +11,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // Busca dados do usuário para exibir perfil e nome
   const { data: usuarioDb } = await supabase
     .from('usuarios')
-    .select('nome, perfil, proprietario')
+    .select('nome, perfil, proprietario, pode_publicar_avisos')
     .eq('auth_id', user.id)
     .single()
 
@@ -27,6 +27,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       nomeUsuario={usuarioDb?.nome ?? user.email ?? ''}
       perfilUsuario={usuarioDb?.perfil ?? 'usuario'}
       proprietario={usuarioDb?.proprietario ?? false}
+      podePublicarAvisos={usuarioDb?.pode_publicar_avisos ?? false}
       emailUsuario={user.email ?? ''}
       userId={user.id}
       dataInicio={config?.valor ?? null}

@@ -16,6 +16,7 @@ interface Props {
 function sourceColor(source: string): string {
   switch (source) {
     case 'G1 Economia':  return '#e0533a'
+    case 'G1 Política':  return '#b06bd0'
     case 'InfoMoney':    return '#3ad07a'
     case 'Ag. Brasil':   return '#4aa3e0'
     case 'CQCS Seguros': return '#e8b84b'

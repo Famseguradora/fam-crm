@@ -24,8 +24,23 @@ export interface Usuario {
   perfil: Perfil
   status: StatusUsuario
   primeiro_acesso: boolean
+  pode_publicar_avisos: boolean
   created_at: string
   updated_at: string
+}
+
+export type TipoAviso = 'parabens' | 'info' | 'alerta'
+
+export interface Aviso {
+  id: string
+  mensagem: string
+  tipo: TipoAviso
+  ativo: boolean
+  expira_em: string
+  criado_por_auth_id: string | null
+  criado_por_nome: string | null
+  criado_em: string
+  atualizado_em: string | null
 }
 
 export interface Produto {
