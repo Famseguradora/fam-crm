@@ -15,8 +15,10 @@
   will-change: transform;
 }
 
-.fam-ticker-scroll:hover {
-  animation-play-state: paused;
+/* Afeta só o título sob o cursor — sinaliza que a matéria é clicável. */
+.fam-ticker-scroll a:hover .fam-ticker-title {
+  text-decoration: underline;
+  color: #c5dcf0;
 }
 
 :root {

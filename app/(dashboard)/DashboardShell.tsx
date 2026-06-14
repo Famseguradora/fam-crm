@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtDataExtenso } from '@/lib/utils'
 import { DateRangeProvider } from '@/lib/context/date-range-context'
 import InstallPrompt from './InstallPrompt'
-// import NewsTicker from './NewsTicker'
+import NewsTicker from './NewsTicker'
 
 interface Props {
   nomeUsuario: string
@@ -247,8 +247,8 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
         </div>
       </div>
 
-      {/* ── News Ticker ── (desabilitado) */}
-      {/* <NewsTicker userId={userId} /> */}
+      {/* ── News Ticker ── */}
+      <NewsTicker userId={userId} />
 
       </div>{/* end sticky zone */}
 

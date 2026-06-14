@@ -5,38 +5,113 @@ export const revalidate = 600
 interface NewsItem {
   title: string
   source: string
+  link: string
 }
 
+// Fontes verificadas (todas respondendo 200). Mantemos um mix de economia
+// geral + setor de seguros, que é o que interessa para a FAM Seguradora.
 const FEEDS = [
+  { url: 'https://g1.globo.com/rss/g1/economia/', source: 'G1 Economia' },
   { url: 'https://www.infomoney.com.br/feed/', source: 'InfoMoney' },
   { url: 'https://agenciabrasil.ebc.com.br/rss/economia/feed.xml', source: 'Ag. Brasil' },
-  { url: 'https://www.segs.com.br/rss.xml', source: 'Segs' },
+  { url: 'https://www.cqcs.com.br/feed/', source: 'CQCS Seguros' },
 ]
 
-function parseTitles(xml: string, source: string, max = 7): NewsItem[] {
+// Entidades nomeadas que aparecem com frequência em feeds brasileiros.
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
+  nbsp: ' ', hellip: '…', mdash: '—', ndash: '–',
+  lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”',
+  aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú',
+  agrave: 'à', acirc: 'â', ecirc: 'ê', ocirc: 'ô',
+  atilde: 'ã', otilde: 'õ', ccedil: 'ç',
+  Aacute: 'Á', Eacute: 'É', Iacute: 'Í', Oacute: 'Ó', Uacute: 'Ú',
+  Agrave: 'À', Acirc: 'Â', Ecirc: 'Ê', Ocirc: 'Ô',
+  Atilde: 'Ã', Otilde: 'Õ', Ccedil: 'Ç',
+  ordf: 'ª', ordm: 'º', deg: '°', euro: '€', pound: '£', cent: '¢',
+}
+
+// Decodifica entidades numéricas (decimais e hexadecimais) e nomeadas.
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
+      try { return String.fromCodePoint(parseInt(hex, 16)) } catch { return '' }
+    })
+    .replace(/&#(\d+);/g, (_, dec) => {
+      try { return String.fromCodePoint(parseInt(dec, 10)) } catch { return '' }
+    })
+    .replace(/&([a-zA-Z]+);/g, (whole, name) =>
+      Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, name) ? NAMED_ENTITIES[name] : whole
+    )
+}
+
+// Limpa um título cru de feed: remove CDATA, tags HTML, decodifica entidades
+// e normaliza espaços. É aqui que evitamos "códigos aparecendo" na faixa.
+function cleanTitle(raw: string): string {
+  let t = raw
+  // Remove invólucros CDATA, se sobraram.
+  t = t.replace(/<!\[CDATA\[/g, '').replace(/\]\]>/g, '')
+  // Remove quaisquer tags HTML.
+  t = t.replace(/<[^>]*>/g, '')
+  // Decodifica entidades (pode ser preciso 2 passes: ex. &amp;#243;).
+  t = decodeEntities(decodeEntities(t))
+  // Normaliza espaços em branco.
+  t = t.replace(/\s+/g, ' ').trim()
+  return t
+}
+
+// Extrai o link da matéria DENTRO do bloco do próprio item — por isso o link
+// sempre corresponde ao título certo. Só aceita URL http(s) absoluta; qualquer
+// coisa diferente vira string vazia (a notícia fica sem link, nunca com link errado).
+function extractLink(itemXml: string): string {
+  const rss = /<link\b[^>]*>([\s\S]*?)<\/link>/i.exec(itemXml)
+  const candidate = rss && rss[1].trim()
+    ? cleanTitle(rss[1])
+    : (/<link\b[^>]*\bhref=["']([^"']+)["'][^>]*\/?>/i.exec(itemXml)?.[1]?.trim() ?? '')
+  try {
+    const u = new URL(candidate)
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
+// Extrai os títulos de cada <item> do RSS, ignorando o <title> do canal.
+function parseTitles(xml: string, source: string, max = 6): NewsItem[] {
   const items: NewsItem[] = []
-  const re = /<title[^>]*>(?:<!\[CDATA\[)?\s*([\s\S]*?)\s*(?:\]\]>)?<\/title>/g
-  let match
-  let skip = true
-  while ((match = re.exec(xml)) !== null) {
-    if (skip) { skip = false; continue }
-    const title = match[1]
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&#[0-9]+;/g, '')
-      .trim()
-    if (title && title.length > 5) items.push({ title, source })
+  const itemRe = /<item\b[\s\S]*?<\/item>/gi
+  const titleRe = /<title[^>]*>([\s\S]*?)<\/title>/i
+
+  let itemMatch: RegExpExecArray | null
+  while ((itemMatch = itemRe.exec(xml)) !== null) {
+    const titleMatch = titleRe.exec(itemMatch[0])
+    if (!titleMatch) continue
+    const title = cleanTitle(titleMatch[1])
+    const link = extractLink(itemMatch[0])
+    if (title.length > 8) items.push({ title, source, link })
     if (items.length >= max) break
   }
   return items
+}
+
+// Intercala as fontes em rodízio para a faixa não ficar com 6 notícias
+// seguidas da mesma fonte.
+function interleave(groups: NewsItem[][]): NewsItem[] {
+  const out: NewsItem[] = []
+  const maxLen = Math.max(0, ...groups.map(g => g.length))
+  for (let i = 0; i < maxLen; i++) {
+    for (const g of groups) {
+      if (g[i]) out.push(g[i])
+    }
+  }
+  return out
 }
 
 export async function GET() {
   const results = await Promise.allSettled(
     FEEDS.map(async ({ url, source }) => {
       const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 5000)
+      const timer = setTimeout(() => controller.abort(), 6000)
       try {
         const res = await fetch(url, {
           signal: controller.signal,
@@ -54,10 +129,9 @@ export async function GET() {
     })
   )
 
-  const items: NewsItem[] = []
-  for (const r of results) {
-    if (r.status === 'fulfilled') items.push(...r.value)
-  }
+  const groups: NewsItem[][] = results.map(r =>
+    r.status === 'fulfilled' ? r.value : []
+  )
 
-  return NextResponse.json({ items })
+  return NextResponse.json({ items: interleave(groups) })
 }

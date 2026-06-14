@@ -54,6 +54,8 @@ export default function OrganogramaModal({ tomador, usuarioInfo, onClose }: Prop
     setCarregando(false)
   }, [tomador.id])
 
+  // Carrega os sócios ao montar — o setState ocorre após o fetch, é proposital.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { carregarSocios() }, [carregarSocios])
 
   useEffect(() => {
@@ -315,7 +317,6 @@ export default function OrganogramaModal({ tomador, usuarioInfo, onClose }: Prop
     }
   }
 
-  const maskDoc = socioForm?.tipo_pessoa === 'PJ' ? maskCNPJ : maskCPF
   const ehDiretorForm = socioForm?.categoria === 'diretor'
   const tituloForm = socioForm?.mode === 'add'
     ? (ehDiretorForm ? '＋ Novo Diretor' : '＋ Novo Sócio')
@@ -470,8 +471,21 @@ export default function OrganogramaModal({ tomador, usuarioInfo, onClose }: Prop
                     <label className="form-label">{socioForm.tipo_pessoa === 'PJ' ? 'CNPJ' : 'CPF'}</label>
                     <input className="fam-input" type="text" value={socioForm.documento}
                       placeholder={socioForm.tipo_pessoa === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'}
-                      maxLength={socioForm.tipo_pessoa === 'PJ' ? 18 : 14}
-                      onChange={(e) => setSocioForm({ ...socioForm, documento: maskDoc(e.target.value) })} />
+                      maxLength={18}
+                      onChange={(e) => {
+                        // Autodetecta PF/PJ pelo nº de dígitos: até 11 = CPF (PF),
+                        // 12 ou mais = CNPJ (PJ). Evita salvar com o tipo errado.
+                        const digits = e.target.value.replace(/\D/g, '')
+                        const tipo: 'PF' | 'PJ' = digits.length > 11 ? 'PJ' : 'PF'
+                        setSocioForm({
+                          ...socioForm,
+                          tipo_pessoa: tipo,
+                          documento: tipo === 'PJ' ? maskCNPJ(digits) : maskCPF(digits),
+                        })
+                      }} />
+                    <span style={{ fontSize: 11, color: '#6080a0', marginTop: 3, display: 'block' }}>
+                      Detectado automaticamente: <strong>{socioForm.tipo_pessoa === 'PJ' ? 'Pessoa Jurídica' : 'Pessoa Física'}</strong> pelo nº de dígitos
+                    </span>
                   </div>
                   {ehDiretorForm ? (
                     <div className="form-field">

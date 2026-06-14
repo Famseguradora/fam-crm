@@ -5,10 +5,22 @@ import { useEffect, useState } from 'react'
 interface NewsItem {
   title: string
   source: string
+  link: string
 }
 
 interface Props {
   userId: string
+}
+
+// Cor de destaque por fonte — diferencia visualmente os portais na faixa.
+function sourceColor(source: string): string {
+  switch (source) {
+    case 'G1 Economia':  return '#e0533a'
+    case 'InfoMoney':    return '#3ad07a'
+    case 'Ag. Brasil':   return '#4aa3e0'
+    case 'CQCS Seguros': return '#e8b84b'
+    default:             return '#8ab0d0'
+  }
 }
 
 function storageKey(userId: string) {
@@ -35,18 +47,30 @@ export default function NewsTicker({ userId }: Props) {
   const [enabled, setEnabled] = useState(true)
   const [items, setItems] = useState<NewsItem[]>([])
   const [hydrated, setHydrated] = useState(false)
+  const [paused, setPaused] = useState(false)
 
   useEffect(() => {
+    // Lê a preferência salva no navegador só no cliente (localStorage não
+    // existe no SSR). O setState aqui é proposital — sincroniza o estado
+    // com o storage após a hidratação.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setEnabled(readPref(userId))
     setHydrated(true)
   }, [userId])
 
   useEffect(() => {
     if (!hydrated || !enabled) return
-    fetch('/api/news-ticker')
-      .then(r => (r.ok ? r.json() : { items: [] }))
-      .then(d => setItems(Array.isArray(d.items) ? d.items : []))
-      .catch(() => {})
+    let active = true
+    const load = () => {
+      fetch('/api/news-ticker')
+        .then(r => (r.ok ? r.json() : { items: [] }))
+        .then(d => { if (active) setItems(Array.isArray(d.items) ? d.items : []) })
+        .catch(() => {})
+    }
+    load()
+    // Recarrega sozinho a cada 10 min — o banner se renova sem dar F5.
+    const id = setInterval(load, 10 * 60 * 1000)
+    return () => { active = false; clearInterval(id) }
   }, [hydrated, enabled])
 
   if (!hydrated) return null
@@ -92,10 +116,10 @@ export default function NewsTicker({ userId }: Props) {
   // No news loaded yet or all sources failed — render nothing
   if (items.length === 0) return null
 
-  const tickerText = items.map(i => `${i.source}  ·  ${i.title}`).join('          ')
-
-  // ~80px/s at 12px font (≈5px per char). Container ≈ 1200px.
-  const duration = Math.round((1200 + tickerText.length * 5) / 80)
+  // Comprimento aproximado do conteúdo (fonte + título) para calcular a
+  // velocidade da rolagem. ~50px/s (mais lento = dá tempo de ler).
+  const totalChars = items.reduce((n, i) => n + i.source.length + i.title.length + 6, 0)
+  const duration = Math.max(60, Math.round((1200 + totalChars * 5) / 50))
 
   return (
     <div style={{
@@ -127,19 +151,63 @@ export default function NewsTicker({ userId }: Props) {
         📰 AO VIVO
       </div>
 
-      {/* Scrolling area */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
+      {/* Scrolling area — passar o mouse aqui PAUSA a rolagem para ler. */}
+      <div
+        style={{ flex: 1, overflow: 'hidden' }}
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+      >
         <span
           className="fam-ticker-scroll"
           style={{
             animation: `fam-ticker ${duration}s linear infinite`,
-            color: '#8ab0d0',
+            animationPlayState: paused ? 'paused' : 'running',
             fontSize: 12,
             fontFamily: "'Calibri','Segoe UI',sans-serif",
             cursor: 'default',
           }}
         >
-          {tickerText}
+          {items.map((item, idx) => {
+            const color = sourceColor(item.source)
+            const badge = (
+              <span style={{
+                color,
+                fontWeight: 700,
+                fontSize: 10,
+                letterSpacing: '0.6px',
+                textTransform: 'uppercase' as const,
+                padding: '1px 7px',
+                borderRadius: 3,
+                border: `1px solid ${color}44`,
+                background: `${color}14`,
+                marginRight: 9,
+              }}>
+                {item.source}
+              </span>
+            )
+            // Com link válido → matéria abre em nova aba. Sem link → texto puro.
+            return (
+              <span key={idx} style={{ marginRight: 44 }}>
+                {item.link ? (
+                  <a
+                    href={item.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Abrir matéria — ${item.source}`}
+                    style={{ textDecoration: 'none', cursor: 'pointer' }}
+                  >
+                    {badge}
+                    <span className="fam-ticker-title" style={{ color: '#9fc1e0' }}>{item.title}</span>
+                  </a>
+                ) : (
+                  <>
+                    {badge}
+                    <span style={{ color: '#9fc1e0' }}>{item.title}</span>
+                  </>
+                )}
+              </span>
+            )
+          })}
         </span>
       </div>
 
