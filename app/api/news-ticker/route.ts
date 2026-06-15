@@ -15,7 +15,9 @@ const FEEDS = [
   { url: 'https://g1.globo.com/rss/g1/politica/', source: 'G1 Política' },
   { url: 'https://www.infomoney.com.br/feed/', source: 'InfoMoney' },
   { url: 'https://agenciabrasil.ebc.com.br/rss/economia/feed.xml', source: 'Ag. Brasil' },
-  { url: 'https://www.cqcs.com.br/feed/', source: 'CQCS Seguros' },
+  // URL canônica sem "www": www.cqcs.com.br responde 301 e o fetch com cache
+  // perde o corpo do feed (a fonte sumia da faixa). Apontamos direto.
+  { url: 'https://cqcs.com.br/feed/', source: 'CQCS Seguros' },
 ]
 
 // Entidades nomeadas que aparecem com frequência em feeds brasileiros.
@@ -117,7 +119,16 @@ export async function GET() {
         const res = await fetch(url, {
           signal: controller.signal,
           next: { revalidate: 600 },
-          headers: { 'User-Agent': 'FAM-CRM/1.0 (news-ticker)' },
+          // UA de navegador: feeds atrás de Cloudflare (ex.: CQCS) desafiam/
+          // bloqueiam UA de robô vindo de IP de datacenter (Vercel). Localmente
+          // sai do IP do escritório e passa; em produção, não. Com UA de browser
+          // + Accept de RSS o Cloudflare libera o feed no servidor também.
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+              '(KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+            Accept: 'application/rss+xml, application/xml;q=0.9, */*;q=0.8',
+          },
         })
         clearTimeout(timer)
         if (!res.ok) return [] as NewsItem[]
