@@ -827,8 +827,8 @@ export default function OperacoesPage() {
         let cmp = 0
         if (sortField === 'tomador') {
           cmp = (a.tomador?.razao_social ?? '').localeCompare(b.tomador?.razao_social ?? '', 'pt-BR', { sensitivity: 'base' })
-        } else if (sortField === 'corretora') {
-          cmp = (a.corretora?.razao_social ?? '').localeCompare(b.corretora?.razao_social ?? '', 'pt-BR', { sensitivity: 'base' })
+        } else if (sortField === 'premio') {
+          cmp = (a.premio_previsto ?? 0) - (b.premio_previsto ?? 0)
         } else if (sortField === 'cobertura') {
           cmp = (a.produto?.nome ?? '').localeCompare(b.produto?.nome ?? '', 'pt-BR', { sensitivity: 'base' })
         } else if (sortField === 'lmg') {
@@ -2775,11 +2775,11 @@ export default function OperacoesPage() {
                 <tr>
                   <th>#</th>
                   <th style={thSort} onClick={() => handleSort('tomador')}>Tomador{sortIcon('tomador')}</th>
-                  <th style={thSort} onClick={() => handleSort('corretora')}>Corretora{sortIcon('corretora')}</th>
                   <th style={thSort} onClick={() => handleSort('cobertura')}>Cobertura / Modalidade{sortIcon('cobertura')}</th>
                   <th style={thSort} onClick={() => handleSort('lmg')}>LMG - Limite FAM{sortIcon('lmg')}</th>
                   {showLmgLimiteFam && <th style={thSort} onClick={() => handleSort('lmg')}>LMG Original{sortIcon('lmg')}</th>}
                   <th style={thSort} onClick={() => handleSort('taxa')}>Taxa{sortIcon('taxa')}</th>
+                  <th style={thSort} onClick={() => handleSort('premio')}>Prêmio{sortIcon('premio')}</th>
                   <th style={thSort} onClick={() => handleSort('temperatura')}>Temp.{sortIcon('temperatura')}</th>
                   <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
                   <th style={thSort} onClick={() => handleSort('data_entrada')}>Data Entrada{sortIcon('data_entrada')}</th>
@@ -2802,9 +2802,8 @@ export default function OperacoesPage() {
                       <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
                       <td>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{op.tomador?.razao_social ?? '—'}</div>
-                        {op.tomador?.cnpj && <div style={{ fontSize: 11, color: '#6080a0' }}>{maskCNPJ(op.tomador.cnpj)}</div>}
+                        <div style={{ fontSize: 13, color: '#6080a0' }}>{op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'}</div>
                       </td>
-                      <td style={{ fontSize: 13, color: '#6080a0' }}>{op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'}</td>
                       <td style={{ fontSize: 13 }}>
                         <div>{op.produto?.nome ?? '—'}</div>
                         {op.modalidade && <div style={{ fontSize: 11, color: '#6080a0' }}>{op.modalidade}</div>}
@@ -2820,6 +2819,9 @@ export default function OperacoesPage() {
                       )}
                       <td style={{ fontSize: 13 }}>
                         {op.taxa ? fmtPercent(op.taxa / 100) : '—'}
+                      </td>
+                      <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        {op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—'}
                       </td>
                       <td>
                         {op.temperatura
