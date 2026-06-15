@@ -20,6 +20,8 @@ function sourceColor(source: string): string {
     case 'InfoMoney':    return '#3ad07a'
     case 'Ag. Brasil':   return '#4aa3e0'
     case 'CQCS Seguros': return '#e8b84b'
+    case 'Notícias do Seguro': return '#5ad0c0'
+    case 'CNseg':        return '#d08a5a'
     default:             return '#8ab0d0'
   }
 }

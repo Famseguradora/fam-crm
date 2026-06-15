@@ -8,16 +8,42 @@ interface NewsItem {
   link: string
 }
 
-// Fontes verificadas (todas respondendo 200). Mantemos um mix de economia
-// geral + setor de seguros, que é o que interessa para a FAM Seguradora.
-const FEEDS = [
+interface Feed {
+  url: string
+  source: string
+  // Feed alternativo (Google News RSS) usado quando o direto falha ou é
+  // bloqueado. O Cloudflare de alguns portais (ex.: CQCS) desafia o IP de
+  // datacenter da Vercel — passa local, falha publicado. O Google News é
+  // servido pelo Google e nunca bloqueia datacenter, então é a rede de
+  // segurança que garante a fonte na produção.
+  fallback?: string
+}
+
+// RSS do Google News para um portal/assunto — robusto em produção.
+function googleNews(query: string): string {
+  return `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=pt-BR&gl=BR&ceid=BR:pt-150`
+}
+
+// Fontes da faixa: mix de economia geral + setor de seguros (o que interessa
+// para a FAM Seguradora). Portais de seguros sem RSS próprio (CNseg, Notícias
+// do Seguro) entram via Google News.
+const FEEDS: Feed[] = [
   { url: 'https://g1.globo.com/rss/g1/economia/', source: 'G1 Economia' },
   { url: 'https://g1.globo.com/rss/g1/politica/', source: 'G1 Política' },
   { url: 'https://www.infomoney.com.br/feed/', source: 'InfoMoney' },
   { url: 'https://agenciabrasil.ebc.com.br/rss/economia/feed.xml', source: 'Ag. Brasil' },
-  // URL canônica sem "www": www.cqcs.com.br responde 301 e o fetch com cache
-  // perde o corpo do feed (a fonte sumia da faixa). Apontamos direto.
-  { url: 'https://cqcs.com.br/feed/', source: 'CQCS Seguros' },
+  // CQCS: feed direto (links canônicos quando responde, ex.: local) com
+  // fallback via Google News para quando o Cloudflare bloqueia a Vercel.
+  {
+    url: 'https://cqcs.com.br/feed/',
+    source: 'CQCS Seguros',
+    fallback: googleNews('site:cqcs.com.br when:7d'),
+  },
+  // Notícias do Seguro (portal de notícias do CNseg) — site Next.js estático,
+  // sem RSS. Só via Google News.
+  { url: googleNews('site:noticiasdoseguro.org.br when:14d'), source: 'Notícias do Seguro' },
+  // CNseg — sem RSS próprio; agregamos as matérias institucionais.
+  { url: googleNews('CNseg seguros when:14d'), source: 'CNseg' },
 ]
 
 // Entidades nomeadas que aparecem com frequência em feeds brasileiros.
@@ -63,6 +89,19 @@ function cleanTitle(raw: string): string {
   return t
 }
 
+// O Google News acrescenta " - Veículo" ao fim de cada título. Removemos esse
+// sufixo já que a própria badge da faixa indica a fonte.
+function stripPublisherSuffix(title: string): string {
+  return title.replace(/\s[-–—]\s[^-–—]+$/, '').trim()
+}
+
+// Confere se o corpo é mesmo um feed (e não uma página de desafio do
+// Cloudflare, que volta 200 com HTML). Sem isso, o parser acharia 0 itens e a
+// fonte sumiria silenciosamente.
+function looksLikeFeed(xml: string): boolean {
+  return /<rss[\s>]|<feed[\s>]|<item[\s>]|<entry[\s>]/i.test(xml)
+}
+
 // Extrai o link da matéria DENTRO do bloco do próprio item — por isso o link
 // sempre corresponde ao título certo. Só aceita URL http(s) absoluta; qualquer
 // coisa diferente vira string vazia (a notícia fica sem link, nunca com link errado).
@@ -80,7 +119,8 @@ function extractLink(itemXml: string): string {
 }
 
 // Extrai os títulos de cada <item> do RSS, ignorando o <title> do canal.
-function parseTitles(xml: string, source: string, max = 6): NewsItem[] {
+// `stripSuffix` limpa o " - Veículo" dos feeds do Google News.
+function parseTitles(xml: string, source: string, stripSuffix: boolean, max = 6): NewsItem[] {
   const items: NewsItem[] = []
   const itemRe = /<item\b[\s\S]*?<\/item>/gi
   const titleRe = /<title[^>]*>([\s\S]*?)<\/title>/i
@@ -89,13 +129,44 @@ function parseTitles(xml: string, source: string, max = 6): NewsItem[] {
   while ((itemMatch = itemRe.exec(xml)) !== null) {
     const titleMatch = titleRe.exec(itemMatch[0])
     if (!titleMatch) continue
-    const title = cleanTitle(titleMatch[1])
+    let title = cleanTitle(titleMatch[1])
+    if (stripSuffix) title = stripPublisherSuffix(title)
     const link = extractLink(itemMatch[0])
     if (title.length > 8) items.push({ title, source, link })
     if (items.length >= max) break
   }
   return items
 }
+
+// Busca um feed e devolve o XML só se for um feed de verdade. Retorna null em
+// erro, timeout, status != 200 ou corpo que não parece feed (desafio Cloudflare).
+async function fetchFeed(url: string): Promise<string | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 6000)
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      next: { revalidate: 600 },
+      // UA de navegador + Accept de RSS: reduz o bloqueio de feeds atrás de
+      // Cloudflare quando a requisição sai do IP de datacenter da Vercel.
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        Accept: 'application/rss+xml, application/xml;q=0.9, */*;q=0.8',
+      },
+    })
+    clearTimeout(timer)
+    if (!res.ok) return null
+    const xml = await res.text()
+    return looksLikeFeed(xml) ? xml : null
+  } catch {
+    clearTimeout(timer)
+    return null
+  }
+}
+
+const isGoogleNews = (url: string) => url.includes('news.google.com')
 
 // Intercala as fontes em rodízio para a faixa não ficar com 6 notícias
 // seguidas da mesma fonte.
@@ -112,32 +183,16 @@ function interleave(groups: NewsItem[][]): NewsItem[] {
 
 export async function GET() {
   const results = await Promise.allSettled(
-    FEEDS.map(async ({ url, source }) => {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 6000)
-      try {
-        const res = await fetch(url, {
-          signal: controller.signal,
-          next: { revalidate: 600 },
-          // UA de navegador: feeds atrás de Cloudflare (ex.: CQCS) desafiam/
-          // bloqueiam UA de robô vindo de IP de datacenter (Vercel). Localmente
-          // sai do IP do escritório e passa; em produção, não. Com UA de browser
-          // + Accept de RSS o Cloudflare libera o feed no servidor também.
-          headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-              '(KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-            Accept: 'application/rss+xml, application/xml;q=0.9, */*;q=0.8',
-          },
-        })
-        clearTimeout(timer)
-        if (!res.ok) return [] as NewsItem[]
-        const xml = await res.text()
-        return parseTitles(xml, source)
-      } catch {
-        clearTimeout(timer)
-        return [] as NewsItem[]
+    FEEDS.map(async (feed): Promise<NewsItem[]> => {
+      // Tenta o feed direto; se falhar/for bloqueado, cai no Google News.
+      let chosenUrl = feed.url
+      let xml = await fetchFeed(feed.url)
+      if (!xml && feed.fallback) {
+        chosenUrl = feed.fallback
+        xml = await fetchFeed(feed.fallback)
       }
+      if (!xml) return []
+      return parseTitles(xml, feed.source, isGoogleNews(chosenUrl))
     })
   )
 
