@@ -73,7 +73,14 @@ function fmtDate(d) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-const destDir = process.argv[2] || process.env.FAM_BACKUP_DIR || DEFAULT_DEST
+// Primeiro argumento que NAO e flag (ex.: --force) e a pasta de destino.
+const ARGV = process.argv.slice(2)
+const FORCE = ARGV.includes('--force') || process.env.FAM_BACKUP_FORCE === '1'
+const destDir = ARGV.find((a) => !a.startsWith('--')) || process.env.FAM_BACKUP_DIR || DEFAULT_DEST
+
+// Janela em que um backup do dia ja existente conta como "ja feito". Os gatilhos
+// de rede de seguranca (meio-dia/tarde) so rodam se o das 08:00 tiver sido perdido.
+const RECENT_HOURS = 6
 
 function log(msg, level = 'INFO') {
   const line = `[${new Date().toISOString()}] [${level}] ${msg}`
@@ -126,6 +133,18 @@ async function main() {
   if (!existsSync(destDir)) {
     try { mkdirSync(destDir, { recursive: true }) }
     catch (e) { console.error(`[ERRO] Destino inacessivel: ${destDir} - ${e.message}`); process.exit(1) }
+  }
+
+  // Idempotencia do dia: se o backup de hoje ja existe e e recente, nao repete
+  // (a menos de --force). Assim os gatilhos extras de seguranca so agem quando o
+  // das 08:00 foi perdido, mantendo "1x por dia" de fato.
+  const todayFile = join(destDir, `${PREFIX}${fmtDate(new Date())}.json.gz`)
+  if (!FORCE && existsSync(todayFile)) {
+    const ageH = (Date.now() - statSync(todayFile).mtimeMs) / 3_600_000
+    if (ageH < RECENT_HOURS) {
+      log(`Backup de hoje ja existe (${ageH.toFixed(1)}h atras) - pulando. Use --force para refazer.`)
+      return
+    }
   }
 
   const supabase = createClient(url, key, { auth: { persistSession: false } })

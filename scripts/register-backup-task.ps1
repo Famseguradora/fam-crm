@@ -16,6 +16,12 @@
   Hora alvo do backup nos dias escolhidos. Padrao: 08:00. Se o PC estiver
   desligado nesse horario, o backup roda assim que o PC ligar naquele dia.
 
+.PARAMETER SafetyTimes
+  Horarios de REDE DE SEGURANCA nos mesmos dias (padrao: 12:00 e 18:00). Se o PC
+  estava dormindo as 08:00 e a janela de "catch-up" do Windows expirou, um desses
+  gatilhos roda o backup quando o PC estiver acordado. O script e idempotente: se
+  o backup do dia ja foi feito ha menos de 6h, esses gatilhos extras apenas pulam.
+
 .PARAMETER Days
   Dias da semana em que o backup ocorre. Padrao: Monday,Wednesday,Friday.
 
@@ -30,6 +36,7 @@
 param(
   [string]$DestDir = 'C:\Users\MarcoDragoneFAMSEGUR\FAM Seguradora\FAM SEGURADORA - Documentos\Infraestrutura\Backup - Dashboard FAM',
   [string]$StartAt = '08:00',
+  [string[]]$SafetyTimes = @('12:00','18:00'),
   [string[]]$Days = @('Monday','Wednesday','Friday'),
   [switch]$TestNow
 )
@@ -52,11 +59,17 @@ if (-not (Test-Path $DestDir)) { New-Item -ItemType Directory -Path $DestDir -Fo
 $argument = '"{0}" "{1}"' -f $worker, $DestDir
 $action   = New-ScheduledTaskAction -Execute $node -Argument $argument -WorkingDirectory $scriptDir
 
-# 1 backup por dia nos dias escolhidos (Seg/Qua/Sex). Se o PC estiver desligado
-# no horario, "StartWhenAvailable" roda assim que ele ligar -- uma unica vez no dia.
-$trigger  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Days -At $StartAt
+# Backup nos dias escolhidos (Seg/Qua/Sex). Tres camadas de robustez:
+#  1) Gatilho principal as 08:00 com -WakeToRun: o Windows ACORDA o PC para rodar.
+#  2) Gatilhos de seguranca (12:00/18:00): se o PC dormiu alem da janela de
+#     catch-up do das 08:00, um destes roda o backup quando o PC estiver acordado.
+#  3) StartWhenAvailable: roda assim que possivel apos perder o horario.
+# O script e idempotente (pula se o backup do dia ja foi feito ha < 6h), entao na
+# pratica continua "1x por dia" -- os gatilhos extras so agem se o principal falhar.
+$times   = @($StartAt) + $SafetyTimes
+$trigger = foreach ($t in $times) { New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Days -At $t }
 
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun `
   -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
   -MultipleInstances IgnoreNew
@@ -70,7 +83,7 @@ $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" 
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
   -Settings $settings -Principal $principal `
   -Description 'Backup completo do banco do FAM CRM (Node/Supabase). 1x por dia em dias selecionados.' -Force | Out-Null
-Write-Host "Tarefa criada: '$taskName' (1x/dia em $($Days -join ', ') as $StartAt; roda ao ligar se perdido)" -ForegroundColor Green
+Write-Host "Tarefa criada: '$taskName' ($($Days -join ', ') as $StartAt + seguranca $($SafetyTimes -join '/'); WakeToRun ligado; idempotente 1x/dia)" -ForegroundColor Green
 Write-Host "  Comando: `"$node`" $argument" -ForegroundColor DarkGray
 
 # --- Teste imediato (opcional) ---
