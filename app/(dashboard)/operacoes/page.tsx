@@ -58,7 +58,7 @@ const FORM_OP_INICIAL: FormOperacao = {
   tomador_id: '', corretora_id: '', produto_id: '', modalidade_id: '',
   modalidade: '', codigo_cobertura: '', lmg: '', taxa: '',
   vigencia_anos: '', periodicidade_vigencia: 'Anos', premio_previsto: '', temperatura: 'Frio',
-  prioridade: 'Fluxo Normal', estado: '', observacao: '', status: 'Triagem', ativo: true, data_entrada: '',
+  prioridade: 'Fluxo Normal', estado: '', observacao: '', status: 'Para Analisar', ativo: true, data_entrada: '',
 }
 
 const FORM_STATUS_INICIAL: FormStatus = { nome: '', cor: '#6080a0', ordem: '99', ativo: true }
@@ -327,7 +327,7 @@ export default function OperacoesPage() {
 
   function abrirNovo() {
     setEditando(null)
-    setForm(FORM_OP_INICIAL)
+    setForm({ ...FORM_OP_INICIAL, status: statusOpcoes.find((s) => s.ativo)?.nome ?? 'Para Analisar' })
     setMensagem(null)
     setMostrarForm(true)
   }
@@ -1153,7 +1153,7 @@ export default function OperacoesPage() {
         temperatura: temperaturasValidas.includes(tempRaw) ? tempRaw : null,
         prioridade: prioridadesValidas.includes(priRaw) ? priRaw : 'Fluxo Normal',
         observacao: col(row, 'observacao') || null,
-        status: col(row, 'status') || 'Triagem',
+        status: col(row, 'status') || 'Para Analisar',
         ativo: true,
         ...(created_at ? { created_at, updated_at: created_at } : {}),
       }
@@ -1186,14 +1186,16 @@ export default function OperacoesPage() {
       'Modalidade': op.modalidade ?? '—',
       'LMG': op.lmg ?? '—',
       'Taxa (%)': op.taxa ?? '—',
+      'Prêmio': op.premio_previsto ?? '—',
       'Vigência (anos)': op.vigencia_anos ?? '—',
       'Temperatura': op.temperatura ?? '—',
       'Prioridade': op.prioridade ?? '—',
       'Status': op.status,
       'Data': fmtData(op.created_at),
+      'Data Emissão': op.data_emissao ? fmtData(op.data_emissao) : '—',
     }))
     const ws = utils.json_to_sheet(linhas)
-    ws['!cols'] = [{ wch: 4 }, { wch: 36 }, { wch: 18 }, { wch: 30 }, { wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 20 }, { wch: 14 }]
+    ws['!cols'] = [{ wch: 4 }, { wch: 36 }, { wch: 18 }, { wch: 30 }, { wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 10 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 20 }, { wch: 14 }, { wch: 14 }]
     const wb = utils.book_new()
     utils.book_append_sheet(wb, ws, 'Operações')
     writeFile(wb, 'FAM_Operacoes.xlsx')
@@ -1354,7 +1356,7 @@ export default function OperacoesPage() {
     autoTable(doc, {
       startY,
       margin: { left: M, right: M, bottom: 14 },
-      head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'Temp.', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio']],
+      head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'Temp.', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio', 'Data Emissão']],
       body: operacoesFiltradas.map((op, i) => [
         i + 1,
         op.status,
@@ -1367,8 +1369,9 @@ export default function OperacoesPage() {
         op.taxa ? fmtPercent(op.taxa / 100) : '—',
         op.vigencia_anos ? `${op.vigencia_anos}${sufVig(op.periodicidade_vigencia)}` : '—',
         op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
+        op.data_emissao ? fmtData(op.data_emissao) : '—',
       ]),
-      foot: [['', '', '', '', '', '', 'TOTAL', fmtMoeda(lmgFiltrado), '', '', fmtMoeda(premioFiltrado)]],
+      foot: [['', '', '', '', '', '', 'TOTAL', fmtMoeda(lmgFiltrado), '', '', fmtMoeda(premioFiltrado), '']],
       styles: {
         fontSize: 7.5,
         cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
@@ -1394,20 +1397,21 @@ export default function OperacoesPage() {
       alternateRowStyles: { fillColor: [245, 247, 252] },
       columnStyles: {
         0:  { halign: 'center', cellWidth: 8,  textColor: [100, 110, 130] },
-        1:  { halign: 'left',   cellWidth: 24 },
-        2:  { halign: 'left',   cellWidth: 53, overflow: 'linebreak' },
-        3:  { halign: 'left',   cellWidth: 36, overflow: 'linebreak' },
-        4:  { halign: 'center', cellWidth: 14, textColor: [60, 80, 120] },
-        5:  { halign: 'left',   cellWidth: 38, overflow: 'linebreak' },
+        1:  { halign: 'left',   cellWidth: 22 },
+        2:  { halign: 'left',   cellWidth: 43, overflow: 'linebreak' },
+        3:  { halign: 'left',   cellWidth: 31, overflow: 'linebreak' },
+        4:  { halign: 'center', cellWidth: 12, textColor: [60, 80, 120] },
+        5:  { halign: 'left',   cellWidth: 34, overflow: 'linebreak' },
         6:  { halign: 'center', cellWidth: 16 },
         7:  { halign: 'right',  cellWidth: 30 },
         8:  { halign: 'center', cellWidth: 13 },
         9:  { halign: 'center', cellWidth: 12 },
         10: { halign: 'right',  cellWidth: 37, textColor: [16, 64, 120] },
+        11: { halign: 'center', cellWidth: 23, overflow: 'linebreak' },
       },
       didParseCell: (data: any) => {
         if (data.section === 'head' || data.section === 'foot') {
-          const alignMap: Record<number, string> = { 0: 'center', 1: 'left', 2: 'left', 3: 'left', 4: 'center', 5: 'left', 6: 'center', 7: 'right', 8: 'center', 9: 'center', 10: 'right' }
+          const alignMap: Record<number, string> = { 0: 'center', 1: 'left', 2: 'left', 3: 'left', 4: 'center', 5: 'left', 6: 'center', 7: 'right', 8: 'center', 9: 'center', 10: 'right', 11: 'center' }
           data.cell.styles.halign = alignMap[data.column.index] ?? 'left'
         }
       },
@@ -1550,7 +1554,7 @@ export default function OperacoesPage() {
         alternateRowStyles: { fillColor: [245, 252, 248] },
         columnStyles: {
           0: { halign: 'center', cellWidth: 8,  textColor: [100, 110, 130] },
-          1: { halign: 'left',   cellWidth: 60, overflow: 'linebreak' },
+          1: { halign: 'left',   cellWidth: 55, overflow: 'linebreak' },
           2: { halign: 'left',   cellWidth: 42, overflow: 'linebreak' },
           3: { halign: 'center', cellWidth: 14, textColor: [60, 80, 120] },
           4: { halign: 'left',   cellWidth: 42, overflow: 'linebreak' },
@@ -1558,7 +1562,7 @@ export default function OperacoesPage() {
           6: { halign: 'center', cellWidth: 13 },
           7: { halign: 'center', cellWidth: 12 },
           8: { halign: 'right',  cellWidth: 37, textColor: [16, 96, 48] },
-          9: { halign: 'center', cellWidth: 21 },
+          9: { halign: 'center', cellWidth: 26, overflow: 'linebreak' },
         },
         didParseCell: (data: any) => {
           if (data.section === 'head' || data.section === 'foot') {
