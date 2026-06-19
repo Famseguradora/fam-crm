@@ -1356,7 +1356,7 @@ export default function OperacoesPage() {
     autoTable(doc, {
       startY,
       margin: { left: M, right: M, bottom: 14 },
-      head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'Temp.', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio', 'Data Emissão']],
+      head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'Temp.', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio', 'Data\nEmissão']],
       body: operacoesFiltradas.map((op, i) => [
         i + 1,
         op.status,
@@ -1534,7 +1534,7 @@ export default function OperacoesPage() {
       autoTable(doc, {
         startY: startYE,
         margin: { left: M, right: M, bottom: 14 },
-        head: [['#', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio', 'Data Emissão']],
+        head: [['#', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio', 'Data\nEmissão']],
         body: operacoesEmitidas.map((op, i) => [
           i + 1,
           op.tomador?.razao_social ?? '—',
