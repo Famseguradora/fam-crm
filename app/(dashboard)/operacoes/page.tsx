@@ -1386,6 +1386,7 @@ export default function OperacoesPage() {
         textColor: [255, 255, 255],
         fontStyle: 'bold',
         fontSize: 7.5,
+        valign: 'middle',
         cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 },
       },
       footStyles: {
@@ -1549,7 +1550,7 @@ export default function OperacoesPage() {
         ]),
         foot: [['', '', '', '', 'TOTAL', fmtMoeda(kpisEmitido.lmg), '', '', fmtMoeda(kpisEmitido.premio), '']],
         styles: { fontSize: 7.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 }, font: 'helvetica', textColor: [30, 40, 60], lineColor: [210, 220, 235], lineWidth: 0.15, overflow: 'hidden' },
-        headStyles: { fillColor: [39, 169, 108], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 } },
+        headStyles: { fillColor: [39, 169, 108], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, valign: 'middle', cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 } },
         footStyles: { fillColor: [213, 250, 229], textColor: [16, 96, 48], fontStyle: 'bold', fontSize: 7.5 },
         alternateRowStyles: { fillColor: [245, 252, 248] },
         columnStyles: {
@@ -1714,7 +1715,7 @@ export default function OperacoesPage() {
         ]),
         foot: [['', '', '', '', '', 'TOTAL', fmtMoeda(kp.lmg), '', '', fmtMoeda(kp.premio)]],
         styles: { fontSize: 7.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 }, font: 'helvetica', textColor: [30, 40, 60], lineColor: [210, 215, 225], lineWidth: 0.15, overflow: 'hidden' },
-        headStyles: { fillColor: [100, 100, 115], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 } },
+        headStyles: { fillColor: [100, 100, 115], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, valign: 'middle', cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 } },
         footStyles: { fillColor: [228, 228, 235], textColor: [60, 60, 80], fontStyle: 'bold', fontSize: 7.5 },
         alternateRowStyles: { fillColor: [248, 248, 252] },
         columnStyles: {
@@ -1847,10 +1848,10 @@ export default function OperacoesPage() {
                 <button className="btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={importando} style={{ fontSize: 13 }}>
                   {importando ? 'Importando...' : '⬆ Importar Planilha'}
                 </button>
-                <button className="btn-primary" onClick={() => exportarPDF()} disabled={exportando || operacoesFiltradas.length === 0} style={{ fontSize: 13 }}>
+                <button className="btn-primary" onClick={() => exportarPDF()} disabled={exportando || operacoesFiltradas.length === 0} style={{ fontSize: 13, border: '1.5px solid transparent' }}>
                   📄 Exportar PDF
                 </button>
-                <button className="btn-primary" onClick={abrirNovo} style={{ fontSize: 13 }}>+ Nova Operação</button>
+                <button className="btn-primary" onClick={abrirNovo} style={{ fontSize: 13, border: '1.5px solid transparent' }}>+ Nova Operação</button>
               </>
             )}
             {aba === 'status' && (
