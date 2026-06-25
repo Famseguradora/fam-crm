@@ -294,15 +294,12 @@ export default function TomadoresPage() {
           usuario_nome: usuarioInfo?.nome ?? null,
           usuario_email: usuarioInfo?.email ?? null,
         })
-        setMensagem({ tipo: 'sucesso', texto: 'Tomador atualizado com sucesso.' })
       } else {
         const { error } = await supabase.from('tomadores').insert(payload)
         if (error) throw new Error(error.message)
-        setMensagem({ tipo: 'sucesso', texto: 'Tomador cadastrado com sucesso.' })
-        setForm(FORM_TOM_INICIAL)
-        setErroCnpj('')
       }
       await carregarTomadores()
+      fecharForm()
     } catch (err: unknown) {
       setMensagem({ tipo: 'erro', texto: err instanceof Error ? err.message : 'Erro desconhecido.' })
     } finally {

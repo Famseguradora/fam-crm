@@ -53,3 +53,6 @@ next-env.d.ts
 
 # config MCP local (contém token do Supabase — NÃO versionar)
 .mcp.json
+
+# Sandbox de testes (artefato de compilação)
+.sandbox-test/

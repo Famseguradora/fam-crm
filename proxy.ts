@@ -1,9 +1,18 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js']
+// '/api/whatsapp' é público: o webhook da Meta chega SEM sessão Supabase e é
+// autenticado pela assinatura HMAC (x-hub-signature-256), não por login.
+const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp']
 
 export async function proxy(request: NextRequest) {
+  // MODO SANDBOX: não há sessão Supabase, então o gate de login abaixo
+  // redirecionaria o app inteiro (e o /sandbox-dados.xlsx) para /login.
+  // Aqui liberamos tudo. Em produção (flag ausente) este ramo nunca roda.
+  if (process.env.NEXT_PUBLIC_SANDBOX === 'true') {
+    return NextResponse.next({ request })
+  }
+
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(

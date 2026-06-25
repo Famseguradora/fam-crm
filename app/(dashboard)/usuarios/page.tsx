@@ -15,11 +15,12 @@ interface FormData {
   cargo: string
   perfil: 'admin' | 'usuario'
   status: 'ativo' | 'inativo'
+  comite: boolean
 }
 
 const FORM_INICIAL: FormData = {
   nome: '', email: '', senha: '', telefone: '', cargo: '',
-  perfil: 'usuario', status: 'ativo',
+  perfil: 'usuario', status: 'ativo', comite: false,
 }
 
 export default function UsuariosPage() {
@@ -82,6 +83,7 @@ export default function UsuariosPage() {
       cargo: u.cargo ?? '',
       perfil: u.perfil,
       status: u.status,
+      comite: u.comite ?? false,
     })
     setMensagem(null)
     setMostrarForm(true)
@@ -110,6 +112,7 @@ export default function UsuariosPage() {
             cargo: form.cargo || null,
             perfil: form.perfil,
             status: form.status,
+            comite: form.comite,
           })
           .eq('id', editando.id)
 
@@ -141,6 +144,20 @@ export default function UsuariosPage() {
     } finally {
       setEnviando(false)
     }
+  }
+
+  // Liga/desliga a participação no Comitê (diretor votante do Julgamento).
+  // Persiste no mesmo padrão dos demais toggles — no sandbox vai p/ o Excel.
+  const [togglingComiteId, setTogglingComiteId] = useState<string | null>(null)
+  async function toggleComite(u: Usuario) {
+    setTogglingComiteId(u.id)
+    const supabase = createClient()
+    const novo = !u.comite
+    const { error } = await supabase.from('usuarios').update({ comite: novo }).eq('id', u.id)
+    if (!error) {
+      setUsuarios(prev => prev.map(x => x.id === u.id ? { ...x, comite: novo } : x))
+    }
+    setTogglingComiteId(null)
   }
 
   async function toggleStatus(u: Usuario) {
@@ -288,6 +305,33 @@ export default function UsuariosPage() {
                   </select>
                 </div>
 
+                {/* Comitê — diretor votante do "Julgamento" das operações */}
+                <div className="form-field full">
+                  <label
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                      background: form.comite ? '#f3ecff' : '#f8fafc',
+                      border: `1.5px solid ${form.comite ? '#a855f7' : '#c5d5e8'}`,
+                      borderRadius: 8, padding: '12px 14px',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form.comite}
+                      onChange={(e) => setForm({ ...form, comite: e.target.checked })}
+                      style={{ width: 18, height: 18, accentColor: '#a855f7', cursor: 'pointer' }}
+                    />
+                    <span style={{ fontSize: 13, color: '#1a2a3a', lineHeight: 1.4 }}>
+                      <strong>🏛 Membro do Comitê</strong> — pode votar no Julgamento das operações
+                      {form.comite && (
+                        <span style={{ display: 'block', fontSize: 12, color: '#7a5aa0', marginTop: 2 }}>
+                          Com telefone cadastrado, recebe o convite de votação no WhatsApp.
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                </div>
+
                 {!editando && (
                   <div className="form-field full">
                     <div style={{
@@ -351,6 +395,7 @@ export default function UsuariosPage() {
               <th>Cargo</th>
               <th>Perfil</th>
               <th>Status</th>
+              <th>Comitê</th>
               {souProprietario && <th>Avisos</th>}
               <th>Cadastrado em</th>
               <th>Ações</th>
@@ -359,13 +404,13 @@ export default function UsuariosPage() {
           <tbody>
             {carregando ? (
               <tr>
-                <td colSpan={souProprietario ? 9 : 8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                <td colSpan={souProprietario ? 10 : 9} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                   Carregando usuários...
                 </td>
               </tr>
             ) : usuariosFiltrados.length === 0 ? (
               <tr>
-                <td colSpan={souProprietario ? 9 : 8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                <td colSpan={souProprietario ? 10 : 9} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                   {busca ? 'Nenhum usuário encontrado para esta busca.' : 'Nenhum usuário cadastrado ainda.'}
                 </td>
               </tr>
@@ -385,6 +430,24 @@ export default function UsuariosPage() {
                     <span className={`badge ${badgeClassStatus(u.status)}`}>
                       {u.status === 'ativo' ? 'ATIVO' : 'INATIVO'}
                     </span>
+                  </td>
+                  <td>
+                    <button
+                      onClick={() => toggleComite(u)}
+                      disabled={togglingComiteId === u.id}
+                      title={u.comite ? 'Membro do Comitê — clique para remover' : 'Não vota no Comitê — clique para conceder'}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                        fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif",
+                        background: u.comite ? '#f3ecff' : '#eef2f7',
+                        color: u.comite ? '#7a3ad0' : '#6080a0',
+                        opacity: togglingComiteId === u.id ? 0.6 : 1,
+                      }}
+                    >
+                      <span>{u.comite ? '🏛' : '○'}</span>
+                      {togglingComiteId === u.id ? '...' : u.comite ? 'Vota' : 'Não'}
+                    </button>
                   </td>
                   {souProprietario && (
                     <td>

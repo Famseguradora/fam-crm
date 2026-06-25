@@ -71,9 +71,19 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
     let query: any = supabase.from('anexos').select('*').order('created_at', { ascending: false })
 
     if (entidadeTipo === 'tomador') {
+      // Tela do Tomador: documentos do tomador + de qualquer operação dele.
       query = query.or(
         `and(entidade_tipo.eq.tomador,entidade_id.eq.${entidadeId}),` +
         `and(entidade_tipo.eq.operacao,tomador_id.eq.${entidadeId})`
+      )
+    } else if (entidadeTipo === 'operacao' && tomadorId) {
+      // Tela da Operação: MESMA base do tomador — anexos do tomador + de todas
+      // as operações desse tomador (e os desta operação, mesmo sem tomador_id).
+      // Assim, anexar em Tomador aparece em Operações e vice-versa.
+      query = query.or(
+        `and(entidade_tipo.eq.tomador,entidade_id.eq.${tomadorId}),` +
+        `and(entidade_tipo.eq.operacao,tomador_id.eq.${tomadorId}),` +
+        `and(entidade_tipo.eq.operacao,entidade_id.eq.${entidadeId})`
       )
     } else {
       query = query.eq('entidade_tipo', entidadeTipo).eq('entidade_id', entidadeId)
@@ -82,7 +92,7 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
     const { data } = await query
     setAnexos((data as Anexo[]) ?? [])
     setCarregando(false)
-  }, [entidadeTipo, entidadeId])
+  }, [entidadeTipo, entidadeId, tomadorId])
 
   useEffect(() => { carregar() }, [carregar])
 

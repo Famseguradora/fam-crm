@@ -1,10 +1,10 @@
 # Assets do WhatsApp
 
-Banner exibido no topo dos cards de KPI enviados no WhatsApp.
+Banner do FAM (1024×536) — `banner-fam.png`, servido em `/whatsapp/banner-fam.png`.
 
-- **Arquivo:** `banner-fam.png` (já gerado, 1024×536) — servido em `/whatsapp/banner-fam.png`
-- **Configuração:** defina `WHATSAPP_BANNER_URL` no ambiente, ex.:
-  `https://SEU-APP.vercel.app/whatsapp/banner-fam.png`
+> Nota: desde a migração para a **Z-API**, os cards de KPI são enviados como texto
+> (sem imagem de cabeçalho), então este banner **não é mais usado** pela integração.
+> O arquivo é mantido apenas como asset reaproveitável (ex.: futura arte de mensagem).
 
 ## Regerar o banner
 
@@ -16,6 +16,3 @@ node scripts/gen-banner.mjs
 ```
 
 (Se for a primeira vez: `npx playwright install chromium`.)
-
-Se `WHATSAPP_BANNER_URL` não estiver definida, o card usa um cabeçalho de texto simples
-("FAM Seguradora") como fallback — a integração continua funcionando.

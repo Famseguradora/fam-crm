@@ -197,14 +197,12 @@ export default function CorretorasPage() {
       if (editando) {
         const { error } = await supabase.from('corretoras').update(payload).eq('id', editando.id)
         if (error) throw new Error(error.message)
-        setMensagem({ tipo: 'sucesso', texto: 'Corretora atualizada com sucesso.' })
       } else {
         const { error } = await supabase.from('corretoras').insert(payload)
         if (error) throw new Error(error.message)
-        setMensagem({ tipo: 'sucesso', texto: 'Corretora cadastrada com sucesso.' })
-        setForm(FORM_INICIAL)
       }
       await carregarCorretoras()
+      fecharForm()
     } catch (err: unknown) {
       setMensagem({ tipo: 'erro', texto: err instanceof Error ? err.message : 'Erro desconhecido.' })
     } finally {

@@ -4,6 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:sandbox": "node scripts/dev-sandbox.mjs",
+    "sandbox:gen": "node scripts/gen-sandbox-xlsx.mjs",
+    "sandbox:test": "tsc lib/supabase/sandbox/store.ts lib/supabase/sandbox/mock-client.ts --outDir .sandbox-test --rootDir . --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck && node scripts/test-sandbox-mock.cjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

@@ -9,6 +9,8 @@ import InstallPrompt from './InstallPrompt'
 import NewsTicker from './NewsTicker'
 import MarketTicker from './MarketTicker'
 
+const IS_SANDBOX = process.env.NEXT_PUBLIC_SANDBOX === 'true'
+
 interface Props {
   nomeUsuario: string
   perfilUsuario: string
@@ -79,9 +81,19 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
   useEffect(() => { setDrawerOpen(false) }, [pathname])
 
   async function handleLogout() {
+    // No sandbox não há login real; "sair" apenas recarrega o ambiente fake.
+    if (IS_SANDBOX) { window.location.reload(); return }
     await supabase.auth.signOut()
     router.push('/login')
     router.refresh()
+  }
+
+  async function handleResetSandbox() {
+    if (!window.confirm('Resetar o sandbox? Suas alterações de teste serão apagadas e os dados voltam ao estado da planilha.')) return
+    // import dinâmico: mantém o 'xlsx' fora do bundle de produção.
+    const { resetDB } = await import('@/lib/supabase/sandbox/store')
+    await resetDB()
+    window.location.reload()
   }
 
   const tabsVisiveis = TABS.filter((t) => !t.adminOnly || isAdmin)
@@ -208,6 +220,24 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20 }}>
+          {IS_SANDBOX && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                background: '#e8b84b', color: '#0a1628', fontWeight: 800,
+                fontSize: 11, letterSpacing: '1px', padding: '3px 8px', borderRadius: 5,
+                textTransform: 'uppercase',
+              }}>🧪 Sandbox</span>
+              <button
+                onClick={handleResetSandbox}
+                title="Apaga as alterações de teste e volta aos dados da planilha"
+                style={{
+                  background: 'transparent', border: '1px solid #e8b84b', color: '#e8b84b',
+                  fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 6,
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >Resetar</button>
+            </div>
+          )}
           {!isMobile && <div style={{ color: '#a0c0e8', fontSize: 13 }}>{hoje}</div>}
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,

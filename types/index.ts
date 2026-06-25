@@ -25,6 +25,9 @@ export interface Usuario {
   status: StatusUsuario
   primeiro_acesso: boolean
   pode_publicar_avisos: boolean
+  // Comitê: membro votante do "Julgamento" das operações. Quando true e há
+  // telefone cadastrado, o diretor recebe o convite de votação no WhatsApp.
+  comite: boolean
   created_at: string
   updated_at: string
 }
@@ -144,13 +147,23 @@ export interface Operacao {
   data_entrada: string | null
   data_emissao: string | null
   comite_notas: string | null
-  comite_analista: string | null
   comite_data: string | null
   comite_decisao: string | null
   comite_variacao_taxa: number | null
   comite_variacao_taxa_just: string | null
   comite_variacao_lmg: number | null
   comite_variacao_lmg_just: string | null
+  // ── Julgamento do Comitê (parecer da subscrição + veredito final) ──
+  parecer_subscricao: string | null
+  voto_subscricao: VotoComite | null
+  subscritor_nome: string | null
+  comite_enviado_whatsapp: boolean
+  comite_parecer_final: ParecerFinal | null
+  comite_encerrado: boolean
+  // Pedido de vista: pausa a deliberação até ser retomada (estilo STF).
+  comite_vista_por: string | null
+  comite_vista_cargo: string | null
+  comite_vista_justificativa: string | null
   created_at: string
   updated_at: string
 }
@@ -223,13 +236,41 @@ export interface DashboardConfig {
   posicao: number
 }
 
-// Voto do Comitê (votação remota dos diretores via WhatsApp) — estrutura futura.
+// ── Comitê — "Julgamento" das operações ──────────────────────────────────────
+// Voto possível de subscritor e diretores. Espelha os status de qualificação.
+export type VotoComite = 'aprovado' | 'aprovado_ressalva' | 'reprovado'
+
+// Veredito agregado da bancada após todos votarem.
+export type ParecerFinal = 'Aprovada' | 'Aprovada com Ressalva' | 'Reprovada' | 'Empate'
+
+// Voto de um diretor numa operação em Comitê. Um voto por (operacao, usuario);
+// re-voto é UPDATE. `canal` distingue voto pelo CRM x pelo WhatsApp (simulado).
 export interface ComiteVoto {
   id: string
   operacao_id: string
   usuario_id: string
-  voto: 'aprovar' | 'reprovar'
-  canal: string
-  observacao: string | null
+  autor: string                 // nome do diretor (desnormalizado p/ exibição)
+  cargo: string | null
+  voto: VotoComite
+  segue_subscritor: boolean      // "Acompanho o Subscritor"
+  argumentacao: string | null
+  canal: 'crm' | 'whatsapp'
   created_at: string
+  updated_at: string
+}
+
+// Voto ANTERIOR arquivado quando um diretor retrata/altera o seu voto.
+// O voto vigente continua em `comite_votos`; cada retratação empilha aqui.
+export interface ComiteVotoHistorico {
+  id: string
+  operacao_id: string
+  usuario_id: string
+  autor: string
+  cargo: string | null
+  voto: VotoComite
+  segue_subscritor: boolean
+  argumentacao: string | null
+  canal: 'crm' | 'whatsapp'
+  votado_em: string | null       // created_at original do voto retratado
+  retratado_em: string           // quando o diretor retratou
 }

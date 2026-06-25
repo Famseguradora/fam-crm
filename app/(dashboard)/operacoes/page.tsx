@@ -6,8 +6,14 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'rea
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskMoeda, fmtMoeda, fmtMoedaCurta, fmtData, fmtPercent, titleCase } from '@/lib/utils'
-import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario } from '@/types'
+import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario, Usuario, ComiteVoto, ComiteVotoHistorico, VotoComite, Anexo } from '@/types'
 import AnexosSection from '@/components/AnexosSection'
+import ComiteEntradaModal from '@/components/comite/ComiteEntradaModal'
+import PainelJulgamento from '@/components/comite/PainelJulgamento'
+import OperacaoDados from '@/components/comite/OperacaoDados'
+import WhatsAppSimulator from '@/components/comite/WhatsAppSimulator'
+import { membrosComite as filtrarMembrosComite, calcularPlacar } from '@/lib/comite/votacao'
+import { notifyComiteChange, onComiteChange } from '@/lib/comite/realtime'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Line, AreaChart, Area, CartesianGrid, Cell } from 'recharts'
 
 interface ModalidadeBasica {
@@ -235,11 +241,38 @@ export default function OperacoesPage() {
   const [formMeta, setFormMeta] = useState({ premio_mensal: '', premio_anual: '', taxa_ponderada: '', lmg_meta: '', risco_judicial: '', sinistralidade: '', observacao: '' })
   const [salvandoMeta, setSalvandoMeta] = useState(false)
   const [comentariosComite, setComentariosComite] = useState<Record<string, ComiteComentario[]>>({})
-  const [novoComentarioForm, setNovoComentarioForm] = useState<Record<string, { autor: string; comentario: string; tipo: string }>>({})
-  const [salvandoComentario, setSalvandoComentario] = useState(false)
   const [modoBook, setModoBook] = useState<'emitidas' | 'book'>('emitidas')
   const [showLmgLimiteFam, setShowLmgLimiteFam] = useState(false)
   const [exposicaoAberta, setExposicaoAberta] = useState(true)
+
+  // ── Comitê — Julgamento (votação dos diretores + WhatsApp simulado) ──
+  const [usuariosTodos, setUsuariosTodos] = useState<Usuario[]>([])
+  const [votosComite, setVotosComite] = useState<Record<string, ComiteVoto[]>>({})
+  const [historicoComite, setHistoricoComite] = useState<Record<string, ComiteVotoHistorico[]>>({})
+  const [anexosComite, setAnexosComite] = useState<Anexo[]>([])
+  // Aviso de bloqueio (ex.: tentar Devolver com voto já proferido).
+  const [avisoBloqueio, setAvisoBloqueio] = useState<string | null>(null)
+  // Modal de entrada no Comitê (nudge ao subscritor / lembrete aos subscritores).
+  const [comiteEntrada, setComiteEntrada] = useState<{ op: Operacao; ehSubscritor: boolean } | null>(null)
+  const [whatsappSimOpId, setWhatsappSimOpId] = useState<string | null>(null)
+  // Diretores votantes (flag comitê + ativos) e nome do subscritor "logado".
+  const membros = useMemo(() => filtrarMembrosComite(usuariosTodos), [usuariosTodos])
+  // Subscritores = usuários ativos cujo cargo contém "subscri" (Subscritor,
+  // Coordenador de Subscrição, Diretor de Subscrição…). Definidos na tela Usuários.
+  const subscritores = useMemo(
+    () => usuariosTodos.filter((u) => (u.cargo ?? '').toLowerCase().includes('subscri') && u.status === 'ativo'),
+    [usuariosTodos],
+  )
+  const subscritorNome = useMemo(() => subscritores[0]?.nome ?? 'Subscrição', [subscritores])
+  // Usuário "logado" (no sandbox, sempre o mesmo) e se ele é um subscritor.
+  const usuarioAtual = useMemo(
+    () => usuariosTodos.find((u) => u.auth_id === usuarioInfo?.authId) ?? null,
+    [usuariosTodos, usuarioInfo],
+  )
+  const ehSubscritorAtual = useMemo(
+    () => (usuarioAtual?.cargo ?? '').toLowerCase().includes('subscri'),
+    [usuarioAtual],
+  )
 
   // ── Cadastro Básico Tomador ──
   const [mostrarFormTomador, setMostrarFormTomador] = useState(false)
@@ -307,12 +340,71 @@ export default function OperacoesPage() {
     setComentariosComite(prev => ({ ...prev, ...mapa }))
   }, [])
 
+  // Carrega usuários (diretores votantes), votos do Comitê e anexos (análise de
+  // crédito) — para os diretores consultarem antes de votar.
+  const carregarComiteVotacao = useCallback(async () => {
+    const supabase = createClient()
+    const [{ data: us }, { data: vs }, { data: ax }, { data: hs }] = await Promise.all([
+      supabase.from('usuarios').select('*').order('nome'),
+      supabase.from('comite_votos').select('*').order('created_at', { ascending: true }),
+      supabase.from('anexos').select('*').order('created_at', { ascending: false }),
+      supabase.from('comite_votos_historico').select('*').order('retratado_em', { ascending: true }),
+    ])
+    setUsuariosTodos((us as Usuario[]) ?? [])
+    setAnexosComite((ax as Anexo[]) ?? [])
+    const mapa: Record<string, ComiteVoto[]> = {}
+    for (const v of (vs as ComiteVoto[]) ?? []) {
+      if (!mapa[v.operacao_id]) mapa[v.operacao_id] = []
+      mapa[v.operacao_id].push(v)
+    }
+    setVotosComite(mapa)
+    const mapaHist: Record<string, ComiteVotoHistorico[]> = {}
+    for (const h of (hs as ComiteVotoHistorico[]) ?? []) {
+      if (!mapaHist[h.operacao_id]) mapaHist[h.operacao_id] = []
+      mapaHist[h.operacao_id].push(h)
+    }
+    setHistoricoComite(mapaHist)
+  }, [])
+
   useEffect(() => {
     carregarOperacoes()
     carregarStatusLista()
     carregarAuxiliares()
     carregarMetas()
-  }, [carregarOperacoes, carregarStatusLista, carregarAuxiliares, carregarMetas])
+    carregarComiteVotacao()
+  }, [carregarOperacoes, carregarStatusLista, carregarAuxiliares, carregarMetas, carregarComiteVotacao])
+
+  // "Tempo real" do sandbox: ao votar em qualquer aba/janela, recarrega votos e
+  // operações para que cada voto apareça na tela de todos. Em produção quem cobre
+  // isso é o Supabase Realtime abaixo — então o barramento localStorage fica
+  // restrito ao sandbox para não duplicar recargas a cada voto.
+  useEffect(() => {
+    if (process.env.NEXT_PUBLIC_SANDBOX !== 'true') return
+    return onComiteChange(() => {
+      carregarComiteVotacao()
+      carregarOperacoes()
+    })
+  }, [carregarComiteVotacao, carregarOperacoes])
+
+  // Tempo real de PRODUÇÃO (Supabase Realtime): votos de diretores em outros
+  // dispositivos/celulares (inclusive via WhatsApp) aparecem ao vivo. No sandbox
+  // não há banco real — fica só com o barramento localStorage acima.
+  useEffect(() => {
+    if (process.env.NEXT_PUBLIC_SANDBOX === 'true') return
+    const supabase = createClient()
+    const recarregar = () => {
+      carregarComiteVotacao()
+      carregarOperacoes()
+    }
+    const canal = supabase
+      .channel('comite-deliberacao')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'comite_votos' }, recarregar)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'operacoes' }, recarregar)
+      .subscribe()
+    return () => {
+      supabase.removeChannel(canal)
+    }
+  }, [carregarComiteVotacao, carregarOperacoes])
 
   useEffect(() => {
     const supabase = createClient()
@@ -507,9 +599,14 @@ export default function OperacoesPage() {
     const obsComMotivo = motivo
       ? `Motivo: ${motivo}${form.observacao ? '\n\n' + form.observacao : ''}`
       : form.observacao || null
+    // Segurança do vínculo: a corretora gravada SEMPRE espelha a corretora
+    // cadastrada no Tomador. O campo na tela só seleciona — nunca redefine o
+    // vínculo (isso é exclusivo da tela de Tomador). Sem tomador, vale o filtro.
+    const tomadorSel = form.tomador_id ? tomadores.find((t) => t.id === form.tomador_id) : null
+    const corretoraTravada = tomadorSel ? (tomadorSel.corretora_id ?? null) : (form.corretora_id || null)
     const payload: Record<string, unknown> = {
       tomador_id: form.tomador_id || null,
-      corretora_id: form.corretora_id || null,
+      corretora_id: corretoraTravada,
       produto_id: form.produto_id || null,
       modalidade: form.modalidade || null,
       codigo_cobertura: form.codigo_cobertura || null,
@@ -546,7 +643,8 @@ export default function OperacoesPage() {
           await supabase.from('tomadores').update({ status: 'Fechado' }).eq('id', form.tomador_id)
         }
         await carregarOperacoes()
-        setMensagem({ tipo: 'sucesso', texto: 'Operação atualizada com sucesso.' })
+        fecharForm()
+        return
       } else {
         const { error } = await supabase.from('operacoes').insert(payload)
         if (error) throw new Error(error.message)
@@ -575,7 +673,182 @@ export default function OperacoesPage() {
       setModalEmissao({ tipo: 'status', op, novoStatus, motivo: '', dataEmissao: op.data_emissao ?? today })
       return
     }
+    // Indo para Comitê: NÃO bloqueia — move já e abre o "nudge" de votação.
+    if (novoStatus === 'Comitê' && op.status !== 'Comitê') {
+      entrarEmComite(op)
+      return
+    }
     _executarMudarStatus(op, novoStatus, '')
+  }
+
+  // ── Handlers do Julgamento do Comitê ──────────────────────────────────────
+  // Move a operação para Comitê (sem bloquear) e dispara o nudge conforme o papel
+  // de quem mudou o status: subscritor → "deseja votar?"; senão → lembrete.
+  async function entrarEmComite(op: Operacao) {
+    await _executarMudarStatus(op, 'Comitê', '')
+    notifyComiteChange()
+    setComiteEntrada({ op, ehSubscritor: ehSubscritorAtual })
+  }
+
+  // Abre a tela de Deliberação (Julgamento) focada na operação.
+  function abrirDeliberacao(op: Operacao) {
+    setComiteEntrada(null)
+    setAba('comite')
+    setExpandidoComiteId(op.id)
+    setAbaSimulador((prev) => ({ ...prev, [op.id]: 4 }))
+  }
+
+  // Grava (ou atualiza) o voto de um diretor e, se a bancada fechou, registra o
+  // parecer final na operação. `canal` distingue voto pelo CRM x pelo WhatsApp.
+  async function gravarVoto(
+    op: Operacao, usuarioId: string, voto: VotoComite, segueSubscritor: boolean,
+    argumentacao: string, canal: 'crm' | 'whatsapp',
+  ) {
+    const supabase = createClient()
+    const membro = membros.find((m) => m.id === usuarioId)
+    // Decide INSERT vs UPDATE consultando o banco (não o estado React), evitando
+    // voto duplicado por estado stale em cliques rápidos / votos vindos do WhatsApp.
+    const { data: jaData } = await supabase
+      .from('comite_votos').select('*').eq('operacao_id', op.id).eq('usuario_id', usuarioId).maybeSingle()
+    const jaVotou = jaData as ComiteVoto | null
+    if (jaVotou) {
+      // Retratação: arquiva o voto vigente no histórico antes de sobrescrever,
+      // preservando a trilha de auditoria de todas as mudanças de voto.
+      await supabase.from('comite_votos_historico').insert({
+        operacao_id: jaVotou.operacao_id, usuario_id: jaVotou.usuario_id,
+        autor: jaVotou.autor, cargo: jaVotou.cargo, voto: jaVotou.voto,
+        segue_subscritor: jaVotou.segue_subscritor, argumentacao: jaVotou.argumentacao,
+        canal: jaVotou.canal, votado_em: jaVotou.created_at,
+      })
+      await supabase.from('comite_votos').update({
+        voto, segue_subscritor: segueSubscritor, argumentacao: argumentacao || null, canal,
+      }).eq('id', jaVotou.id)
+    } else {
+      await supabase.from('comite_votos').insert({
+        operacao_id: op.id, usuario_id: usuarioId, autor: membro?.nome ?? '—', cargo: membro?.cargo ?? null,
+        voto, segue_subscritor: segueSubscritor, argumentacao: argumentacao || null, canal,
+      })
+    }
+    // Relê os votos desta operação para decidir o fechamento sem corrida de estado.
+    const { data: vs } = await supabase.from('comite_votos').select('*').eq('operacao_id', op.id)
+    const votosOp = (vs as ComiteVoto[]) ?? []
+    const placar = calcularPlacar(votosOp, membros)
+    if (placar.completo && placar.parecerFinal) {
+      await supabase.from('operacoes').update({
+        comite_parecer_final: placar.parecerFinal, comite_encerrado: true,
+      }).eq('id', op.id)
+    }
+    await carregarComiteVotacao()
+    await carregarOperacoes()
+    notifyComiteChange()
+  }
+
+  // Edita o parecer/voto da subscrição já dentro da tela de Comitê.
+  async function editarParecerComite(op: Operacao, parecer: string, voto: VotoComite | null) {
+    const supabase = createClient()
+    await supabase.from('operacoes').update({
+      parecer_subscricao: parecer || null, voto_subscricao: voto, subscritor_nome: op.subscritor_nome ?? subscritorNome,
+    }).eq('id', op.id)
+    await carregarOperacoes()
+    notifyComiteChange()
+  }
+
+  // Pedido de vista: pausa a deliberação (registra quem pediu + justificativa).
+  async function pedirVista(op: Operacao, usuarioId: string, justificativa: string) {
+    const supabase = createClient()
+    const membro = membros.find((m) => m.id === usuarioId)
+    await supabase.from('operacoes').update({
+      comite_vista_por: membro?.nome ?? '—',
+      comite_vista_cargo: membro?.cargo ?? null,
+      comite_vista_justificativa: justificativa || null,
+    }).eq('id', op.id)
+    await carregarOperacoes()
+    notifyComiteChange()
+  }
+
+  // Retoma a deliberação (limpa o pedido de vista).
+  async function retomarVista(op: Operacao) {
+    const supabase = createClient()
+    await supabase.from('operacoes').update({
+      comite_vista_por: null, comite_vista_cargo: null, comite_vista_justificativa: null,
+    }).eq('id', op.id)
+    await carregarOperacoes()
+    notifyComiteChange()
+  }
+
+  // Convite ao Comitê pelo WhatsApp. No sandbox, abre o SIMULADOR (nenhuma
+  // mensagem real é enviada). Em produção, dispara os convites de verdade via
+  // a rota /api/comite/convidar (WhatsApp via Z-API).
+  async function enviarConvitesComite(op: Operacao) {
+    if (process.env.NEXT_PUBLIC_SANDBOX === 'true') {
+      setWhatsappSimOpId(op.id)
+      return
+    }
+    try {
+      const res = await fetch('/api/comite/convidar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operacaoId: op.id }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.erro || 'Falha ao enviar os convites.')
+      setAvisoBloqueio(`✅ Convite enviado a ${json.enviados} diretor(es) do Comitê pelo WhatsApp.`)
+      await carregarOperacoes()
+    } catch (e) {
+      setAvisoBloqueio('❌ ' + (e instanceof Error ? e.message : 'Erro ao enviar convites pelo WhatsApp.'))
+    }
+  }
+
+  // Anexos relevantes para a operação (análise de crédito do tomador + anexos da
+  // própria operação) — exibidos na Deliberação para os diretores consultarem.
+  function anexosDaOperacao(op: Operacao): Anexo[] {
+    return anexosComite.filter((a) =>
+      (a.entidade_tipo === 'tomador' && a.entidade_id === op.tomador_id) ||
+      (a.tomador_id != null && a.tomador_id === op.tomador_id) ||
+      (a.entidade_tipo === 'operacao' && a.entidade_id === op.id),
+    )
+  }
+
+  // Abre um anexo (análise de crédito). Em produção gera link assinado; no
+  // sandbox o storage é simulado, então mostramos um aviso amigável.
+  async function abrirAnexo(a: Anexo) {
+    const supabase = createClient()
+    const { data, error } = await supabase.storage.from('fam-anexos').createSignedUrl(a.storage_path, 300)
+    if (error || !data?.signedUrl) {
+      setAvisoBloqueio(`📎 ${a.nome_original}\n\n(Simulador) No CRM real, este anexo — a análise de crédito do tomador — abriria aqui para o diretor consultar antes de votar.`)
+      return
+    }
+
+    // HTML (ex.: análise de crédito) precisa ser reembrulhado como Blob text/html,
+    // senão o Chrome mostra o código-fonte em vez de renderizar a página.
+    const ext = a.nome_original.split('.').pop()?.toLowerCase()
+    if (ext === 'html' || ext === 'htm') {
+      try {
+        const res = await fetch(data.signedUrl)
+        const html = await res.text()
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+        const blobUrl = URL.createObjectURL(blob)
+        const win = window.open(blobUrl, '_blank')
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000)
+        if (!win) setAvisoBloqueio('Pop-up bloqueado pelo navegador. Permita pop-ups para este site e tente de novo.')
+      } catch {
+        window.open(data.signedUrl, '_blank')
+      }
+      return
+    }
+
+    window.open(data.signedUrl, '_blank')
+  }
+
+  // "Devolver" para Em Análise — bloqueado se já houver QUALQUER voto proferido
+  // (diretor) ou parecer/voto da subscrição registrado.
+  function tentarDevolver(op: Operacao) {
+    const temVotoDiretor = (votosComite[op.id]?.length ?? 0) > 0
+    if (temVotoDiretor || op.voto_subscricao) {
+      setAvisoBloqueio('🔒 Função não liberada: Voto já proferido.')
+      return
+    }
+    mudarStatus(op, 'Em Análise')
   }
 
   async function _executarMudarStatus(op: Operacao, novoStatus: string, motivo: string, dataEmissao?: string) {
@@ -1806,17 +2079,6 @@ export default function OperacoesPage() {
     setMostrarConfigurarMetas(false)
   }
 
-  async function adicionarComentario(opId: string) {
-    const f = novoComentarioForm[opId]
-    if (!f?.autor || !f?.comentario) return
-    setSalvandoComentario(true)
-    const supabase = createClient()
-    await supabase.from('comite_comentarios').insert({ operacao_id: opId, autor: f.autor, comentario: f.comentario, tipo: f.tipo ?? 'geral' })
-    setNovoComentarioForm(prev => ({ ...prev, [opId]: { autor: f.autor, comentario: '', tipo: 'geral' } }))
-    await carregarComentariosComite([opId])
-    setSalvandoComentario(false)
-  }
-
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   const modalidadesDoSetor = form.produto_id
@@ -1864,19 +2126,22 @@ export default function OperacoesPage() {
       {/* KPI Cards */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
         {/* Card: Corretoras */}
-        <div className="kpi-card" style={{ flex: '1 1 120px', minWidth: 100 }}>
+        <div className="kpi-card" style={{ flex: '1 1 120px', minWidth: 100, cursor: 'help' }}
+          title="Corretoras distintas que têm pelo menos uma operação nesta lista (funil ativo). Não é o total cadastrado — esse aparece no Dashboard/Painel.">
           <div className="kpi-label" style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase' }}>Corretoras</div>
           <div className="kpi-value" style={{ fontSize: 22, fontWeight: 800 }}>{kpis.corretoras}</div>
           <div className="kpi-sub">Únicos</div>
         </div>
         {/* Card: Tomadores */}
-        <div className="kpi-card" style={{ flex: '1 1 120px', minWidth: 100 }}>
+        <div className="kpi-card" style={{ flex: '1 1 120px', minWidth: 100, cursor: 'help' }}
+          title="Tomadores distintos que têm pelo menos uma operação nesta lista (funil ativo). Não é o total cadastrado — esse aparece no Dashboard/Painel.">
           <div className="kpi-label" style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase' }}>Tomadores</div>
           <div className="kpi-value" style={{ fontSize: 22, fontWeight: 800, color: '#1a5fa0' }}>{kpis.tomadores}</div>
           <div className="kpi-sub">Únicos</div>
         </div>
         {/* Card: Operações */}
-        <div className="kpi-card" style={{ flex: '1 1 120px', minWidth: 100 }}>
+        <div className="kpi-card" style={{ flex: '1 1 120px', minWidth: 100, cursor: 'help' }}
+          title="Quantidade de operações conforme os filtros atuais. Por padrão exclui Emitidas, Perdidas e Recusadas e considera apenas operações ativas.">
           <div className="kpi-label" style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase' }}>Operações</div>
           <div className="kpi-value" style={{ fontSize: 22, fontWeight: 800 }}>{operacoesFiltradas.length}</div>
           <div className="kpi-sub">Conforme filtros</div>
@@ -2278,7 +2543,9 @@ export default function OperacoesPage() {
                         <select className="fam-input" style={{ flex: 1 }} disabled={opFinalizada} value={form.tomador_id} onChange={(e) => {
                           const tomadorId = e.target.value
                           const tomador = tomadores.find((t) => t.id === tomadorId)
-                          setForm((f) => ({ ...f, tomador_id: tomadorId, corretora_id: tomador?.corretora_id ?? f.corretora_id }))
+                          // Selecionar um tomador trava a corretora no vínculo cadastrado dele.
+                          // Limpar o tomador mantém a corretora atual servindo de filtro.
+                          setForm((f) => ({ ...f, tomador_id: tomadorId, corretora_id: tomador ? (tomador.corretora_id ?? '') : f.corretora_id }))
                         }}>
                           <option value="">— Selecione o tomador —</option>
                           {tomadoresDaCorretora.map((t) => <option key={t.id} value={t.id}>{t.razao_social}{t.cnpj ? ` — ${maskCNPJ(t.cnpj)}` : ''}</option>)}
@@ -2300,13 +2567,27 @@ export default function OperacoesPage() {
                       </div>
                     </div>
                     <div className="form-field full">
-                      <label className="form-label">Corretora</label>
-                      <select className="fam-input" disabled={opFinalizada} value={form.corretora_id} onChange={(e) => {
-                        const corrId = e.target.value
-                        const tomadorAtual = tomadores.find((t) => t.id === form.tomador_id)
-                        const manterTomador = !corrId || !tomadorAtual || tomadorAtual.corretora_id === corrId
-                        setForm((f) => ({ ...f, corretora_id: corrId, tomador_id: manterTomador ? f.tomador_id : '' }))
-                      }}>
+                      <label className="form-label">
+                        Corretora
+                        {form.tomador_id && (
+                          tomadores.find((t) => t.id === form.tomador_id)?.corretora_id ? (
+                            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#7a5000' }}>
+                              🔒 vínculo definido no cadastro do Tomador
+                            </span>
+                          ) : (
+                            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#a05000' }}>
+                              ⚠️ tomador sem corretora — defina no cadastro do Tomador
+                            </span>
+                          )
+                        )}
+                      </label>
+                      <select
+                        className="fam-input"
+                        disabled={opFinalizada || !!form.tomador_id}
+                        title={form.tomador_id ? 'A corretora segue o vínculo do tomador. Para trocar, limpe o tomador ou altere o vínculo na tela de Tomador.' : 'Selecione para filtrar os tomadores desta corretora'}
+                        value={form.corretora_id}
+                        onChange={(e) => setForm((f) => ({ ...f, corretora_id: e.target.value }))}
+                      >
                         <option value="">— Selecione a corretora —</option>
                         {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
                       </select>
@@ -3318,7 +3599,8 @@ export default function OperacoesPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {emComite.map(op => {
                     const isExp = expandidoComiteId === op.id
-                    const abaAt = abaSimulador[op.id] ?? 0
+                    // Julgamento (idx 4) é a aba padrão ao abrir uma operação em Comitê.
+                    const abaAt = abaSimulador[op.id] ?? 4
                     const inp = simInputs[op.id] ?? { sinistralidade: 0.50, carregamento: 0.35, margem: 0.20 }
                     // Composição técnica preservada para uso futuro:
                     // taxaMin = (inp.sinistralidade + inp.carregamento + inp.margem) — taxa total do período
@@ -3376,9 +3658,11 @@ export default function OperacoesPage() {
                           <div style={{ borderTop: '1.5px solid #e0ecff' }}>
                             {/* Abas */}
                             <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #e0ecff', overflowX: 'auto' }}>
-                              {['📐 Cálculo','📊 Resultado','💬 Deliberação','⚡ Dados'].map((lb, idx) => (
-                                <button key={idx} onClick={() => setAbaSimulador(prev => ({ ...prev, [op.id]: idx }))}
-                                  style={{ padding: '10px 16px', border: 'none', background: 'transparent', borderBottom: abaAt === idx ? '2.5px solid #3070c8' : '2.5px solid transparent', color: abaAt === idx ? '#1a4080' : '#6080a0', fontWeight: abaAt === idx ? 700 : 400, cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>
+                              {/* idx fixos: a aba "Deliberação" (Julgamento, idx 4) substituiu a antiga
+                                  aba de comentários; os blocos de render abaixo usam estes mesmos idx. */}
+                              {[{ lb: '📐 Cálculo', i: 0 }, { lb: '📊 Resultado', i: 1 }, { lb: '⚡ Dados', i: 3 }, { lb: '⚖️ Deliberação', i: 4 }].map(({ lb, i }) => (
+                                <button key={i} onClick={() => setAbaSimulador(prev => ({ ...prev, [op.id]: i }))}
+                                  style={{ padding: '10px 16px', border: 'none', background: i === 4 && abaAt === 4 ? '#f3ecff' : 'transparent', borderBottom: abaAt === i ? `2.5px solid ${i === 4 ? '#a855f7' : '#3070c8'}` : '2.5px solid transparent', color: abaAt === i ? (i === 4 ? '#7a3ad0' : '#1a4080') : '#6080a0', fontWeight: abaAt === i ? 700 : 400, cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>
                                   {lb}
                                 </button>
                               ))}
@@ -3529,79 +3813,32 @@ export default function OperacoesPage() {
                                   </div>
                                 </div>
                               )}
-                              {/* ABA 2: Deliberação */}
-                              {abaAt === 2 && (() => {
-                                const coments = comentariosComite[op.id] ?? []
-                                const nf = novoComentarioForm[op.id] ?? { autor: '', comentario: '', tipo: 'geral' }
-                                const tCor: Record<string,string> = { restricao: '#d64545', condicao: '#d07830', aprovacao: '#27a96c', negacao: '#888', geral: '#3070c8' }
-                                return (
-                                  <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
-                                    <div style={{ flex: '1 1 260px' }}>
-                                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 7, letterSpacing: 0.5 }}>NOTAS DO ANALISTA</div>
-                                      <textarea placeholder="Análise técnica para o comitê..." defaultValue={op.comite_notas ?? ''}
-                                        onBlur={async (e) => { const sb = createClient(); await sb.from('operacoes').update({ comite_notas: e.target.value }).eq('id', op.id) }}
-                                        style={{ width: '100%', minHeight: 96, padding: '9px 11px', borderRadius: 8, border: '1.5px solid #c5d5e8', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' as const }} />
-                                    </div>
-                                    <div style={{ flex: '1 1 260px' }}>
-                                      <div style={{ fontSize: 12, fontWeight: 700, color: '#1a2a3a', marginBottom: 7, letterSpacing: 0.5 }}>COMENTÁRIOS DO COMITÊ</div>
-                                      <div style={{ display: 'flex', gap: 7, marginBottom: 7 }}>
-                                        <input placeholder="Nome do membro" value={nf.autor} onChange={(e) => setNovoComentarioForm(prev => ({ ...prev, [op.id]: { ...nf, autor: e.target.value } }))}
-                                          style={{ flex: 1, padding: '7px 9px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 13 }} />
-                                        <select value={nf.tipo} onChange={(e) => setNovoComentarioForm(prev => ({ ...prev, [op.id]: { ...nf, tipo: e.target.value } }))}
-                                          style={{ padding: '7px 9px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 13 }}>
-                                          <option value="geral">Geral</option><option value="restricao">Restrição</option>
-                                          <option value="condicao">Condição</option><option value="aprovacao">Aprovação</option><option value="negacao">Negação</option>
-                                        </select>
-                                      </div>
-                                      <textarea placeholder="Comentário..." value={nf.comentario} onChange={(e) => setNovoComentarioForm(prev => ({ ...prev, [op.id]: { ...nf, comentario: e.target.value } }))}
-                                        style={{ width: '100%', minHeight: 68, padding: '8px 9px', borderRadius: 6, border: '1.5px solid #c5d5e8', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' as const }} />
-                                      <button onClick={() => adicionarComentario(op.id)} disabled={salvandoComentario || !nf.autor || !nf.comentario}
-                                        style={{ marginTop: 7, padding: '7px 14px', borderRadius: 6, border: 'none', background: '#3070c8', color: 'white', fontWeight: 700, fontSize: 13, cursor: 'pointer', opacity: (!nf.autor || !nf.comentario) ? 0.5 : 1 }}>
-                                        {salvandoComentario ? 'Salvando…' : '+ Comentário'}
-                                      </button>
-                                      <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 7, maxHeight: 210, overflowY: 'auto' }}>
-                                        {coments.length === 0
-                                          ? <div style={{ fontSize: 13, color: '#6080a0', fontStyle: 'italic' }}>Nenhum comentário ainda.</div>
-                                          : coments.map(c => (
-                                            <div key={c.id} style={{ background: '#f0f6ff', borderRadius: 8, padding: '9px 11px', border: '1px solid #d0e4f5' }}>
-                                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                                                <span style={{ fontWeight: 700, fontSize: 12, color: '#1a4080' }}>{c.autor}</span>
-                                                <span style={{ fontSize: 11, color: tCor[c.tipo] ?? '#6080a0', fontWeight: 700, textTransform: 'capitalize' as const }}>{c.tipo}</span>
-                                              </div>
-                                              <div style={{ fontSize: 13, color: '#1a2a3a' }}>{c.comentario}</div>
-                                              <div style={{ fontSize: 10, color: '#6080a0', marginTop: 3 }}>{new Date(c.created_at).toLocaleString('pt-BR')}</div>
-                                            </div>
-                                          ))
-                                        }
-                                      </div>
-                                    </div>
-                                  </div>
-                                )
-                              })()}
-                              {/* ABA 3: Dados */}
-                              {abaAt === 3 && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(185px,1fr))', gap: 10 }}>
-                                    {[['Tomador', op.tomador?.razao_social ?? '—'],['CNPJ', op.tomador?.cnpj ? maskCNPJ(op.tomador.cnpj) : '—'],['Corretora', op.corretora?.nome_fantasia ?? op.corretora?.razao_social ?? '—'],['Produto', op.produto?.nome ?? '—'],['Modalidade', op.modalidade ?? '—'],['Estado', op.estado ?? '—'],['LMG', opL > 0 ? fmtMoeda(opL) : '—'],['Taxa', opT > 0 ? fmtPercent(opT / 100) : '—'],['Vigência', `${opV} anos`],['Prêmio Previsto', opP > 0 ? fmtMoeda(opP) : '—'],['Temperatura', op.temperatura ?? '—'],['Data Entrada', op.data_entrada ? fmtData(op.data_entrada) : '—'],['Analista', op.comite_analista ?? '—']].map(([lb, vl]) => (
-                                      <div key={lb} style={{ background: '#f8fafc', borderRadius: 8, padding: '9px 12px', border: '1px solid #e0ecff' }}>
-                                        <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginBottom: 3 }}>{lb}</div>
-                                        <div style={{ fontSize: 13, fontWeight: 600, color: '#1a2a3a', wordBreak: 'break-word' as const }}>{vl}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  <div style={{ background: '#f8fafc', borderRadius: 8, padding: '12px 14px', border: '1px solid #e0ecff' }}>
-                                    <div style={{ fontSize: 10, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginBottom: 6 }}>Observação</div>
-                                    <div style={{ fontSize: 13, fontWeight: 500, color: '#1a2a3a', lineHeight: 1.6 }}>{op.observacao || '—'}</div>
-                                  </div>
-                                </div>
+                              {/* ABA 3: Dados — dossiê (operação + tomador + organograma) */}
+                              {abaAt === 3 && <OperacaoDados op={op} />}
+                              {/* ABA 4: Deliberação (placar + bancada + votação on-demand) */}
+                              {abaAt === 4 && (
+                                <PainelJulgamento
+                                  op={op}
+                                  membros={membros}
+                                  votos={votosComite[op.id] ?? []}
+                                  historico={historicoComite[op.id] ?? []}
+                                  anexos={anexosDaOperacao(op)}
+                                  onAbrirAnexo={abrirAnexo}
+                                  onRegistrarVoto={(v) => gravarVoto(op, v.usuarioId, v.voto, v.segueSubscritor, v.argumentacao, 'crm')}
+                                  onEditarParecer={(parecer, voto) => editarParecerComite(op, parecer, voto)}
+                                  onPedirVista={(usuarioId, justificativa) => pedirVista(op, usuarioId, justificativa)}
+                                  onRetomarVista={() => retomarVista(op)}
+                                  onAbrirWhatsapp={() => setWhatsappSimOpId(op.id)}
+                                  onEnviarConvite={() => enviarConvitesComite(op)}
+                                />
                               )}
                             </div>
-                            {/* Decisão Final */}
+                            {/* Rodapé: a aprovação/negação vem da Deliberação (votação).
+                                Aqui resta só "Devolver" — bloqueado se já houver voto. */}
                             <div style={{ borderTop: '1.5px solid #e0ecff', padding: '12px 22px', background: '#f8fafc', display: 'flex', gap: 9, flexWrap: 'wrap', alignItems: 'center' }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginRight: 4 }}>Decisão:</span>
-                              <button onClick={() => mudarStatus(op, 'Aprovado')} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#d4f4e4', color: '#1a6a40', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>✅ Aprovar</button>
-                              <button onClick={() => mudarStatus(op, 'Recusado')} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#fbeaea', color: '#a02020', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>❌ Negar</button>
-                              <button onClick={() => mudarStatus(op, 'Em Análise')} style={{ padding: '7px 16px', borderRadius: 8, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>↩ Devolver</button>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginRight: 4 }}>Fluxo:</span>
+                              <button onClick={() => tentarDevolver(op)} title="Volta a operação para Em Análise (bloqueado se já houver voto proferido)" style={{ padding: '7px 16px', borderRadius: 8, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>↩ Devolver para Análise</button>
+                              <span style={{ fontSize: 12, color: '#9ab0c8' }}>A decisão final é definida pela votação na aba ⚖️ Deliberação.</span>
                             </div>
                           </div>
                         )}
@@ -3976,6 +4213,46 @@ export default function OperacoesPage() {
           </div>
         </div>
       )}
+
+      {/* Aviso de bloqueio / informação (ex.: Devolver com voto já proferido, abrir anexo no sandbox) */}
+      {avisoBloqueio && (
+        <div onClick={() => setAvisoBloqueio(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(16,32,64,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, maxWidth: 420, width: '100%', padding: '20px 22px', boxShadow: '0 18px 50px rgba(16,32,64,0.3)' }}>
+            <div style={{ fontSize: 14, color: '#1a2a3a', lineHeight: 1.55, whiteSpace: 'pre-line' }}>{avisoBloqueio}</div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+              <button onClick={() => setAvisoBloqueio(null)} style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: '#1e4080', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Entendi</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de entrada no Comitê (nudge ao subscritor / lembrete aos subscritores) */}
+      {comiteEntrada && (
+        <ComiteEntradaModal
+          op={comiteEntrada.op}
+          ehSubscritor={comiteEntrada.ehSubscritor}
+          subscritores={subscritores.map((s) => ({ nome: s.nome, cargo: s.cargo }))}
+          onVotarAgora={() => abrirDeliberacao(comiteEntrada.op)}
+          onVotarDepois={() => setComiteEntrada(null)}
+          onClose={() => setComiteEntrada(null)}
+        />
+      )}
+
+      {/* Simulador de WhatsApp do Comitê (votação remota dos diretores) */}
+      {whatsappSimOpId && (() => {
+        const opSim = operacoes.find((o) => o.id === whatsappSimOpId)
+        if (!opSim) return null
+        return (
+          <WhatsAppSimulator
+            op={opSim}
+            subscritorNome={opSim.subscritor_nome ?? subscritorNome}
+            membros={membros}
+            votos={votosComite[opSim.id] ?? []}
+            onVotar={(usuarioId, voto, segue) => gravarVoto(opSim, usuarioId, voto, segue, '', 'whatsapp')}
+            onFechar={() => setWhatsappSimOpId(null)}
+          />
+        )
+      })()}
     </>
   )
 }

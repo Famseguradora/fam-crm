@@ -3,6 +3,24 @@ import { createClient } from '@/lib/supabase/server'
 import DashboardShell from './DashboardShell'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  // MODO SANDBOX: pula o login e entra direto como "Marco", sem tocar no
+  // Supabase real. Em produção (flag ausente) o fluxo normal continua igual.
+  if (process.env.NEXT_PUBLIC_SANDBOX === 'true') {
+    return (
+      <DashboardShell
+        nomeUsuario="Marco Dragone (Sandbox)"
+        perfilUsuario="admin"
+        proprietario={true}
+        podePublicarAvisos={true}
+        emailUsuario="sandbox@fam.local"
+        userId="sandbox-user"
+        dataInicio={null}
+      >
+        {children}
+      </DashboardShell>
+    )
+  }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
