@@ -86,6 +86,24 @@ const PRIORIDADE_ORDEM: Record<string, number> = {
 
 const STATUS_PROTEGIDOS = ['Aprovado', 'Emitido', 'Perdido', 'Recusado', 'Comitê']
 
+// Data que faz sentido para cada operação conforme o status:
+//  • Emitido            → data de emissão (única data de "fim" gravada);
+//  • Perdido / Recusado → data de encerramento = última alteração (updated_at),
+//                         pois não há campo próprio de recusa/perda no banco;
+//  • demais status      → data de entrada (única data informada no cadastro).
+function dataRelevante(op: Operacao): string | null {
+  if (op.status === 'Emitido') return op.data_emissao
+  if (op.status === 'Perdido' || op.status === 'Recusado') return op.updated_at
+  return op.data_entrada
+}
+// Rótulo da coluna de data conforme o status em foco ('' = funil → Data Entrada).
+function rotuloData(status: string): string {
+  if (status === 'Emitido') return 'Data Emissão'
+  if (status === 'Perdido') return 'Data Perdida'
+  if (status === 'Recusado') return 'Data de Recusa'
+  return 'Data Entrada'
+}
+
 function autoTemp(novoStatus: string, tempAtual: string | null): string | null {
   if (novoStatus === 'Perdido' || novoStatus === 'Recusado') return 'Frio'
   if (novoStatus === 'Emitido') return null
@@ -1009,7 +1027,7 @@ export default function OperacoesPage() {
       else if (field === 'lmg') cmp = (a.lmg ?? 0) - (b.lmg ?? 0)
       else if (field === 'taxa') cmp = (a.taxa ?? 0) - (b.taxa ?? 0)
       else if (field === 'premio') cmp = (a.premio_previsto ?? 0) - (b.premio_previsto ?? 0)
-      else if (field === 'data_entrada') cmp = (a.data_entrada ?? '').localeCompare(b.data_entrada ?? '')
+      else if (field === 'data_emissao') cmp = (a.data_emissao ?? '').localeCompare(b.data_emissao ?? '')
       else cmp = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       return mul * cmp
     })
@@ -1047,7 +1065,7 @@ export default function OperacoesPage() {
       else if (field === 'lmg') cmp = (a.lmg ?? 0) - (b.lmg ?? 0)
       else if (field === 'taxa') cmp = (a.taxa ?? 0) - (b.taxa ?? 0)
       else if (field === 'premio') cmp = (a.premio_previsto ?? 0) - (b.premio_previsto ?? 0)
-      else if (field === 'data_entrada') cmp = (a.data_entrada ?? '').localeCompare(b.data_entrada ?? '')
+      else if (field === 'encerramento') cmp = (a.updated_at ?? '').localeCompare(b.updated_at ?? '')
       else cmp = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       return mul * cmp
     })
@@ -1089,8 +1107,11 @@ export default function OperacoesPage() {
         (op.corretora?.nome_fantasia ?? '').toLowerCase().includes(buscaLow) ||
         (op.produto?.nome ?? '').toLowerCase().includes(buscaLow)
       const statusMatch = vistaEspecial ? true : (filtroStatus.length === 0 || filtroStatus.includes(op.status ?? ''))
-      const priorMatch = !filtroPrioridade || op.prioridade === filtroPrioridade
-      const tempMatch = filtroTemperatura.length === 0 || filtroTemperatura.includes(op.temperatura ?? '')
+      // No modo de foco (Emitidas/Perdidas/Recusadas) ignoramos Temperatura e
+      // Prioridade — são conceitos do funil, não se aplicam a negócios encerrados.
+      // Assim a tabela em foco espelha exatamente o relatório do card (e seu PDF).
+      const priorMatch = vistaEspecial ? true : (!filtroPrioridade || op.prioridade === filtroPrioridade)
+      const tempMatch = vistaEspecial ? true : (filtroTemperatura.length === 0 || filtroTemperatura.includes(op.temperatura ?? ''))
       const corrMatch = !filtroCorretora || op.corretora_id === filtroCorretora
       const prodMatch = !filtroModalidade || op.modalidade === filtroModalidade
       return textMatch && statusMatch && priorMatch && tempMatch && corrMatch && prodMatch
@@ -1115,7 +1136,7 @@ export default function OperacoesPage() {
         } else if (sortField === 'status') {
           cmp = (a.status ?? '').localeCompare(b.status ?? '', 'pt-BR', { sensitivity: 'base' })
         } else if (sortField === 'data_entrada') {
-          cmp = (a.data_entrada ?? '').localeCompare(b.data_entrada ?? '')
+          cmp = (dataRelevante(a) ?? '').localeCompare(dataRelevante(b) ?? '')
         }
         return sortDir === 'asc' ? cmp : -cmp
       })
@@ -1476,6 +1497,13 @@ export default function OperacoesPage() {
   }
 
   async function exportarPDF() {
+    // Padronização: quando a seleção ativa for exatamente Emitidas / Perdidas /
+    // Recusadas, o botão "Exportar PDF" gera o MESMO relatório do card — não
+    // importa por onde foi acionado. Nos demais casos, o relatório do funil.
+    const statusFoco = vistaEspecial ?? (filtroStatus.length === 1 ? filtroStatus[0] : null)
+    if (statusFoco === 'Emitido')  return exportarPDFEmitidas()
+    if (statusFoco === 'Perdido')  return exportarPDFPerdidas('Perdido')
+    if (statusFoco === 'Recusado') return exportarPDFPerdidas('Recusado')
     setExportando(true)
     try {
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
@@ -1629,7 +1657,7 @@ export default function OperacoesPage() {
     autoTable(doc, {
       startY,
       margin: { left: M, right: M, bottom: 14 },
-      head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'Temp.', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio', 'Data\nEmissão']],
+      head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'Temp.', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio', 'Data\nEntrada']],
       body: operacoesFiltradas.map((op, i) => [
         i + 1,
         op.status,
@@ -1642,7 +1670,7 @@ export default function OperacoesPage() {
         op.taxa ? fmtPercent(op.taxa / 100) : '—',
         op.vigencia_anos ? `${op.vigencia_anos}${sufVig(op.periodicidade_vigencia)}` : '—',
         op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
-        op.data_emissao ? fmtData(op.data_emissao) : '—',
+        op.data_entrada ? fmtData(op.data_entrada) : '—',
       ]),
       foot: [['', '', '', '', '', '', 'TOTAL', fmtMoeda(lmgFiltrado), '', '', fmtMoeda(premioFiltrado), '']],
       styles: {
@@ -1970,10 +1998,14 @@ export default function OperacoesPage() {
 
       const startYP = cardTop + cardH + 5
 
+      // Rótulo da data de encerramento: específico quando o relatório é de um só
+      // tipo; genérico ("Encerramento") no relatório combinado Perdidas+Recusadas.
+      const rotuloFimPDF = tipo === 'Perdido' ? 'Data\nPerdida' : tipo === 'Recusado' ? 'Data\nRecusa' : 'Encerra-\nmento'
+
       autoTable(doc, {
         startY: startYP,
         margin: { left: M, right: M, bottom: 14 },
-        head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio Prev.']],
+        head: [['#', 'Status', 'Tomador', 'Corretora', 'UF', 'Modalidade', 'LMG - Limite FAM', 'Taxa', 'Vig.', 'Prêmio Prev.', rotuloFimPDF]],
         body: lista.map((op, i) => [
           i + 1,
           op.status,
@@ -1985,8 +2017,9 @@ export default function OperacoesPage() {
           op.taxa ? fmtPercent(op.taxa / 100) : '—',
           op.vigencia_anos ? `${op.vigencia_anos}${sufVig(op.periodicidade_vigencia)}` : '—',
           op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—',
+          op.updated_at ? fmtData(op.updated_at) : '—',
         ]),
-        foot: [['', '', '', '', '', 'TOTAL', fmtMoeda(kp.lmg), '', '', fmtMoeda(kp.premio)]],
+        foot: [['', '', '', '', '', 'TOTAL', fmtMoeda(kp.lmg), '', '', fmtMoeda(kp.premio), '']],
         styles: { fontSize: 7.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 }, font: 'helvetica', textColor: [30, 40, 60], lineColor: [210, 215, 225], lineWidth: 0.15, overflow: 'hidden' },
         headStyles: { fillColor: [100, 100, 115], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, valign: 'middle', cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 } },
         footStyles: { fillColor: [228, 228, 235], textColor: [60, 60, 80], fontStyle: 'bold', fontSize: 7.5 },
@@ -1994,18 +2027,19 @@ export default function OperacoesPage() {
         columnStyles: {
           0: { halign: 'center', cellWidth: 8,  textColor: [100, 110, 130] },
           1: { halign: 'left',   cellWidth: 22 },
-          2: { halign: 'left',   cellWidth: 60, overflow: 'linebreak' },
-          3: { halign: 'left',   cellWidth: 40, overflow: 'linebreak' },
+          2: { halign: 'left',   cellWidth: 52, overflow: 'linebreak' },
+          3: { halign: 'left',   cellWidth: 34, overflow: 'linebreak' },
           4: { halign: 'center', cellWidth: 14, textColor: [60, 80, 120] },
-          5: { halign: 'left',   cellWidth: 44, overflow: 'linebreak' },
+          5: { halign: 'left',   cellWidth: 38, overflow: 'linebreak' },
           6: { halign: 'right',  cellWidth: 32 },
           7: { halign: 'center', cellWidth: 13 },
           8: { halign: 'center', cellWidth: 12 },
           9: { halign: 'right',  cellWidth: 36, textColor: [80, 60, 100] },
+          10: { halign: 'center', cellWidth: 20, textColor: [90, 90, 105] },
         },
         didParseCell: (data: any) => {
           if (data.section === 'head' || data.section === 'foot') {
-            const alignMap: Record<number, string> = { 0: 'center', 1: 'left', 2: 'left', 3: 'left', 4: 'center', 5: 'left', 6: 'right', 7: 'center', 8: 'center', 9: 'right' }
+            const alignMap: Record<number, string> = { 0: 'center', 1: 'left', 2: 'left', 3: 'left', 4: 'center', 5: 'left', 6: 'right', 7: 'center', 8: 'center', 9: 'right', 10: 'center' }
             data.cell.styles.halign = alignMap[data.column.index] ?? 'left'
           }
         },
@@ -3068,7 +3102,7 @@ export default function OperacoesPage() {
                   <th style={thSort} onClick={() => handleSort('premio')}>Prêmio{sortIcon('premio')}</th>
                   <th style={thSort} onClick={() => handleSort('temperatura')}>Temp.{sortIcon('temperatura')}</th>
                   <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
-                  <th style={thSort} onClick={() => handleSort('data_entrada')}>Data Entrada{sortIcon('data_entrada')}</th>
+                  <th style={thSort} onClick={() => handleSort('data_entrada')}>{rotuloData(vistaEspecial ?? '')}{sortIcon('data_entrada')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -3083,6 +3117,7 @@ export default function OperacoesPage() {
                 ) : operacoesFiltradas.map((op, i) => {
                   const lmgLimiteFam = Math.min(op.lmg ?? 0, 80_000_000)
                   const temCap = (op.lmg ?? 0) > 80_000_000
+                  const dData = dataRelevante(op)
                   return (
                     <tr key={op.id} onClick={() => abrirEditar(op)} style={{ cursor: 'pointer' }}>
                       <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
@@ -3124,7 +3159,7 @@ export default function OperacoesPage() {
                         </span>
                       </td>
                       <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
-                        {op.data_entrada ? fmtData(op.data_entrada) : '—'}
+                        {dData ? fmtData(dData) : '—'}
                       </td>
                     </tr>
                   )
@@ -3164,7 +3199,7 @@ export default function OperacoesPage() {
                       {showLmgLimiteFam && <th style={thSort} onClick={() => handleSortEmitidas('lmg')}>LMG Original{sortIconEmitidas('lmg')}</th>}
                       <th style={thSort} onClick={() => handleSortEmitidas('taxa')}>Taxa{sortIconEmitidas('taxa')}</th>
                       <th style={thSort} onClick={() => handleSortEmitidas('premio')}>Prêmio Previsto{sortIconEmitidas('premio')}</th>
-                      <th style={thSort} onClick={() => handleSortEmitidas('data_entrada')}>Data Entrada{sortIconEmitidas('data_entrada')}</th>
+                      <th style={thSort} onClick={() => handleSortEmitidas('data_emissao')}>Data Emissão{sortIconEmitidas('data_emissao')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3199,7 +3234,7 @@ export default function OperacoesPage() {
                           {op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—'}
                         </td>
                         <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
-                          {op.data_entrada ? fmtData(op.data_entrada) : '—'}
+                          {op.data_emissao ? fmtData(op.data_emissao) : '—'}
                         </td>
                       </tr>
                       )
@@ -3242,7 +3277,7 @@ export default function OperacoesPage() {
                       {showLmgLimiteFam && <th style={thSort} onClick={() => handleSortPerdidas('lmg')}>LMG Original{sortIconPerdidas('lmg')}</th>}
                       <th style={thSort} onClick={() => handleSortPerdidas('taxa')}>Taxa{sortIconPerdidas('taxa')}</th>
                       <th style={thSort} onClick={() => handleSortPerdidas('premio')}>Prêmio Previsto{sortIconPerdidas('premio')}</th>
-                      <th style={thSort} onClick={() => handleSortPerdidas('data_entrada')}>Data Entrada{sortIconPerdidas('data_entrada')}</th>
+                      <th style={thSort} onClick={() => handleSortPerdidas('encerramento')}>Encerramento{sortIconPerdidas('encerramento')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3287,7 +3322,7 @@ export default function OperacoesPage() {
                           {op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—'}
                         </td>
                         <td style={{ fontSize: 13, color: '#888899', whiteSpace: 'nowrap' }}>
-                          {op.data_entrada ? fmtData(op.data_entrada) : '—'}
+                          {op.updated_at ? fmtData(op.updated_at) : '—'}
                         </td>
                       </tr>
                       )
