@@ -37,3 +37,65 @@ CREATE INDEX IF NOT EXISTS idx_usuarios_telefone ON public.usuarios (telefone);
 --    CREATE INDEX idx_cvh_operacao ON public.comite_votos_historico (operacao_id);
 --    ALTER TABLE public.comite_votos_historico ENABLE ROW LEVEL SECURITY;
 --    -- Policies: authenticated lê (SELECT) e escreve (ALL), espelhando comite_votos.
+
+-- 4) Cédula de votação por link (migração `comite_voto_por_link`, aplicada via
+--    Supabase migrations em 2026-07-20). Enquanto a API oficial do WhatsApp não
+--    permite votar dentro do chat, o diretor abre `/voto/<token>` no celular.
+--    Documentado aqui para referência:
+--
+--    a) anexos.categoria — acaba com a heurística "anexo mais recente do
+--       tomador é a análise de crédito". Backfill classificou 72 análises de
+--       crédito e 1 de subscrição pelo nome do arquivo.
+--       ALTER TABLE public.anexos ADD COLUMN categoria TEXT NOT NULL DEFAULT 'outro'
+--         CHECK (categoria IN ('analise_credito','analise_subscricao','outro'));
+--       + policy de UPDATE (faltava) para reclassificar pela tela.
+--
+--    b) canal 'link' em comite_votos e comite_votos_historico:
+--       CHECK (canal IN ('crm','whatsapp','link'))
+--
+--    c) public.comite_convites — tokens da cédula.
+--       usuario_id NULL  → link GERAL da operação (lista de transmissão);
+--                          quem abre se identifica com nome + 4 últimos
+--                          dígitos do celular cadastrado.
+--       usuario_id != NULL → link PESSOAL de um diretor.
+--       Índices únicos PARCIAIS garantem um convite vigente de cada tipo:
+--         uq_comite_convites_pessoal (operacao_id, usuario_id) WHERE revogado_em IS NULL AND usuario_id IS NOT NULL
+--         uq_comite_convites_geral   (operacao_id)             WHERE revogado_em IS NULL AND usuario_id IS NULL
+--
+--       ⚠ RLS DENY-ALL DE PROPÓSITO: a tabela tem RLS habilitado e NENHUMA
+--       policy. anon e authenticated não leem nada — nem o token. Só o
+--       service_role (que faz bypass) acessa, pelas rotas de API. É isso que
+--       impede um usuário comum do CRM de pegar o token de um diretor e votar
+--       no lugar dele. NÃO adicione "USING (true)" aqui por reflexo.
+--
+--    d) public.comite_convite_acessos — trilha de identificação (inclusive as
+--       tentativas com dígitos errados), com ip e user_agent. Também RLS
+--       deny-all.
+
+-- 5) Comentários do Comitê (migração `comite_comentarios_ativa`, 2026-07-21).
+--    A tabela existia desde o schema original mas NUNCA teve caminho de
+--    escrita: 0 linhas, nenhum INSERT no código, nenhuma UI. O único texto de
+--    um diretor era `comite_votos.argumentacao`. Agora a cédula dá a cada
+--    diretor um espaço de debate, separado do voto (pode comentar sem votar e
+--    comentar várias vezes), visível também na Deliberação do CRM.
+--      ALTER TABLE public.comite_comentarios
+--        ADD COLUMN usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
+--        ADD COLUMN cargo TEXT,
+--        ADD COLUMN canal TEXT NOT NULL DEFAULT 'crm'
+--          CHECK (canal IN ('crm','whatsapp','link'));
+--      + CHECK de `tipo` e índice (operacao_id, created_at DESC).
+
+-- 6) ⚠ SEGURANÇA (migração `fecha_policies_publicas_comite`, 2026-07-21).
+--    Duas policies legadas eram ALL / USING(true) para o role `public` —
+--    e `public` inclui `anon`. Ou seja, a NEXT_PUBLIC_SUPABASE_ANON_KEY (que
+--    por definição está no bundle JS e qualquer visitante do site obtém) dava
+--    SELECT/INSERT/UPDATE/DELETE nessas tabelas via PostgREST, sem sessão:
+--      DROP POLICY "all_access_comentarios" ON public.comite_comentarios;
+--      DROP POLICY "all_access_metas"       ON public.metas_negocio;
+--    Em `metas_negocio` isso já vazava metas e realizado da empresa (checado:
+--    a anon key devolvia os valores reais). Substituídas por policies
+--    {authenticated}; a cédula escreve com service-role, que ignora RLS.
+--
+--    LIÇÃO: ao criar tabela nova, NÃO use "USING (true)" sem TO authenticated.
+--    Restaram no schema apenas policies {public} com predicado real
+--    (auth.uid() = user_id) em fam_skills_usuario e user_profiles — essas OK.

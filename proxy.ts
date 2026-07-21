@@ -3,7 +3,12 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 // '/api/whatsapp' é público: o webhook da Meta chega SEM sessão Supabase e é
 // autenticado pela assinatura HMAC (x-hub-signature-256), não por login.
-const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp']
+//
+// '/voto' e '/api/voto' são a CÉDULA do Comitê: o diretor abre pelo WhatsApp,
+// no celular dele, sem conta no CRM. A autenticação é o token de 256 bits na
+// URL + confirmação dos 4 últimos dígitos do celular cadastrado — validados
+// server-side em lib/comite/convites.ts, nunca por sessão.
+const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto']
 
 export async function proxy(request: NextRequest) {
   // MODO SANDBOX: não há sessão Supabase, então o gate de login abaixo

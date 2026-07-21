@@ -13,6 +13,7 @@ import PainelJulgamento from '@/components/comite/PainelJulgamento'
 import OperacaoDados from '@/components/comite/OperacaoDados'
 import WhatsAppSimulator from '@/components/comite/WhatsAppSimulator'
 import { membrosComite as filtrarMembrosComite, calcularPlacar } from '@/lib/comite/votacao'
+import { anosVig, sufVig } from '@/lib/comite/calculo'
 import { notifyComiteChange, onComiteChange } from '@/lib/comite/realtime'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Line, AreaChart, Area, CartesianGrid, Cell } from 'recharts'
 
@@ -161,22 +162,8 @@ function decomporVig(dias: number, dataEntradaISO: string | null): { anos: numbe
   return { anos: Math.floor(meses / 12), meses: ((meses % 12) + 12) % 12, dias: diffDias(ancora, fim) }
 }
 
-// Anos-equivalente de uma operação (para cálculos que pensam em anos), tolerante a dados antigos.
-function anosVig(op: { vigencia_dias?: number | null; vigencia_anos?: number | null; periodicidade_vigencia?: string | null }): number {
-  if (op.vigencia_dias != null) return op.vigencia_dias / 365
-  const v = op.vigencia_anos ?? 1
-  const p = op.periodicidade_vigencia
-  if (p === 'Meses') return v / 12
-  if (p === 'Dias' || p === 'Data') return v / 365
-  return v
-}
-
-// Sufixo curto da unidade de vigência (para tabelas/PDF).
-function sufVig(p: string | null | undefined): string {
-  if (p === 'Meses') return 'm'
-  if (p === 'Dias' || p === 'Data') return 'd'
-  return 'a'
-}
+// anosVig/sufVig moram em lib/comite/calculo.ts — a cédula de votação do
+// celular usa as MESMAS fórmulas, então elas não podem viver só aqui.
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -414,15 +401,22 @@ export default function OperacoesPage() {
       carregarComiteVotacao()
       carregarOperacoes()
     }
+    // Comentários da cédula chegam pelo mesmo caminho dos votos: sem isto, o
+    // diretor comenta pelo celular e a Subscrição só vê ao recarregar a tela.
+    const recarregarComentarios = (payload: { new?: { operacao_id?: string } }) => {
+      const opId = payload?.new?.operacao_id
+      if (opId) carregarComentariosComite([opId])
+    }
     const canal = supabase
       .channel('comite-deliberacao')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comite_votos' }, recarregar)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'operacoes' }, recarregar)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'comite_comentarios' }, recarregarComentarios)
       .subscribe()
     return () => {
       supabase.removeChannel(canal)
     }
-  }, [carregarComiteVotacao, carregarOperacoes])
+  }, [carregarComiteVotacao, carregarOperacoes, carregarComentariosComite])
 
   useEffect(() => {
     const supabase = createClient()
@@ -3864,6 +3858,7 @@ export default function OperacoesPage() {
                                   onPedirVista={(usuarioId, justificativa) => pedirVista(op, usuarioId, justificativa)}
                                   onRetomarVista={() => retomarVista(op)}
                                   onAbrirWhatsapp={() => setWhatsappSimOpId(op.id)}
+                                  comentarios={comentariosComite[op.id] ?? []}
                                   onEnviarConvite={() => enviarConvitesComite(op)}
                                 />
                               )}

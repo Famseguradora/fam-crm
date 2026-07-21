@@ -267,9 +267,12 @@ async function enviarAnaliseCredito(supabase: SupabaseClient, from: string, opId
     return
   }
 
+  // Antes isto pegava o anexo MAIS RECENTE do tomador e torcia para ser a
+  // análise de crédito. Agora a categoria é declarada no upload.
   const { data: anexos } = await supabase
     .from('anexos')
     .select('storage_path, nome_original')
+    .eq('categoria', 'analise_credito')
     .eq('entidade_tipo', 'tomador')
     .eq('entidade_id', op.tomador_id)
     .order('created_at', { ascending: false })

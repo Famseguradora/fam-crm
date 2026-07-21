@@ -1,0 +1,878 @@
+/* ==========================================================================
+   Cédula de Votação do Comitê — FAM Seguradora
+   Página servida FORA do CRM: o diretor abre no celular, direto do WhatsApp.
+   Mobile-first de verdade (o desktop é o caso raro aqui).
+   Identidade: navy profundo + dourado, ar de documento oficial de plenário.
+   ========================================================================== */
+
+:root {
+  --navy-900: #060f1e;
+  --navy-800: #0a1628;
+  --navy-700: #102340;
+  --navy-600: #1a3358;
+  --navy-500: #1e4080;
+  --gold-500: #c9a227;
+  --gold-400: #e0b942;
+  --gold-300: #f0d478;
+  --paper: #fbfaf7;
+  --paper-2: #f2f0ea;
+  --ink: #14202e;
+  --ink-2: #4a5a6e;
+  --verde: #1a6a40;
+  --verde-bg: #d4f4e4;
+  --ambar: #9a5a10;
+  --ambar-bg: #fdf0d8;
+  --vermelho: #a02020;
+  --vermelho-bg: #fbeaea;
+  --raio: 16px;
+  --sombra: 0 18px 50px rgba(0, 0, 0, 0.38);
+}
+
+* { box-sizing: border-box; }
+
+.voto-body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  font-family: 'Calibri', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 600px at 50% -10%, #1c3a66 0%, transparent 60%),
+    radial-gradient(800px 400px at 100% 100%, #16305c 0%, transparent 55%),
+    linear-gradient(170deg, var(--navy-800) 0%, var(--navy-900) 100%);
+  background-attachment: fixed;
+  padding: 18px 14px 56px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Textura sutil de "papel timbrado" no fundo escuro */
+.voto-body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image:
+    repeating-linear-gradient(45deg, #fff 0 1px, transparent 1px 12px),
+    repeating-linear-gradient(-45deg, #fff 0 1px, transparent 1px 12px);
+}
+
+.voto-wrap {
+  position: relative;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+/* ── Brasão / cabeçalho ─────────────────────────────────────────────────── */
+.voto-brasao {
+  text-align: center;
+  margin-bottom: 20px;
+  animation: sobe 0.5s ease both;
+}
+.voto-selo-topo {
+  width: 62px;
+  height: 62px;
+  margin: 0 auto 10px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  background: linear-gradient(150deg, var(--gold-300), var(--gold-500));
+  box-shadow: 0 8px 26px rgba(201, 162, 39, 0.42), inset 0 -2px 6px rgba(0, 0, 0, 0.18);
+}
+.voto-marca {
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #fff;
+  line-height: 1;
+}
+.voto-marca-sub {
+  font-size: 9.5px;
+  letter-spacing: 0.42em;
+  color: var(--gold-400);
+  text-transform: uppercase;
+  margin-top: 5px;
+  font-weight: 600;
+}
+.voto-faixa {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: rgba(201, 162, 39, 0.12);
+  border: 1px solid rgba(201, 162, 39, 0.4);
+  color: var(--gold-300);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+/* ── Cartões ────────────────────────────────────────────────────────────── */
+.voto-card {
+  background: var(--paper);
+  border-radius: var(--raio);
+  box-shadow: var(--sombra);
+  overflow: hidden;
+  margin-bottom: 16px;
+  animation: sobe 0.55s ease both;
+}
+.voto-card-topo {
+  height: 4px;
+  background: linear-gradient(90deg, var(--gold-500), var(--gold-300), var(--gold-500));
+}
+.voto-card-corpo { padding: 20px 18px; }
+
+.voto-secao-titulo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--navy-500);
+  margin-bottom: 14px;
+}
+.voto-secao-titulo::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(30, 64, 128, 0.28), transparent);
+}
+
+/* ── Dossiê da operação ─────────────────────────────────────────────────── */
+.voto-tomador {
+  font-family: inherit;
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--navy-800);
+  line-height: 1.25;
+  margin-bottom: 4px;
+  /* Razão social longa sem espaço não pode estourar o cartão */
+  overflow-wrap: anywhere;
+}
+.voto-membro-nome, .voto-doc-nome, .voto-doc-meta { overflow-wrap: anywhere; }
+.voto-modalidade {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin-bottom: 16px;
+}
+.voto-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 9px;
+}
+.voto-kpi {
+  background: linear-gradient(160deg, #fff, var(--paper-2));
+  border: 1px solid #e2ddd0;
+  border-radius: 11px;
+  padding: 11px 12px;
+}
+.voto-kpi-rot {
+  font-size: 9.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #5c6675;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+.voto-kpi-val {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--navy-700);
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Parecer da subscrição ──────────────────────────────────────────────── */
+.voto-parecer {
+  position: relative;
+  background: linear-gradient(160deg, #fffdf5, #f8f4e6);
+  border-left: 4px solid var(--gold-500);
+  border-radius: 0 11px 11px 0;
+  padding: 14px 16px 14px 18px;
+  font-size: 14.5px;
+  line-height: 1.62;
+  color: #2a3444;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.voto-parecer-autor {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  font-style: italic;
+}
+
+/* ── Botões de documento ────────────────────────────────────────────────── */
+.voto-docs { display: flex; flex-direction: column; gap: 10px; }
+.voto-doc {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 15px 16px;
+  border-radius: 13px;
+  border: 1.5px solid #d8e2ee;
+  background: #fff;
+  color: var(--navy-700);
+  text-decoration: none;
+  font-weight: 600;
+  transition: transform 0.14s, box-shadow 0.14s, border-color 0.14s;
+  min-height: 60px;
+}
+.voto-doc:active { transform: scale(0.985); }
+@media (hover: hover) {
+  .voto-doc:hover {
+    border-color: var(--navy-500);
+    box-shadow: 0 8px 22px rgba(30, 64, 128, 0.14);
+    transform: translateY(-1px);
+  }
+}
+.voto-doc-icone {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  display: grid; place-items: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.voto-doc-txt { flex: 1; min-width: 0; }
+.voto-doc-nome { font-size: 14.5px; font-weight: 700; }
+.voto-doc-meta { font-size: 11.5px; color: #5c6675; font-weight: 400; margin-top: 1px; }
+.voto-doc-seta { font-size: 17px; color: #b9c6d6; flex-shrink: 0; }
+.voto-doc-vazio {
+  padding: 13px 15px;
+  border-radius: 11px;
+  border: 1.5px dashed #d8e2ee;
+  color: #5f6a78;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ── Abas (Cálculo · Resultado · Dados · Deliberação) ───────────────────── */
+.voto-abas {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px;
+  margin-bottom: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 13px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  position: sticky;
+  top: 8px;
+  z-index: 20;
+  backdrop-filter: blur(10px);
+}
+.voto-abas::-webkit-scrollbar { display: none; }
+.voto-aba {
+  flex: 1 0 auto;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s;
+  min-height: 42px;
+}
+.voto-aba[data-at='true'] {
+  background: linear-gradient(150deg, var(--gold-400), var(--gold-500));
+  color: var(--navy-900);
+  box-shadow: 0 4px 14px rgba(201, 162, 39, 0.32);
+}
+.voto-aba-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  font-size: 10px;
+}
+.voto-aba[data-at='true'] .voto-aba-badge { background: rgba(0, 0, 0, 0.18); }
+
+/* ── Demonstração do cálculo (espelha o card escuro do CRM) ─────────────── */
+.voto-demo {
+  background: #0d2040;
+  border-radius: 11px;
+  padding: 15px 16px;
+  line-height: 2;
+  font-size: 13px;
+}
+.voto-demo-titulo {
+  color: var(--gold-400);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  font-size: 11px;
+  text-transform: uppercase;
+  margin-bottom: 9px;
+}
+.voto-demo-linha {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  color: rgba(180, 200, 220, 0.75);
+}
+.voto-demo-linha strong { color: #fff; font-weight: 700; font-variant-numeric: tabular-nums; }
+.voto-demo-total {
+  border-top: 1px solid rgba(56, 120, 200, 0.4);
+  padding-top: 8px;
+  margin-top: 5px;
+}
+.voto-demo-total strong { color: var(--gold-400); font-size: 16px; font-weight: 800; }
+.voto-demo-rodape {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: rgba(56, 120, 200, 0.14);
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: rgba(180, 200, 220, 0.7);
+  line-height: 1.65;
+}
+
+/* ── Simulador ──────────────────────────────────────────────────────────── */
+.voto-sim-inputs { display: flex; gap: 10px; margin-bottom: 14px; }
+.voto-sim-campo { flex: 1; }
+.voto-sim-campo label {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-2);
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+.voto-sim-input {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1.5px solid #d8e2ee;
+  background: #fff;
+  font-family: inherit;
+  font-size: 16px; /* 16px evita o zoom automático do iOS */
+  font-weight: 700;
+  color: var(--navy-500);
+}
+.voto-sim-input:focus { outline: none; border-color: var(--navy-500); }
+.voto-sim-input[data-alterado='true'] { border-color: var(--gold-500); background: #fffdf3; }
+.voto-sim-linha {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid #eef3f9;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.voto-sim-linha:last-child { border-bottom: none; }
+.voto-sim-linha strong {
+  color: var(--navy-700);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.voto-sim-destaque strong { color: var(--verde); font-weight: 800; }
+.voto-sim-aviso {
+  margin-bottom: 12px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: #fdf6e0;
+  border: 1px solid #ecdfb4;
+  font-size: 12px;
+  color: var(--ambar);
+  font-weight: 700;
+}
+.voto-btn-reset {
+  margin-top: 12px;
+  width: 100%;
+  padding: 10px;
+  border: 1.5px solid #d8e2ee;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 42px;
+}
+
+/* ── Meta / Resultado ───────────────────────────────────────────────────── */
+.voto-meta-linha {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  margin-bottom: 3px;
+}
+.voto-meta-linha strong { color: var(--navy-700); font-variant-numeric: tabular-nums; }
+.voto-meta-barra {
+  height: 10px;
+  background: #e6e2d8;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 6px 0 12px;
+  position: relative;
+}
+.voto-meta-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  transition: width 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.voto-meta-fill-novo { background: repeating-linear-gradient(45deg, #27a96c, #27a96c 5px, #34c47e 5px, #34c47e 10px); }
+.voto-meta-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.voto-meta-impacto {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 11px;
+  background: linear-gradient(160deg, #f2fbf6, #e4f6ec);
+  border: 1px solid #bfe6d0;
+}
+.voto-meta-impacto-rot {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #1a6a40;
+  font-weight: 800;
+  margin-bottom: 3px;
+}
+.voto-meta-impacto-val {
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--verde);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.voto-meta-vazio {
+  padding: 18px 14px;
+  text-align: center;
+  color: #5f6a78;
+  font-size: 13px;
+  border: 1.5px dashed #d8e2ee;
+  border-radius: 11px;
+}
+
+/* ── Campos (Dados) ─────────────────────────────────────────────────────── */
+.voto-campos {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+.voto-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eef3f9;
+}
+.voto-campo:last-child { border-bottom: none; }
+.voto-campo-rot {
+  font-size: 10px;
+  font-weight: 800;
+  color: #5c6675;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.voto-campo-val {
+  font-size: 14px;
+  color: #0a1628;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Sub-bloco colapsável dentro de uma aba */
+.voto-bloco { border: 1px solid #e6ecf4; border-radius: 12px; overflow: hidden; margin-bottom: 10px; }
+.voto-bloco-cab {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 14px;
+  border: none;
+  background: #f6f9fd;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  min-height: 50px;
+}
+.voto-bloco-cab[data-aberto='false'] { background: #fff; }
+.voto-bloco-tit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--navy-700);
+  letter-spacing: 0.03em;
+}
+.voto-bloco-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.voto-bloco-seta { font-size: 11.5px; font-weight: 700; color: var(--navy-500); white-space: nowrap; }
+.voto-bloco-corpo { padding: 4px 14px 14px; }
+.voto-chip {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #eef4ff;
+  border: 1px solid #d6e4f7;
+  color: var(--navy-500);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+/* ── Organograma em lista indentada (legível no celular) ────────────────── */
+.voto-org-raiz {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: 11px;
+  background: linear-gradient(150deg, #fffdf3, #f8f0d8);
+  border: 1px solid #ecdfb4;
+  margin-bottom: 8px;
+}
+.voto-org-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: #f8fafc;
+  border: 1px solid #e6ecf4;
+  margin-bottom: 5px;
+}
+.voto-org-nome { font-size: 13px; font-weight: 700; color: var(--navy-800); overflow-wrap: anywhere; }
+.voto-org-doc { font-size: 11px; color: #5c6675; }
+.voto-org-pct {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--navy-500);
+  font-variant-numeric: tabular-nums;
+}
+.voto-org-tipo {
+  flex-shrink: 0;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+/* ── Comentários da bancada ─────────────────────────────────────────────── */
+.voto-coment {
+  padding: 11px 13px;
+  border-radius: 11px;
+  background: #f6f9fd;
+  border: 1px solid #e6ecf4;
+  margin-bottom: 8px;
+}
+.voto-coment[data-meu='true'] { background: #f2f8ff; border-color: #cfe0f5; }
+.voto-coment-cab {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.voto-coment-autor { font-size: 12.5px; font-weight: 800; color: var(--navy-700); }
+.voto-coment-cargo { font-size: 10.5px; color: #5c6675; font-weight: 600; }
+.voto-coment-quando { font-size: 10.5px; color: #5c6675; white-space: nowrap; }
+.voto-coment-txt {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #24303f;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.voto-coment-vazio {
+  padding: 20px 14px;
+  text-align: center;
+  color: #5f6a78;
+  font-size: 13px;
+}
+
+/* ── Placar ─────────────────────────────────────────────────────────────── */
+.voto-placar-linha {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+.voto-placar-rot {
+  width: 108px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  flex-shrink: 0;
+}
+.voto-placar-barra {
+  flex: 1;
+  height: 9px;
+  background: #e6e2d8;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.voto-placar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.voto-placar-num {
+  width: 22px;
+  text-align: right;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.voto-pendentes {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #ddd8ca;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-align: center;
+}
+
+/* ── Identificação ──────────────────────────────────────────────────────── */
+.voto-membros { display: flex; flex-direction: column; gap: 9px; }
+.voto-membro {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border-radius: 13px;
+  border: 1.5px solid #dde5ef;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  transition: all 0.14s;
+  min-height: 62px;
+}
+.voto-membro[data-sel='true'] {
+  border-color: var(--navy-500);
+  background: #eef4ff;
+  box-shadow: 0 6px 18px rgba(30, 64, 128, 0.16);
+}
+.voto-membro[data-votou='true'] { opacity: 0.5; }
+.voto-avatar {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: linear-gradient(150deg, var(--navy-500), var(--navy-700));
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.voto-membro-nome { font-size: 14.5px; font-weight: 700; color: var(--navy-800); }
+.voto-membro-cargo { font-size: 11.5px; color: #5c6675; }
+
+.voto-pin {
+  width: 100%;
+  padding: 15px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.5em;
+  text-align: center;
+  text-indent: 0.5em;
+  border: 2px solid #dde5ef;
+  border-radius: 13px;
+  background: #fff;
+  font-family: inherit;
+  color: var(--navy-800);
+  transition: border-color 0.15s;
+}
+.voto-pin:focus { outline: none; border-color: var(--navy-500); }
+
+/* ── Cédula (opções de voto) ────────────────────────────────────────────── */
+.voto-opcoes { display: flex; flex-direction: column; gap: 10px; }
+.voto-opcao {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 15px 16px;
+  border-radius: 13px;
+  border: 2px solid #dde5ef;
+  background: #fff;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  transition: all 0.15s;
+  min-height: 64px;
+}
+.voto-opcao:active { transform: scale(0.987); }
+.voto-opcao[data-sel='true'] {
+  border-color: var(--cor);
+  background: var(--bg);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--cor) 22%, transparent);
+}
+.voto-opcao-emoji { font-size: 24px; flex-shrink: 0; }
+.voto-opcao-txt { flex: 1; }
+.voto-opcao-label { font-size: 15px; font-weight: 700; color: var(--navy-800); }
+.voto-opcao[data-sel='true'] .voto-opcao-label { color: var(--cor); }
+.voto-opcao-desc { font-size: 11.5px; color: #5c6675; margin-top: 1px; }
+.voto-opcao-check {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: 2px solid #cfd9e6;
+  flex-shrink: 0;
+  display: grid; place-items: center;
+  font-size: 12px;
+  color: #fff;
+}
+.voto-opcao[data-sel='true'] .voto-opcao-check {
+  border-color: var(--cor);
+  background: var(--cor);
+}
+
+.voto-textarea {
+  width: 100%;
+  min-height: 92px;
+  padding: 13px 14px;
+  border: 1.5px solid #dde5ef;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 16px; /* 16px evita o zoom automático do iOS */
+  line-height: 1.55;
+  color: var(--ink);
+  background: #fff;
+  resize: vertical;
+}
+.voto-textarea:focus { outline: none; border-color: var(--navy-500); }
+
+.voto-btn-principal {
+  width: 100%;
+  padding: 17px;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(150deg, var(--gold-400), var(--gold-500));
+  color: var(--navy-900);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(201, 162, 39, 0.4);
+  transition: transform 0.14s, box-shadow 0.14s, opacity 0.14s;
+  min-height: 56px;
+}
+.voto-btn-principal:active:not(:disabled) { transform: scale(0.985); }
+.voto-btn-principal:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.voto-btn-fantasma {
+  width: 100%;
+  padding: 13px;
+  border: 1.5px solid #dde5ef;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 46px;
+}
+
+/* ── Estados / avisos ───────────────────────────────────────────────────── */
+.voto-aviso {
+  padding: 13px 15px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+.voto-aviso-erro { background: var(--vermelho-bg); color: var(--vermelho); border: 1px solid #f0cccc; }
+.voto-aviso-info { background: #e8f0fc; color: var(--navy-500); border: 1px solid #cfe0f5; }
+
+.voto-rodape {
+  text-align: center;
+  margin-top: 22px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.42);
+}
+.voto-rodape strong { color: rgba(255, 255, 255, 0.72); }
+
+/* ── Selo de voto proferido ─────────────────────────────────────────────── */
+.voto-selo {
+  text-align: center;
+  padding: 8px 0 4px;
+}
+.voto-selo-circulo {
+  width: 118px; height: 118px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  border: 4px double var(--cor);
+  color: var(--cor);
+  display: grid;
+  place-items: center;
+  font-size: 44px;
+  background: var(--bg);
+  animation: carimbo 0.62s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+.voto-selo-titulo {
+  font-family: inherit;
+  font-size: 23px;
+  font-weight: 700;
+  color: var(--navy-800);
+  margin-bottom: 5px;
+}
+.voto-selo-sub { font-size: 14px; color: var(--ink-2); line-height: 1.55; }
+
+@keyframes carimbo {
+  0% { transform: scale(2.4) rotate(-16deg); opacity: 0; }
+  60% { opacity: 1; }
+  100% { transform: scale(1) rotate(-7deg); opacity: 1; }
+}
+@keyframes sobe {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.voto-d1 { animation-delay: 0.05s; }
+.voto-d2 { animation-delay: 0.1s; }
+.voto-d3 { animation-delay: 0.15s; }
+.voto-d4 { animation-delay: 0.2s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Telas maiores: a cédula ganha ar, sem virar um layout de desktop */
+@media (min-width: 640px) {
+  .voto-body { padding: 34px 20px 70px; }
+  .voto-card-corpo { padding: 26px 26px; }
+  .voto-kpis { grid-template-columns: repeat(4, 1fr); }
+  .voto-tomador { font-size: 25px; }
+}

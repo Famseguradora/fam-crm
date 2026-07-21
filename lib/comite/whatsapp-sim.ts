@@ -9,7 +9,11 @@ import { VOTO_META, type PlacarComite } from '@/lib/comite/votacao'
 import type { Operacao, VotoComite, ParecerFinal } from '@/types'
 
 export interface DadosConvite {
-  diretorNome: string
+  // Nome do diretor, quando a mensagem é individual. Passe `null` para o envio
+  // por LISTA DE TRANSMISSÃO: como todos recebem o mesmo texto, é impossível
+  // personalizar — e "Olá, Sr(a). Diretor(a)" soa a formulário. Nesse caso a
+  // saudação vira coletiva.
+  diretorNome: string | null
   subscritorNome: string
   op: Operacao
 }
@@ -28,9 +32,11 @@ function prazoTxt(op: Operacao): string {
 export function montarConvite({ diretorNome, subscritorNome, op }: DadosConvite): string {
   const tomador = op.tomador?.razao_social ?? 'Tomador'
   const linhas = [
-    `Olá, *Sr(a). ${diretorNome}* 👋`,
+    diretorNome ? `Olá, *Sr(a). ${diretorNome}* 👋` : 'Prezados Diretores 👋',
     '',
-    `O Subscritor *${subscritorNome}* acabou de te convidar a conhecer uma operação que entrou em *Comitê*.`,
+    diretorNome
+      ? `O Subscritor *${subscritorNome}* acabou de te convidar a conhecer uma operação que entrou em *Comitê*.`
+      : `O Subscritor *${subscritorNome}* convida o Comitê a analisar uma operação que entrou em julgamento.`,
     '',
     `🏢 *Tomador:* ${tomador}`,
     `📋 *Operação:* ${op.modalidade ?? op.produto?.nome ?? '—'}`,

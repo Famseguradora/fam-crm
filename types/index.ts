@@ -207,14 +207,24 @@ export interface MetaNegocio {
   updated_at: string
 }
 
+// Debate da bancada, separado do voto: um diretor pode comentar sem votar e
+// comentar várias vezes. Escrito pela cédula (`canal='link'`) e visível na
+// Deliberação do CRM.
 export interface ComiteComentario {
   id: string
   operacao_id: string
+  usuario_id: string | null
   autor: string
+  cargo: string | null
   comentario: string
   tipo: 'geral' | 'restricao' | 'condicao' | 'aprovacao' | 'negacao'
+  canal: CanalVoto
   created_at: string
 }
+
+// Categoria do documento. Substitui a antiga heurística de "anexo mais recente
+// do tomador é a análise de crédito" — agora o tipo é declarado no upload.
+export type CategoriaAnexo = 'analise_credito' | 'analise_subscricao' | 'outro'
 
 export interface Anexo {
   id: string
@@ -225,6 +235,7 @@ export interface Anexo {
   storage_path: string
   tipo_mime: string | null
   tamanho_bytes: number | null
+  categoria: CategoriaAnexo
   created_at: string
 }
 
@@ -243,8 +254,11 @@ export type VotoComite = 'aprovado' | 'aprovado_ressalva' | 'reprovado'
 // Veredito agregado da bancada após todos votarem.
 export type ParecerFinal = 'Aprovada' | 'Aprovada com Ressalva' | 'Reprovada' | 'Empate'
 
+// Por onde o voto entrou: mesa do CRM, botão do WhatsApp ou cédula por link.
+export type CanalVoto = 'crm' | 'whatsapp' | 'link'
+
 // Voto de um diretor numa operação em Comitê. Um voto por (operacao, usuario);
-// re-voto é UPDATE. `canal` distingue voto pelo CRM x pelo WhatsApp (simulado).
+// re-voto é UPDATE. `canal` distingue voto pelo CRM x pelo WhatsApp x cédula.
 export interface ComiteVoto {
   id: string
   operacao_id: string
@@ -254,7 +268,7 @@ export interface ComiteVoto {
   voto: VotoComite
   segue_subscritor: boolean      // "Acompanho o Subscritor"
   argumentacao: string | null
-  canal: 'crm' | 'whatsapp'
+  canal: CanalVoto
   created_at: string
   updated_at: string
 }
@@ -270,7 +284,31 @@ export interface ComiteVotoHistorico {
   voto: VotoComite
   segue_subscritor: boolean
   argumentacao: string | null
-  canal: 'crm' | 'whatsapp'
+  canal: CanalVoto
   votado_em: string | null       // created_at original do voto retratado
   retratado_em: string           // quando o diretor retratou
+}
+
+// Convite/token da cédula de votação servida fora do CRM (`/voto/<token>`).
+//  escopo 'operacao' (usuario_id null) → link ÚNICO da operação, o que vai na
+//    lista de transmissão; quem abre se identifica na bancada.
+//  escopo 'pessoal'  (usuario_id preenchido) → link de um diretor específico.
+export interface ComiteConvite {
+  id: string
+  operacao_id: string
+  usuario_id: string | null
+  token: string
+  escopo: 'operacao' | 'pessoal'
+  telefone_snapshot: string | null
+  nome_snapshot: string | null
+  cargo_snapshot: string | null
+  criado_por: string | null
+  expira_em: string
+  revogado_em: string | null
+  enviado_em: string | null
+  aberto_em: string | null
+  ultimo_acesso_em: string | null
+  aberturas: number
+  votado_em: string | null
+  created_at: string
 }

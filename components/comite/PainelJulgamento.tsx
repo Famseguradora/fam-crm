@@ -9,7 +9,8 @@
 // ============================================================================
 
 import { useState, useEffect, useRef } from 'react'
-import type { Operacao, Usuario, ComiteVoto, ComiteVotoHistorico, VotoComite, Anexo } from '@/types'
+import LinksCedula from './LinksCedula'
+import type { Operacao, Usuario, ComiteVoto, ComiteVotoHistorico, ComiteComentario, VotoComite, CanalVoto, Anexo } from '@/types'
 import { fmtMoeda, fmtPercent, maskCNPJ } from '@/lib/utils'
 import {
   VOTO_META,
@@ -32,6 +33,7 @@ interface Props {
   membros: Usuario[]
   votos: ComiteVoto[]
   historico: ComiteVotoHistorico[]
+  comentarios: ComiteComentario[]
   anexos: Anexo[]
   onAbrirAnexo: (a: Anexo) => void
   onRegistrarVoto: (v: VotoSubmit) => void
@@ -63,6 +65,18 @@ const T = {
 }
 
 const CONFETE_EMOJIS = ['✨', '💙', '🎉', '🐾', '⭐']
+
+// Por onde o voto entrou. 'link' = cédula aberta pelo diretor no celular.
+const CANAL_LONGO: Record<string, string> = {
+  crm: '🖥️ Votou pelo CRM',
+  whatsapp: '📱 Votou pelo WhatsApp',
+  link: '🗳️ Votou pela cédula',
+}
+const CANAL_CURTO: Record<string, string> = {
+  crm: '🖥️ CRM',
+  whatsapp: '📱 WhatsApp',
+  link: '🗳️ Cédula',
+}
 
 function iniciais(nome: string): string {
   const p = (nome || '').trim().split(/\s+/)
@@ -97,6 +111,7 @@ export default function PainelJulgamento({
   membros,
   votos,
   historico,
+  comentarios,
   anexos,
   onAbrirAnexo,
   onRegistrarVoto,
@@ -434,11 +449,43 @@ export default function PainelJulgamento({
         <button onClick={onEnviarConvite} style={{ cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#fff', border: `1px solid ${T.borda}`, borderRadius: 10, padding: '10px 18px', fontWeight: 700, fontSize: 13 }}>📲 Enviar convite</button>
       </div>
 
+      {/* Debate da bancada — comentários escritos pelos diretores na cédula,
+          separados do voto. Chegam aqui em tempo real pelo realtime dos votos. */}
+      {comentarios.length > 0 && (
+        <div style={{ marginTop: 14, background: T.cardGrad, border: `1px solid ${T.borda}`, borderRadius: 14, padding: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: T.roxoTexto, marginBottom: 12 }}>
+            💬 Comentários da Bancada ({comentarios.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            {comentarios.map((c) => (
+              <div key={c.id} style={{ background: T.inputBg, border: `1px solid ${T.borda}`, borderRadius: 10, padding: '11px 13px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: T.texto }}>
+                    {c.autor}
+                    {c.cargo && <span style={{ color: T.textoFraco, fontWeight: 500 }}> · {c.cargo}</span>}
+                  </span>
+                  <span style={{ fontSize: 10.5, color: T.textoFraco }}>
+                    {CANAL_CURTO[c.canal] ?? CANAL_CURTO.crm} · 🕒 {fmtDataHora(c.created_at)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, color: T.texto, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                  {c.comentario}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Cédula por link: o caminho em uso enquanto a API oficial do WhatsApp
+          não permite votar dentro do próprio chat. */}
+      {!op.comite_encerrado && !emVista && <LinksCedula operacaoId={op.id} />}
+
       {/* ── MODAL: Histórico da Deliberação ── */}
       {historicoAberto && (() => {
         // Linha do tempo unificada: votos vigentes + votos retratados (arquivados),
         // ordenados pela hora em que foram proferidos.
-        type LinhaItem = { id: string; tipo: 'atual' | 'retratado'; autor: string; cargo: string | null; voto: VotoComite; segue: boolean; arg: string | null; canal: 'crm' | 'whatsapp'; quando: string; retratadoEm: string | null }
+        type LinhaItem = { id: string; tipo: 'atual' | 'retratado'; autor: string; cargo: string | null; voto: VotoComite; segue: boolean; arg: string | null; canal: CanalVoto; quando: string; retratadoEm: string | null }
         const linha: LinhaItem[] = [
           ...historico.map((h) => ({ id: 'h-' + h.id, tipo: 'retratado' as const, autor: h.autor, cargo: h.cargo, voto: h.voto, segue: h.segue_subscritor, arg: h.argumentacao, canal: h.canal, quando: h.votado_em ?? h.retratado_em, retratadoEm: h.retratado_em })),
           ...votos.map((v) => ({ id: 'v-' + v.id, tipo: 'atual' as const, autor: v.autor, cargo: v.cargo, voto: v.voto, segue: v.segue_subscritor, arg: v.argumentacao, canal: v.canal, quando: v.created_at, retratadoEm: null })),
@@ -466,7 +513,7 @@ export default function PainelJulgamento({
                       <span style={{ ...pill(foco.voto), fontSize: 13, padding: '5px 14px' }}>{focoMeta.emoji} {focoMeta.label}</span>
                     </div>
                     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '10px 0 0', fontSize: 11.5, color: T.textoFraco }}>
-                      <span>{foco.canal === 'whatsapp' ? '📱 Votou pelo WhatsApp' : '🖥️ Votou pelo CRM'}</span>
+                      <span>{CANAL_LONGO[foco.canal] ?? CANAL_LONGO.crm}</span>
                       <span>🕒 {fmtDataHora(foco.created_at)}</span>
                       {foco.segue_subscritor && <span style={{ color: T.douradoTexto, fontWeight: 700 }}>⚖️ Acompanha o Subscritor</span>}
                     </div>
@@ -516,7 +563,7 @@ export default function PainelJulgamento({
                             {v.segue && <span style={{ fontSize: 10, color: T.douradoTexto, fontWeight: 700 }}>⚖️ Acompanha</span>}
                             {ret && <span style={{ fontSize: 9.5, fontWeight: 800, color: T.douradoTexto, background: 'rgba(232,184,75,0.14)', border: `1px solid ${T.dourado}55`, borderRadius: 12, padding: '1px 8px' }}>↩ RETRATADO</span>}
                           </div>
-                          <div style={{ fontSize: 10.5, color: T.textoFraco, marginTop: 1 }}>{v.cargo ? `${v.cargo} · ` : ''}{v.canal === 'whatsapp' ? '📱 WhatsApp' : '🖥️ CRM'} · 🕒 {fmtDataHora(v.quando)}{ret && v.retratadoEm ? ` · retratado ${fmtDataHora(v.retratadoEm)}` : ''}</div>
+                          <div style={{ fontSize: 10.5, color: T.textoFraco, marginTop: 1 }}>{v.cargo ? `${v.cargo} · ` : ''}{CANAL_CURTO[v.canal] ?? CANAL_CURTO.crm} · 🕒 {fmtDataHora(v.quando)}{ret && v.retratadoEm ? ` · retratado ${fmtDataHora(v.retratadoEm)}` : ''}</div>
                           {v.arg && <div style={{ fontSize: 12, color: T.texto, marginTop: 4, lineHeight: 1.4 }}>“{v.arg}”</div>}
                         </div>
                       </div>

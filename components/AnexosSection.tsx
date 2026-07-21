@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Anexo } from '@/types'
+import { CATEGORIA_META, CATEGORIAS_ORDENADAS, sugerirCategoria } from '@/lib/anexos/categorias'
+import type { Anexo, CategoriaAnexo } from '@/types'
 
 const BUCKET = 'fam-anexos'
 const MAX_BYTES = 5 * 1024 * 1024 // 5 MB
@@ -62,6 +63,9 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
   const [confirmExcluir, setConfirmExcluir] = useState<Anexo | null>(null)
   const [excluindo, setExcluindo] = useState(false)
   const [drag, setDrag] = useState(false)
+  // Categoria escolhida para o PRÓXIMO upload. O nome do arquivo sobrescreve
+  // quando é evidente (ex.: "Analise de Credito - X.html"), mas o usuário manda.
+  const [categoria, setCategoria] = useState<CategoriaAnexo>('outro')
   const fileRef = useRef<HTMLInputElement>(null)
 
   const carregar = useCallback(async () => {
@@ -115,6 +119,9 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
         .upload(path, file, { upsert: false, contentType: mimeType })
       if (uploadError) throw new Error(uploadError.message)
 
+      // Se o usuário não escolheu, deduz pelo nome do arquivo.
+      const cat = categoria !== 'outro' ? categoria : sugerirCategoria(file.name)
+
       const { error: dbError } = await supabase.from('anexos').insert({
         entidade_tipo: entidadeTipo,
         entidade_id: entidadeId,
@@ -123,6 +130,7 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
         storage_path: path,
         tipo_mime: mimeType,
         tamanho_bytes: file.size,
+        categoria: cat,
       })
       if (dbError) {
         await supabase.storage.from(BUCKET).remove([path])
@@ -134,8 +142,17 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
     } finally {
       setEnviando(false)
       setProgresso('')
+      setCategoria('outro')
       if (fileRef.current) fileRef.current.value = ''
     }
+  }
+
+  // Reclassificar um anexo já enviado (usa a policy de UPDATE em `anexos`).
+  async function trocarCategoria(anexo: Anexo, nova: CategoriaAnexo) {
+    setAnexos((atual) => atual.map((a) => (a.id === anexo.id ? { ...a, categoria: nova } : a)))
+    const supabase = createClient()
+    const { error } = await supabase.from('anexos').update({ categoria: nova }).eq('id', anexo.id)
+    if (error) { setErro('Não consegui alterar a categoria.'); await carregar() }
   }
 
   async function abrirAnexo(anexo: Anexo) {
@@ -198,6 +215,38 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
           ({anexos.length}) · máx. 5 MB por arquivo
         </span>
       </div>
+
+      {/* Tipo do documento — define o que o Comitê mostra na cédula de voto.
+          Não aparece em Corretora: essas categorias são do dossiê do tomador. */}
+      {entidadeTipo !== 'corretora' && (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+        <span style={{ fontSize: 11, color: '#6080a0', fontWeight: 600, marginRight: 2 }}>
+          Tipo:
+        </span>
+        {CATEGORIAS_ORDENADAS.map((c) => {
+          const m = CATEGORIA_META[c]
+          const ativo = categoria === c
+          return (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setCategoria(c)}
+              disabled={enviando}
+              style={{
+                padding: '4px 10px', borderRadius: 999, cursor: enviando ? 'not-allowed' : 'pointer',
+                border: `1.5px solid ${ativo ? m.cor : '#d0e4f5'}`,
+                background: ativo ? m.bg : 'white',
+                color: ativo ? m.cor : '#6080a0',
+                fontSize: 11.5, fontWeight: ativo ? 700 : 600,
+                fontFamily: "'Calibri','Segoe UI',sans-serif", transition: 'all 0.12s',
+              }}
+            >
+              {m.emoji} {m.curto}
+            </button>
+          )
+        })}
+      </div>
+      )}
 
       {/* Área de upload */}
       <div
@@ -266,8 +315,24 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#1a2a3a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {a.nome_original}
                 </div>
-                <div style={{ fontSize: 11, color: '#6080a0' }}>
-                  {fmtBytes(a.tamanho_bytes)}{a.tamanho_bytes ? ' · ' : ''}{fmtData(a.created_at)}
+                <div style={{ fontSize: 11, color: '#6080a0', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span>{fmtBytes(a.tamanho_bytes)}{a.tamanho_bytes ? ' · ' : ''}{fmtData(a.created_at)}</span>
+                  <select
+                    value={a.categoria ?? 'outro'}
+                    onChange={(e) => trocarCategoria(a, e.target.value as CategoriaAnexo)}
+                    title="Tipo do documento"
+                    style={{
+                      fontSize: 10.5, fontWeight: 700, padding: '1px 4px', borderRadius: 999,
+                      border: `1px solid ${CATEGORIA_META[a.categoria ?? 'outro'].cor}33`,
+                      background: CATEGORIA_META[a.categoria ?? 'outro'].bg,
+                      color: CATEGORIA_META[a.categoria ?? 'outro'].cor,
+                      fontFamily: "'Calibri','Segoe UI',sans-serif", cursor: 'pointer',
+                    }}
+                  >
+                    {CATEGORIAS_ORDENADAS.map((c) => (
+                      <option key={c} value={c}>{CATEGORIA_META[c].emoji} {CATEGORIA_META[c].curto}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <button
