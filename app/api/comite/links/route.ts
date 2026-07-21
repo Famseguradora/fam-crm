@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
       supabase.from('usuarios').select('*').eq('comite', true).eq('status', 'ativo').order('nome'),
       supabase.from('comite_convites').select('*').eq('operacao_id', operacaoId).is('revogado_em', null),
       supabase.from('comite_votos').select('usuario_id').eq('operacao_id', operacaoId),
-      supabase.from('usuarios').select('id, nome').eq('auth_id', user.id).maybeSingle(),
+      supabase.from('usuarios').select('id, nome, cargo').eq('auth_id', user.id).maybeSingle(),
     ])
 
     const lista = (convites ?? []) as ComiteConvite[]
@@ -71,6 +71,9 @@ export async function GET(request: NextRequest) {
       (quemSou?.nome as string | undefined) ??
       (op as Operacao).subscritor_nome ??
       'Subscrição FAM'
+    // Cargo exato do remetente (Executivo de Crédito, Diretor, etc.) — não é
+    // sempre "Subscritor". Vazio cai no rótulo genérico dentro de montarConvite.
+    const remetenteCargo = (quemSou?.cargo as string | null | undefined) ?? null
 
     // ── Link GERAL da operação (o que vai na lista de transmissão) ──────────
     let geral = lista.find((c) => c.usuario_id === null) ?? null
@@ -116,7 +119,7 @@ export async function GET(request: NextRequest) {
         whatsapp: toWhatsAppNumber(m.telefone ?? ''),
         url,
         // Mesmo texto do convite do WhatsApp — uma fonte só para os dois canais.
-        mensagem: `${montarConvite({ diretorNome: m.nome, subscritorNome, op: op as Operacao })}\n\n🗳️ *Sua cédula de votação:*\n${url}`,
+        mensagem: `${montarConvite({ diretorNome: m.nome, subscritorNome, remetenteCargo, op: op as Operacao })}\n\n🗳️ *Sua cédula de votação:*\n${url}`,
         status: statusDo(c, votaram.has(m.id)),
         aberturas: c.aberturas,
       })
@@ -124,7 +127,7 @@ export async function GET(request: NextRequest) {
 
     const urlGeral = geral ? `${base}/voto/${geral.token}` : null
     const msgGeral = urlGeral
-      ? `${montarConvite({ diretorNome: null, subscritorNome, op: op as Operacao })}\n\n🗳️ *Cédula de votação do Comitê:*\n${urlGeral}\n\n_Cada diretor se identifica ao abrir, com seu nome e os 4 últimos dígitos do celular cadastrado na FAM. O voto é individual e registrado no CRM._`
+      ? `${montarConvite({ diretorNome: null, subscritorNome, remetenteCargo, op: op as Operacao })}\n\n🗳️ *Cédula de votação do Comitê:*\n${urlGeral}\n\n_Cada diretor se identifica ao abrir, com seu nome e os 4 últimos dígitos do celular cadastrado na FAM. O voto é individual e registrado no CRM._`
       : null
 
     return NextResponse.json({

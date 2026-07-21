@@ -15,6 +15,10 @@ export interface DadosConvite {
   // saudação vira coletiva.
   diretorNome: string | null
   subscritorNome: string
+  // Cargo de QUEM envia (usuário logado), como cadastrado em `usuarios.cargo`.
+  // Nem sempre é subscritor — um diretor ou executivo também pode enviar a
+  // cédula. Sem cargo cadastrado, cai no rótulo genérico "Subscritor".
+  remetenteCargo?: string | null
   op: Operacao
 }
 
@@ -29,14 +33,17 @@ function prazoTxt(op: Operacao): string {
 }
 
 // Convite personalizado que cada diretor "recebe" no WhatsApp.
-export function montarConvite({ diretorNome, subscritorNome, op }: DadosConvite): string {
+export function montarConvite({ diretorNome, subscritorNome, remetenteCargo, op }: DadosConvite): string {
   const tomador = op.tomador?.razao_social ?? 'Tomador'
+  // Cargo antes do nome, sem artigo — assim funciona para qualquer gênero
+  // ("Executivo de Crédito Marco", "Diretora de Produtos Camila").
+  const cargo = (remetenteCargo ?? '').trim() || 'Subscritor'
   const linhas = [
     diretorNome ? `Olá, *Sr(a). ${diretorNome}* 👋` : 'Prezados Diretores 👋',
     '',
     diretorNome
-      ? `O Subscritor *${subscritorNome}* acabou de te convidar a conhecer uma operação que entrou em *Comitê*.`
-      : `O Subscritor *${subscritorNome}* convida o Comitê a analisar uma operação que entrou em julgamento.`,
+      ? `${cargo} *${subscritorNome}* acabou de te convidar a conhecer uma operação que entrou em *Comitê*.`
+      : `${cargo} *${subscritorNome}* convida o Comitê a analisar uma operação que entrou em julgamento.`,
     '',
     `🏢 *Tomador:* ${tomador}`,
     `📋 *Operação:* ${op.modalidade ?? op.produto?.nome ?? '—'}`,

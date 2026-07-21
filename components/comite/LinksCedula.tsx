@@ -225,12 +225,25 @@ export default function LinksCedula({ operacaoId }: { operacaoId: string }) {
                     {s.label}
                   </div>
 
+                  {/* Copiar a mensagem completa preserva os emojis (a área de
+                      transferência é UTF-8); é o caminho recomendado. */}
+                  <button
+                    onClick={async () => { if (await copiar(p.mensagem)) { flash(`${p.conviteId}:msg`); marcarEnviado(p.conviteId) } }}
+                    style={{
+                      cursor: 'pointer', background: '#25d366', color: '#0a1628', border: 'none',
+                      borderRadius: 8, padding: '6px 11px', fontWeight: 800, fontSize: 11.5, whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {copiado === `${p.conviteId}:msg` ? '✓ Copiado!' : '📋 Copiar'}
+                  </button>
+
                   {p.whatsapp && (
                     <a
                       href={`https://wa.me/${p.whatsapp}?text=${encodeURIComponent(p.mensagem)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={() => marcarEnviado(p.conviteId)}
+                      title="Abre o WhatsApp com a mensagem. Em alguns aparelhos os emojis podem chegar quebrados — se acontecer, use 📋 Copiar e cole no chat."
                       style={{
                         background: 'rgba(37,211,102,0.12)', color: '#4ade80',
                         border: '1px solid rgba(37,211,102,0.4)', borderRadius: 8,
@@ -238,19 +251,19 @@ export default function LinksCedula({ operacaoId }: { operacaoId: string }) {
                         textDecoration: 'none', whiteSpace: 'nowrap',
                       }}
                     >
-                      📲 Privado
+                      📲 Abrir chat
                     </a>
                   )}
 
                   <button
-                    onClick={async () => { if (await copiar(p.url)) flash(p.conviteId) }}
+                    onClick={async () => { if (await copiar(p.url)) flash(`${p.conviteId}:link`) }}
                     style={{
                       cursor: 'pointer', background: 'transparent', color: T.textoFraco,
                       border: `1px solid ${T.borda}`, borderRadius: 8, padding: '6px 11px',
                       fontWeight: 600, fontSize: 11.5, whiteSpace: 'nowrap',
                     }}
                   >
-                    {copiado === p.conviteId ? '✓' : '🔗 Link'}
+                    {copiado === `${p.conviteId}:link` ? '✓' : '🔗 Link'}
                   </button>
                 </div>
               )
