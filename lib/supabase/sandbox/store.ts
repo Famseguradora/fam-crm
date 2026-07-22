@@ -14,7 +14,7 @@ export type DB = Record<string, Row[]>
 // canônicos 'Comitê'/'Aprovado'/'Emitido' + abas do Julgamento), bumpamos a
 // versão: o localStorage antigo é descartado e a planilha nova recarrega
 // sozinha no próximo F5 — sem depender do botão "Resetar".
-const DB_VERSION = 'v3'
+const DB_VERSION = 'v4'
 const LS_KEY = `fam_sandbox_db_${DB_VERSION}`
 // Cache-bust: garante que o navegador busque a planilha nova, não a cacheada.
 const XLSX_URL = `/sandbox-dados.xlsx?v=${DB_VERSION}`

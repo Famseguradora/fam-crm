@@ -215,6 +215,35 @@ export function evolucaoMensal(operacoes: OpAgg[]): PontoMensal[] {
     })
 }
 
+// Série mensal COMPLETA para o gráfico central do cockpit: prêmio, qtd e a
+// TAXA MÉDIA PONDERADA do mês (fórmula canônica — a mesma do Dashboard, da tela
+// de Operações e do KPI "Taxa Média Pond." do cockpit). Agrupa por mês de
+// referência (data_emissao senão data_entrada), ordenado cronologicamente.
+export interface PontoMensalTaxa extends PontoMensal { taxa: number }
+export function serieMensalPremioTaxa(operacoes: OpAgg[]): PontoMensalTaxa[] {
+  const acc = new Map<string, OpAgg[]>()
+  for (const o of operacoes) {
+    const mes = mesDeOperacao(o)
+    if (!mes) continue
+    const arr = acc.get(mes) ?? []
+    arr.push(o)
+    acc.set(mes, arr)
+  }
+  const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+  return [...acc.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([mes, ops]) => {
+      const m = Number(mes.slice(5, 7)) - 1
+      return {
+        mes,
+        label: `${MESES[m] ?? mes}/${mes.slice(2, 4)}`,
+        qtd: ops.length,
+        premio: ops.reduce((s, o) => s + (Number(o.premio_previsto) || 0), 0),
+        taxa: taxaMediaPonderada(ops),
+      }
+    })
+}
+
 // Lista ordenada (asc) dos meses YYYY-MM presentes nas operações — eixo comum
 // para o slicer mensal e para alinhar sparklines de diferentes corretoras.
 export function mesesDisponiveis(operacoes: OpAgg[]): string[] {

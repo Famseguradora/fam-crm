@@ -1,50 +1,46 @@
 'use client'
 
 // ============================================================
-//  Painel Gerencial de Corretoras — cockpit executivo.
+//  Cockpit de Corretoras — layout de 3 zonas (dark/glass).
 //
-//  UMA tabela de corretoras (o Ranking), com busca. Clicar numa corretora
-//  abre a TELA DA CORRETORA (números + cadeia + PDF). Filtros globais
-//  (período/status/UF), KPIs, treemap de participação, matriz mês, mix por
-//  status e um Pareto 80/20 SOB DEMANDA e educacional. Blocos personalizáveis
-//  (mostrar/ocultar, como no Dashboard). Só gráficos de barras/linhas.
+//  ESQUERDA (rola): Resultado Mensal (gráfico/tabela) + Ranking (20 primeiras
+//  + "ver todas", TOTAL fixo no rodapé). DIREITA (fixa): consolidado, gráficos
+//  compactos (Participação, Pareto, Desfecho, Mix, Matriz) com ⤢ expandir em
+//  tela grande, e — ao clicar numa corretora — o DOSSIÊ dela (números + cadeia).
+//
+//  Toda a matemática vem de lib/corretoras/agregacoes.ts (fonte única) — os
+//  números batem com a tela de Operações. Preserva Excel, PDF, Funil/Carteira
+//  e drill-down semanal. Só o layout e o tema mudaram.
 // ============================================================
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Treemap, BarChart, ReferenceLine,
+  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, CartesianGrid, LabelList,
 } from 'recharts'
 import { createClient } from '@/lib/supabase/client'
 import { fmtMoeda, fmtMoedaCurta, fmtPercent } from '@/lib/utils'
 import {
-  agregarPorCorretora, comPareto, kpisDeOperacoes, distribuicaoPorStatus,
-  evolucaoMensal, mesesDisponiveis, rotuloMes, serieMensalAlinhada, deltaUltimoMes,
-  filtrarPorPeriodo, matrizCorretoraMes, serieTemporal, mesDeOperacao, seriesMiniPorMetrica,
-  desfechoPorCorretora,
-  type OpAgg, type TomAgg, type CorretoraAgg,
+  agregarPorCorretora, comPareto, comParticipacao, rankingTomadores, operacoesDoTomador,
+  kpisDeOperacoes, taxaConversao, distribuicaoPorStatus, serieMensalPremioTaxa, taxaMediaPonderada, mesesDisponiveis,
+  rotuloMes, serieMensalAlinhada, deltaUltimoMes, filtrarPorPeriodo, matrizCorretoraMes,
+  seriesMiniPorMetrica, desfechoPorCorretora, ehEmitida, mesDeOperacao,
+  type OpAgg, type TomAgg, type CorretoraAgg, type DesfechoCorretora,
 } from '@/lib/corretoras/agregacoes'
-import { gerarPdfGeral } from '@/lib/corretoras/pdf'
+import { gerarPdfGeral, gerarPdfCorretora } from '@/lib/corretoras/pdf'
 import type { Corretora, StatusFluxo } from '@/types'
 
-// Chrome da marca FAM.
-const NAVY = '#1e4080', NAVY_DK = '#102040', GOLD = '#e8b84b', GREEN = '#27a96c', RED = '#d64545'
-const INK = '#0a1628', SOFT = '#6080a0', BORDER = '#e0ecf8'
-// Fonte do sistema (mesma do resto do CRM) — aplicada ao texto SVG do treemap,
-// que por padrão cairia na fonte serifada do navegador (aparência "desfocada").
-const FONTE = "'Calibri','Segoe UI',sans-serif"
-// Escala sequencial de azul (treemap) — mais escuro = maior participação.
-const AZUIS = ['#102040', '#1a3560', '#1e4080', '#2255a4', '#3070c8', '#4a90d8', '#6ab0e8', '#8acaf8', '#aadaff', '#c0e8ff', '#d8f0ff']
+// ── Paleta do cockpit (dark) ────────────────────────────────────────────────
+const GOLD = '#e8b84b', BLUE = '#4a90d0', BLUE_BR = '#66aef0', NAVY_BAR = '#3f74b8'
+const GOOD = '#38c58e'
+const TICK = '#8aa0c0'
+// Escala sequencial (heatmap) — do fundo escuro ao azul forte.
+const HEAT_LO = '#16233d', HEAT_HI = '#66aef0'
 
-const painel: React.CSSProperties = {
-  background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 16, padding: 16,
-  boxShadow: '0 2px 14px rgba(30,64,128,.06)',
-}
-const tituloBloco: React.CSSProperties = {
-  fontSize: 12, fontWeight: 800, color: NAVY_DK, letterSpacing: '.3px',
-  marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8, textTransform: 'uppercase',
-}
-const barraTitulo = (cor: string): React.CSSProperties => ({ width: 4, height: 15, borderRadius: 3, background: cor })
-const thSort: React.CSSProperties = { cursor: 'pointer', userSelect: 'none' }
+const initials = (n: string) => n.split(' ').filter((w) => w.length > 2).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || (n[0] ?? '?').toUpperCase()
 
+// Taxa em pontos percentuais (ex.: 2.4) → "2,40%".
+const fmtTaxaPP = (v: number): string => `${(v || 0).toFixed(2).replace('.', ',')}%`
+
+// R$ abreviado para valores grandes (mesma régua da tela atual).
 const kpiBRL = (v: number): string => {
   const abs = Math.abs(v)
   if (abs >= 1e9) return 'R$ ' + (v / 1e9).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + ' Bi'
@@ -58,30 +54,37 @@ const eixoBRL = (v: number): string => {
   if (abs >= 1e3) return 'R$ ' + Math.round(v / 1e3) + 'k'
   return 'R$ ' + Math.round(v)
 }
-
-async function capturarGrafico(node: HTMLElement | null): Promise<{ dataUrl: string; w: number; h: number } | null> {
-  if (!node) return null
-  try {
-    const { toPng } = await import('html-to-image')
-    const dataUrl = await toPng(node, { pixelRatio: 2, backgroundColor: '#ffffff', cacheBust: true })
-    return { dataUrl, w: node.clientWidth || 600, h: node.clientHeight || 300 }
-  } catch { return null }
+// Interpolação linear entre dois hex → rgb() (intensidade do heatmap).
+function lerpHex(a: string, b: string, t: number): string {
+  const h = (x: string) => [parseInt(x.slice(1, 3), 16), parseInt(x.slice(3, 5), 16), parseInt(x.slice(5, 7), 16)]
+  const A = h(a), B = h(b)
+  return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(',')})`
 }
+// Rampa de AZUL por posição (share/participação) — escuro (maior) → claro (menor).
+const azul = (i: number, n: number) => n <= 1 ? '#3f74b8' : lerpHex('#1f4f8f', '#a9d2f2', i / (n - 1))
+// Rampa de azul para as PASTILHAS do ranking (mais escura, texto branco legível).
+const azulBadge = (i: number, n: number) => n <= 1 ? '#3f74b8' : lerpHex('#173d68', '#5a9cd8', i / (n - 1))
 
-// Escopo de status — espelha a tela de Operações, que no funil SEMPRE exclui
-// Emitido/Perdido/Recusado (app/(dashboard)/operacoes/page.tsx, operacoesFiltradas).
-// 'funil' = mesmos KPIs de Operações · 'carteira' = tudo (inclui emitidas/perdidas).
-const STATUS_FORA_DO_FUNIL = ['Emitido', 'Perdido', 'Recusado']
+const tooltipDark = { background: '#0a1020', border: '1px solid rgba(255,255,255,.18)', borderRadius: 9, color: '#eaf0fb', fontSize: 12 }
+
 type EscopoStatus = 'funil' | 'carteira'
-
+const STATUS_FORA_DO_FUNIL = ['Emitido', 'Perdido', 'Recusado']
 type MetricaPareto = 'premio' | 'tomadores' | 'operacoes'
-type CardKey = 'mensal' | 'treemap' | 'status' | 'matriz'
-// Matriz Corretora×Mês começa OCULTA (experimento: avaliar se faz falta). Reativável em ⚙ Personalizar.
-const CARDS_INICIAIS: Record<CardKey, boolean> = { mensal: true, treemap: true, status: true, matriz: false }
-const CARDS_LABEL: Record<CardKey, string> = { mensal: 'Evolução mensal', treemap: 'Participação (treemap)', status: 'Mix por status', matriz: 'Matriz Corretora×Mês' }
+type ExpandKey = 'pareto' | 'desfecho' | 'matriz' | 'status' | 'share'
+
+// Blocos personalizáveis (catálogo "Monte sua tela"). Mix por status e Matriz
+// começam DESLIGADOS (aparecem só quando o usuário liga).
+type CardKey = 'mensal' | 'grade' | 'share' | 'pareto' | 'desfecho' | 'movers' | 'status' | 'matriz'
+const CARDS_INICIAIS: Record<CardKey, boolean> = { mensal: true, grade: true, share: true, pareto: true, desfecho: true, movers: true, status: false, matriz: false }
+const CARDS_LABEL: Record<CardKey, string> = {
+  mensal: 'Resultado Mensal', grade: 'Ranking', share: 'Participação no prêmio', pareto: 'Concentração 80/20',
+  desfecho: 'Desfecho por corretora', movers: 'Maiores em prêmio emitido', status: 'Mix por status', matriz: 'Matriz Corretora×Mês',
+}
+const CARDS_NOVO: Partial<Record<CardKey, boolean>> = { status: true, matriz: true }
+const VIS_GRADE = 20
 
 interface Props {
-  onAbrirCorretora?: (id: string) => void
+  onAbrirCorretora?: (id: string) => void   // abre o modal de CADASTRO (edição)
   onNovaCorretora?: () => void
 }
 
@@ -95,30 +98,31 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
   const [operacoes, setOperacoes] = useState<OpAgg[]>([])
   const [statusFluxo, setStatusFluxo] = useState<Pick<StatusFluxo, 'nome' | 'cor'>[]>([])
 
-  // Filtros globais.
+  // Filtros globais (UF removido a pedido). Cross-filter de corretora não é usado
+  // aqui: o clique numa corretora abre o DOSSIÊ à direita, não filtra a esquerda.
   const [mesIni, setMesIni] = useState('')
   const [mesFim, setMesFim] = useState('')
   const [filtroStatus, setFiltroStatus] = useState<string | null>(null)
-  const [filtroUF, setFiltroUF] = useState('')
-  const [escopoStatus, setEscopoStatus] = useState<EscopoStatus>('funil') // default = mesmos KPIs de Operações
-  const [filtroCorretora, setFiltroCorretora] = useState<string | null>(null) // cross-filter BI (clique no treemap)
-  const [drillMes, setDrillMes] = useState<string | null>(null)                // drill-down p/ semanas (clique na barra mensal)
+  const [escopoStatus, setEscopoStatus] = useState<EscopoStatus>('funil')
   const [busca, setBusca] = useState('')
   const [sortField, setSortField] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
-  // Pareto sob demanda + personalização.
-  const [mostrarPareto, setMostrarPareto] = useState(false)
+  // UI do cockpit.
+  const [selecionada, setSelecionada] = useState<string | null>(null)  // dossiê no painel direito
+  const [mensalView, setMensalView] = useState<'graf' | 'tab'>('graf')
+  const [mesesSel, setMesesSel] = useState<Set<string>>(new Set())   // meses clicados no gráfico → consolidam o card à direita
+  const [expandido, setExpandido] = useState<ExpandKey | null>(null)
   const [metricaPareto, setMetricaPareto] = useState<MetricaPareto>('premio')
+  const [paretoNumeros, setParetoNumeros] = useState(false)
+  const [mostrarTodas, setMostrarTodas] = useState(false)
   const [cards, setCards] = useState<Record<CardKey, boolean>>(CARDS_INICIAIS)
   const [mostrarPersonalizar, setMostrarPersonalizar] = useState(false)
-
   const [preview, setPreview] = useState<{ url: string; filename: string } | null>(null)
-  const treemapRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { setMounted(true) }, [])
   useEffect(() => {
-    try { const s = localStorage.getItem('fam_corretoras_cards_v2'); if (s) setCards((p) => ({ ...p, ...JSON.parse(s) })) } catch { /* ignore */ }
+    try { const s = localStorage.getItem('fam_corretoras_ckp_v1'); if (s) setCards((p) => ({ ...p, ...JSON.parse(s) })) } catch { /* ignore */ }
   }, [])
 
   const carregar = useCallback(async () => {
@@ -138,75 +142,45 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
   }, [])
   useEffect(() => { carregar() }, [carregar])
 
+  useEffect(() => { const u = preview?.url; return () => { if (u) URL.revokeObjectURL(u) } }, [preview?.url])
   useEffect(() => {
-    const u = preview?.url
-    return () => { if (u) URL.revokeObjectURL(u) }
-  }, [preview?.url])
+    function esc(e: KeyboardEvent) { if (e.key === 'Escape') { setExpandido(null) } }
+    document.addEventListener('keydown', esc)
+    return () => document.removeEventListener('keydown', esc)
+  }, [])
 
   const toggleCard = (k: CardKey) => setCards((p) => {
     const n = { ...p, [k]: !p[k] }
-    try { localStorage.setItem('fam_corretoras_cards_v2', JSON.stringify(n)) } catch { /* ignore */ }
+    try { localStorage.setItem('fam_corretoras_ckp_v1', JSON.stringify(n)) } catch { /* ignore */ }
     return n
   })
 
-  // Base de TODOS os cálculos do painel. No escopo 'funil' replica exatamente o
-  // recorte da tela de Operações (exclui Emitido/Perdido/Recusado), para os KPIs
-  // baterem número a número. Em 'carteira' mostra a carteira inteira.
+  // ── Base dos cálculos (escopo funil replica o recorte de Operações) ────────
   const operacoesEscopo = useMemo(
     () => escopoStatus === 'funil' ? operacoes.filter((o) => !STATUS_FORA_DO_FUNIL.includes(o.status ?? '')) : operacoes,
     [operacoes, escopoStatus],
   )
-
   const meses = useMemo(() => mesesDisponiveis(operacoesEscopo), [operacoesEscopo])
-  const ufsDisponiveis = useMemo(
-    () => [...new Set(corretoras.map((c) => c.estado).filter(Boolean))].sort() as string[],
-    [corretoras],
-  )
-
   const [pIni, pFim] = useMemo<[string, string]>(() => {
     if (mesIni && mesFim && mesIni > mesFim) return [mesFim, mesIni]
     return [mesIni, mesFim]
   }, [mesIni, mesFim])
   const noPeriodo = useCallback((m: string) => (!pIni || m >= pIni) && (!pFim || m <= pFim), [pIni, pFim])
-  const selMesIdx = pIni && pIni === pFim ? meses.indexOf(pIni) : -1
 
-  const corretorasVis = useMemo(
-    () => (filtroUF ? corretoras.filter((c) => c.estado === filtroUF) : corretoras),
-    [corretoras, filtroUF],
-  )
-  const visIds = useMemo(() => new Set(corretorasVis.map((c) => c.id)), [corretorasVis])
-  const passaStatusUF = useCallback(
-    (o: OpAgg) => (!filtroStatus || o.status === filtroStatus) && (!filtroUF || (!!o.corretora_id && visIds.has(o.corretora_id))),
-    [filtroStatus, filtroUF, visIds],
-  )
-  // Cross-filter BI: quando uma corretora está selecionada (clique no treemap),
-  // os visuais de DETALHE (KPIs, Evolução, Mix, Matriz, totais) focam nela. O
-  // Ranking e o treemap continuam mostrando TODAS (com a selecionada realçada).
-  const passaCorretora = useCallback(
-    (o: OpAgg) => !filtroCorretora || o.corretora_id === filtroCorretora,
-    [filtroCorretora],
-  )
-
-  // Board: período + status + UF (base do Ranking e do treemap — mostra todas).
-  const opsBoard = useMemo(
-    () => filtrarPorPeriodo(operacoesEscopo.filter(passaStatusUF), pIni, pFim),
-    [operacoesEscopo, passaStatusUF, pIni, pFim],
-  )
-  // Foco: board + corretora selecionada (KPIs, totais).
-  const opsFoco = useMemo(() => opsBoard.filter(passaCorretora), [opsBoard, passaCorretora])
-  // Tendência (sparkline/delta/evolução): status+UF + corretora, todos os meses.
-  const opsTrend = useMemo(() => operacoesEscopo.filter(passaStatusUF), [operacoesEscopo, passaStatusUF])
-  const opsTrendFoco = useMemo(() => opsTrend.filter(passaCorretora), [opsTrend, passaCorretora])
+  const passaStatus = useCallback((o: OpAgg) => !filtroStatus || o.status === filtroStatus, [filtroStatus])
+  const opsBoard = useMemo(() => filtrarPorPeriodo(operacoesEscopo.filter(passaStatus), pIni, pFim), [operacoesEscopo, passaStatus, pIni, pFim])
+  const opsTrend = useMemo(() => operacoesEscopo.filter(passaStatus), [operacoesEscopo, passaStatus])
 
   const ranking = useMemo<CorretoraAgg[]>(
     () => comPareto(agregarPorCorretora(
-      corretorasVis.map((c) => ({ id: c.id, razao_social: c.razao_social, nome_fantasia: c.nome_fantasia, status: c.status })),
+      corretoras.map((c) => ({ id: c.id, razao_social: c.razao_social, nome_fantasia: c.nome_fantasia, status: c.status })),
       tomadores, opsBoard,
     )),
-    [corretorasVis, tomadores, opsBoard],
+    [corretoras, tomadores, opsBoard],
   )
   const comPremio = useMemo(() => ranking.filter((r) => r.premioTotal > 0), [ranking])
   const maxPremioRank = useMemo(() => Math.max(1, ...ranking.map((r) => r.premioTotal)), [ranking])
+  const maxPartRank = useMemo(() => Math.max(0.0001, ...ranking.map((r) => r.participacaoPct ?? 0)), [ranking])
   const ids8020 = useMemo(() => {
     const s = new Set<string>()
     let ativo = true
@@ -218,7 +192,6 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
     return s
   }, [ranking])
 
-  // Busca (nome/CNPJ) filtra só a tabela do Ranking.
   const rankingBusca = useMemo(() => {
     const t = busca.trim().toLowerCase()
     const d = busca.replace(/\D/g, '')
@@ -228,15 +201,12 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
       return r.nome.toLowerCase().includes(t) || (c?.razao_social ?? '').toLowerCase().includes(t) || (d.length > 0 && (c?.cnpj ?? '').replace(/\D/g, '').includes(d))
     })
   }, [ranking, busca, corretoras])
-
-  // Ordenação da tabela (default = ranking por prêmio desc, do comPareto).
   const rankingOrdenado = useMemo(() => {
     if (!sortField) return rankingBusca
     const arr = [...rankingBusca]
     arr.sort((a, b) => {
       let cmp = 0
       if (sortField === 'nome') cmp = a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' })
-      else if (sortField === 'nTomadores') cmp = a.nTomadores - b.nTomadores
       else if (sortField === 'nOperacoes') cmp = a.nOperacoes - b.nOperacoes
       else if (sortField === 'premio') cmp = a.premioTotal - b.premioTotal
       else if (sortField === 'participacao') cmp = (a.participacaoPct ?? 0) - (b.participacaoPct ?? 0)
@@ -250,43 +220,44 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
   }
   const sortIcon = (f: string) => (sortField !== f ? ' ↕' : sortDir === 'asc' ? ' ▲' : ' ▼')
 
-  const kpis = useMemo(() => kpisDeOperacoes(opsFoco), [opsFoco])
-  const delta = useMemo(() => deltaUltimoMes(opsTrendFoco), [opsTrendFoco])
-  const sparkTotal = useMemo(() => serieMensalAlinhada(opsTrendFoco, meses), [opsTrendFoco, meses])
-  // Séries mensais dos mini-gráficos dos 4 cards (respeitam o cross-filter via opsTrendFoco).
-  const seriesMini = useMemo(() => seriesMiniPorMetrica(opsTrendFoco, meses), [opsTrendFoco, meses])
-  const totalGeralPremio = useMemo(() => opsBoard.reduce((s, o) => s + (Number(o.premio_previsto) || 0), 0), [opsBoard])
+  // ── Cards do TOPO = book REALIZADO (operações EMITIDAS) — mesmo espírito do
+  // "Painel Executivo/Fechado" do Dashboard. Emitido é emitido: NÃO depende do
+  // escopo funil/carteira; respeita o recorte de período e a seleção de meses do
+  // gráfico. Só entra aqui quando a operação vira status "Emitido".
+  const opsRealizadas = useMemo(() => {
+    const base = mesesSel.size > 0 ? operacoes.filter((o) => mesesSel.has(mesDeOperacao(o))) : filtrarPorPeriodo(operacoes, pIni, pFim)
+    return base.filter((o) => ehEmitida(o.status))
+  }, [operacoes, mesesSel, pIni, pFim])
+  const kpisReal = useMemo(() => kpisDeOperacoes(opsRealizadas), [opsRealizadas])
+  const nTomadoresReal = useMemo(() => new Set(opsRealizadas.map((o) => o.tomador_id).filter(Boolean)).size, [opsRealizadas])
+  // Tendências (sparklines) sobre TODAS as emitidas, alinhadas aos meses.
+  const opsRealTrend = useMemo(() => operacoes.filter((o) => ehEmitida(o.status)), [operacoes])
+  const deltaReal = useMemo(() => deltaUltimoMes(opsRealTrend), [opsRealTrend])
+  const sparkReal = useMemo(() => serieMensalAlinhada(opsRealTrend, meses), [opsRealTrend, meses])
+  const seriesMiniReal = useMemo(() => seriesMiniPorMetrica(opsRealTrend, meses), [opsRealTrend, meses])
 
-  const serieMensal = useMemo(() => evolucaoMensal(opsTrendFoco), [opsTrendFoco])
-  // Drill-down: semanas do mês clicado (só quando drillMes está setado).
-  const serieSemanal = useMemo(
-    () => drillMes ? serieTemporal(opsTrendFoco.filter((o) => mesDeOperacao(o) === drillMes), 'semanal', 'premio') : [],
-    [drillMes, opsTrendFoco],
-  )
+  // Série do gráfico central: prêmio + taxa média ponderada (canônica) por mês.
+  const serieMensal = useMemo(() => serieMensalPremioTaxa(opsTrend), [opsTrend])
+  // Taxa de REFERÊNCIA do gráfico (tracejado dourado) = taxa ponderada do recorte
+  // ativo (opsBoard) — bate EXATAMENTE com o KPI "Taxa Média Pond." do topo e com
+  // o rótulo "do período". A aba Tabela mostra todos os meses, então seu total usa
+  // opsTrend (coerente com as linhas exibidas).
+  const taxaPeriodoGraf = useMemo(() => taxaMediaPonderada(opsBoard), [opsBoard])
+  const taxaTotalTabela = useMemo(() => taxaMediaPonderada(opsTrend), [opsTrend])
 
-  const opsParaStatus = useMemo(
-    () => filtrarPorPeriodo(operacoesEscopo.filter((o) => (!filtroUF || (!!o.corretora_id && visIds.has(o.corretora_id))) && passaCorretora(o)), pIni, pFim),
-    [operacoesEscopo, filtroUF, visIds, pIni, pFim, passaCorretora],
-  )
-  const porStatus = useMemo(() => distribuicaoPorStatus(opsParaStatus, statusFluxo), [opsParaStatus, statusFluxo])
-  const maxStatus = useMemo(() => Math.max(1, ...porStatus.map((s) => s.value)), [porStatus])
+  // Mix por status IGNORA o filtro de Status de propósito (senão colapsaria numa
+  // fatia só) — mostra o mix completo do período/escopo, como na tela antiga.
+  const opsStatusBase = useMemo(() => filtrarPorPeriodo(operacoesEscopo, pIni, pFim), [operacoesEscopo, pIni, pFim])
+  const porStatus = useMemo(() => distribuicaoPorStatus(opsStatusBase, statusFluxo), [opsStatusBase, statusFluxo])
 
-  const opsMatriz = useMemo(() => operacoesEscopo.filter((o) => passaStatusUF(o) && passaCorretora(o)), [operacoesEscopo, passaStatusUF, passaCorretora])
-
-  // Desfecho: usa a carteira INTEIRA (todos os status), de propósito — é a análise
-  // das Emitidas/Perdidas/Recusadas que o funil ativo deixa de fora. Respeita
-  // período e UF, mas nunca o escopo de funil.
+  // Desfecho: carteira INTEIRA (todos os status), respeita só o período.
   const desfecho = useMemo(() => {
-    const base = filtrarPorPeriodo(
-      operacoes.filter((o) => !filtroUF || (!!o.corretora_id && visIds.has(o.corretora_id))),
-      pIni, pFim,
-    )
+    const base = filtrarPorPeriodo(operacoes, pIni, pFim)
     return desfechoPorCorretora(
-      corretorasVis.map((c) => ({ id: c.id, razao_social: c.razao_social, nome_fantasia: c.nome_fantasia, status: c.status })),
+      corretoras.map((c) => ({ id: c.id, razao_social: c.razao_social, nome_fantasia: c.nome_fantasia, status: c.status })),
       base,
     )
-  }, [operacoes, corretorasVis, filtroUF, visIds, pIni, pFim])
-
+  }, [operacoes, corretoras, pIni, pFim])
   const desfechoTotais = useMemo(() => desfecho.reduce((a, d) => ({
     total: a.total + d.total,
     emitidas: { n: a.emitidas.n + d.emitidas.n, premio: a.emitidas.premio + d.emitidas.premio },
@@ -296,90 +267,31 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
   }), { total: 0, emitidas: { n: 0, premio: 0 }, perdidas: { n: 0, premio: 0 }, recusadas: { n: 0, premio: 0 }, andamento: { n: 0, premio: 0 } }), [desfecho])
   const desfechoDecididas = desfechoTotais.emitidas.n + desfechoTotais.perdidas.n + desfechoTotais.recusadas.n
   const desfechoConv = desfechoDecididas > 0 ? desfechoTotais.emitidas.n / desfechoDecididas : 0
+
+  // Matriz mostra TODOS os meses (não aplica o filtro de período) — réplica do
+  // comportamento antigo e coerente com as colunas serem todos os meses do escopo.
   const matriz = useMemo(
     () => matrizCorretoraMes(
-      corretorasVis.map((c) => ({ id: c.id, razao_social: c.razao_social, nome_fantasia: c.nome_fantasia, status: c.status })),
-      opsMatriz, meses,
+      corretoras.map((c) => ({ id: c.id, razao_social: c.razao_social, nome_fantasia: c.nome_fantasia, status: c.status })),
+      opsTrend, meses,
     ),
-    [corretorasVis, opsMatriz, meses],
+    [corretoras, opsTrend, meses],
   )
 
-  // Treemap: top-N por prêmio + "Outras", cor sequencial por rank.
-  const treemapData = useMemo(() => {
-    const ordenado = [...comPremio].sort((a, b) => b.premioTotal - a.premioTotal)
-    const TOP = 6
-    const top = ordenado.slice(0, TOP)
-    const resto = ordenado.slice(TOP)
-    const data = top.map((r, i) => ({ name: r.nome, size: r.premioTotal, id: r.id, rank: i, pct: totalGeralPremio > 0 ? r.premioTotal / totalGeralPremio : 0 }))
-    if (resto.length) {
-      const soma = resto.reduce((s, r) => s + r.premioTotal, 0)
-      data.push({ name: `Outras (${resto.length})`, size: soma, id: '__outras__', rank: TOP, pct: totalGeralPremio > 0 ? soma / totalGeralPremio : 0 })
-    }
-    return data
-  }, [comPremio, totalGeralPremio])
-
-  // Pareto (sob demanda): dados para a métrica escolhida.
+  // Pareto (métrica escolhida no expandir; compacto usa a mesma base).
   const paretoData = useMemo(() => {
     const val = (r: CorretoraAgg) => metricaPareto === 'tomadores' ? r.nTomadores : metricaPareto === 'operacoes' ? r.nOperacoes : r.premioTotal
     const arr = ranking.map((r) => ({ id: r.id, nome: r.nome, valor: val(r) })).filter((x) => x.valor > 0).sort((a, b) => b.valor - a.valor)
     const total = arr.reduce((s, x) => s + x.valor, 0)
     const out: { id: string; nome: string; valor: number; acumPct: number; pct: number }[] = []
     let acc = 0
-    for (const x of arr) {
-      acc += x.valor
-      out.push({ ...x, acumPct: total > 0 ? acc / total : 0, pct: total > 0 ? x.valor / total : 0 })
-    }
+    for (const x of arr) { acc += x.valor; out.push({ ...x, acumPct: total > 0 ? acc / total : 0, pct: total > 0 ? x.valor / total : 0 }) }
     return out
   }, [ranking, metricaPareto])
-  const vitalFew = useMemo(() => {
-    const i = paretoData.findIndex((x) => x.acumPct >= 0.8)
-    return i >= 0 ? i + 1 : paretoData.length
-  }, [paretoData])
+  const vitalFew = useMemo(() => { const i = paretoData.findIndex((x) => x.acumPct >= 0.8); return i >= 0 ? i + 1 : paretoData.length }, [paretoData])
   const vitalPct = paretoData.length ? vitalFew / paretoData.length : 0
   const metricaTxt = metricaPareto === 'tomadores' ? 'dos tomadores' : metricaPareto === 'operacoes' ? 'das operações' : 'do prêmio'
   const fmtParetoVal = (v: number) => metricaPareto === 'premio' ? fmtMoeda(v) : String(Math.round(v))
-
-  const totais = useMemo(() => {
-    const k = kpisDeOperacoes(opsFoco)
-    const nTom = new Set(opsFoco.map((o) => o.tomador_id).filter(Boolean)).size
-    return { ...k, nCorretoras: filtroCorretora ? 1 : comPremio.length, nTomadores: nTom }
-  }, [opsFoco, comPremio, filtroCorretora])
-
-  const limparTudo = () => { setFiltroStatus(null); setFiltroUF(''); setMesIni(''); setMesFim(''); setFiltroCorretora(null); setDrillMes(null) }
-  const algumFiltro = !!(filtroStatus || filtroUF || pIni || pFim || filtroCorretora)
-  const toggleStatus = (s: string | null) => setFiltroStatus((cur) => (cur === s || !s ? null : s))
-  // Clique numa corretora (treemap) = liga/desliga o cross-filter BI.
-  const toggleCorretora = (id: string) => setFiltroCorretora((cur) => (cur === id ? null : id))
-  const nomeFiltroCorretora = useMemo(() => {
-    if (!filtroCorretora) return ''
-    const c = corretoras.find((x) => x.id === filtroCorretora)
-    return c ? (c.nome_fantasia || c.razao_social) : ''
-  }, [filtroCorretora, corretoras])
-  // Rola suavemente até a seção de gráficos (mini-gráfico dos KPIs): o CEO abre a
-  // tela e precisa descobrir que há análises no fim da página. Se TODOS os blocos
-  // estiverem ocultos (⚙ Personalizar), a âncora não existe — então reabre a
-  // Evolução e rola só depois do render (nunca deixa o clique "morto").
-  const scrollPendenteRef = useRef(false)
-  const irParaGraficos = useCallback(() => {
-    const temAlgum = cards.mensal || cards.treemap || cards.status || cards.matriz
-    if (temAlgum) {
-      document.getElementById('graficos-corretoras')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      return
-    }
-    scrollPendenteRef.current = true
-    setCards((p) => {
-      const n = { ...p, mensal: true }
-      try { localStorage.setItem('fam_corretoras_cards_v2', JSON.stringify(n)) } catch { /* ignore */ }
-      return n
-    })
-  }, [cards])
-  useEffect(() => {
-    if (!scrollPendenteRef.current) return
-    if (cards.mensal || cards.treemap || cards.status || cards.matriz) {
-      scrollPendenteRef.current = false
-      requestAnimationFrame(() => document.getElementById('graficos-corretoras')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
-    }
-  }, [cards])
 
   const periodoLabel = useMemo(() => {
     if (!pIni && !pFim) return 'Todos os períodos'
@@ -389,6 +301,40 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
     return `até ${rotuloMes(pFim)}`
   }, [pIni, pFim])
 
+  const algumFiltro = !!(filtroStatus || pIni || pFim)
+  const limparTudo = () => { setFiltroStatus(null); setMesIni(''); setMesFim('') }
+  const corretoraSel = useMemo(() => corretoras.find((c) => c.id === selecionada) ?? null, [corretoras, selecionada])
+
+  // ── Card "Consolidado" (painel direito) dirigido pela seleção de meses ──────
+  // Clicar nas barras do "Resultado Mensal" seleciona um ou mais meses; o card
+  // consolida (soma) esses meses. SEM seleção = período ativo, batendo com os
+  // KPIs do topo (mesma base opsBoard). "Prêmio emitido" vem da CARTEIRA inteira
+  // (todas as operações) porque o escopo "funil ativo" esconde os emitidos.
+  const toggleMes = useCallback((mes: string) => {
+    setSelecionada(null)   // clicar num mês volta pro consolidado (esconde o dossiê, se aberto)
+    setMesesSel((prev) => { const n = new Set(prev); if (n.has(mes)) n.delete(mes); else n.add(mes); return n })
+  }, [])
+  // Com meses selecionados, os meses VIRAM o recorte de período (ignora o slicer
+  // pIni/pFim), mantendo escopo+status — assim clicar um mês fora do slicer não
+  // zera o card. Sem seleção, é exatamente opsBoard (bate com os KPIs do topo).
+  const opsCardBase = useMemo(
+    () => mesesSel.size > 0 ? operacoesEscopo.filter((o) => passaStatus(o) && mesesSel.has(mesDeOperacao(o))) : opsBoard,
+    [operacoesEscopo, passaStatus, mesesSel, opsBoard],
+  )
+  const kpisCard = useMemo(() => kpisDeOperacoes(opsCardBase), [opsCardBase])
+  const nTomadoresCard = useMemo(() => new Set(opsCardBase.map((o) => o.tomador_id).filter(Boolean)).size, [opsCardBase])
+  const premioEmitidoCard = useMemo(() => {
+    const base = mesesSel.size > 0 ? operacoes.filter((o) => mesesSel.has(mesDeOperacao(o))) : filtrarPorPeriodo(operacoes, pIni, pFim)
+    return base.reduce((s, o) => ehEmitida(o.status) ? s + (Number(o.premio_previsto) || 0) : s, 0)
+  }, [operacoes, mesesSel, pIni, pFim])
+  const cardLabel = useMemo(() => {
+    if (mesesSel.size === 0) return periodoLabel
+    const ord = [...mesesSel].sort()
+    if (ord.length === 1) return rotuloMes(ord[0])
+    return `${ord.length} meses (${rotuloMes(ord[0])}…${rotuloMes(ord[ord.length - 1])})`
+  }, [mesesSel, periodoLabel])
+
+  // ── Exports (preservados) ──────────────────────────────────────────────────
   async function exportarExcel() {
     setExportando(true)
     try {
@@ -403,456 +349,331 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
       const wb = utils.book_new()
       utils.book_append_sheet(wb, ws, 'Ranking Corretoras')
       writeFile(wb, `FAM_Corretoras_${new Date().toISOString().slice(0, 10)}.xlsx`)
-    } catch (err) {
-      console.error('Excel corretoras:', err)
-    } finally {
-      setExportando(false)
-    }
+    } catch (err) { console.error('Excel corretoras:', err) } finally { setExportando(false) }
   }
-
   async function abrirPdfGeral() {
     setExportando(true)
     try {
-      const chart = await capturarGrafico(treemapRef.current)
       const kb = kpisDeOperacoes(opsBoard)
       const { url, filename } = await gerarPdfGeral({
-        ranking: ranking.map((r) => ({
-          nome: r.nome, ativa: r.ativa, nTomadores: r.nTomadores, nOperacoes: r.nOperacoes,
-          premioTotal: r.premioTotal, participacaoPct: r.participacaoPct ?? 0,
-        })),
-        kpis: {
-          premioTotal: kb.premioTotal, lmgTotal: kb.lmgTotal, nOperacoes: kb.nOperacoes,
-          nTomadores: ranking.reduce((s, r) => s + r.nTomadores, 0), ticketMedio: kb.ticketMedio, taxaMediaPond: kb.taxaMediaPond,
-        },
-        periodoLabel, chart,
+        ranking: ranking.map((r) => ({ nome: r.nome, ativa: r.ativa, nTomadores: r.nTomadores, nOperacoes: r.nOperacoes, premioTotal: r.premioTotal, participacaoPct: r.participacaoPct ?? 0 })),
+        kpis: { premioTotal: kb.premioTotal, lmgTotal: kb.lmgTotal, nOperacoes: kb.nOperacoes, nTomadores: ranking.reduce((s, r) => s + r.nTomadores, 0), ticketMedio: kb.ticketMedio, taxaMediaPond: kb.taxaMediaPond },
+        periodoLabel, chart: null,
       })
       setPreview({ url, filename })
-    } catch (err) {
-      console.error('PDF geral:', err)
-    } finally {
-      setExportando(false)
-    }
+    } catch (err) { console.error('PDF geral:', err) } finally { setExportando(false) }
   }
+  const abrirPdfCorretora = useCallback(async (payload: Parameters<typeof gerarPdfCorretora>[0]) => {
+    setExportando(true)
+    try { const { url, filename } = await gerarPdfCorretora(payload); setPreview({ url, filename }) }
+    catch (err) { console.error('PDF corretora:', err) } finally { setExportando(false) }
+  }, [])
 
-  if (carregando) {
-    return <div style={{ textAlign: 'center', padding: 80, color: SOFT }}>Carregando painel gerencial…</div>
-  }
+  const selecionar = (id: string) => { setSelecionada(id); setExpandido(null) }
+
+  if (carregando) return <div className="ckp"><div style={{ textAlign: 'center', padding: 80, color: TICK }}>Carregando cockpit de corretoras…</div></div>
+
+  const totalOps = rankingOrdenado.reduce((s, r) => s + r.nOperacoes, 0)
+  const totalPrem = rankingOrdenado.reduce((s, r) => s + r.premioTotal, 0)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* ── Cabeçalho ── */}
-      <div style={{
-        background: `linear-gradient(120deg, ${NAVY_DK} 0%, ${NAVY} 60%, #1a3560 100%)`,
-        borderRadius: 16, padding: '18px 22px', color: '#fff',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap',
-        boxShadow: '0 6px 24px rgba(16,32,64,.22)',
-      }}>
-        <div>
-          <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: '.2px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ width: 6, height: 22, borderRadius: 4, background: GOLD, display: 'inline-block' }} />
-            Panorama Gerencial de Corretoras
-          </div>
-          <div style={{ fontSize: 12.5, color: '#a9c4e8', marginTop: 4 }}>
-            Performance das corretoras · <span style={{ color: GOLD }}>clique numa corretora para ver a tela dela</span>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn-export" onClick={exportarExcel} disabled={exportando || ranking.length === 0}>⬇ Excel</button>
-          <button className="btn-export" onClick={abrirPdfGeral} disabled={exportando || ranking.length === 0}>📄 PDF Geral</button>
-          <button className="btn-primary" onClick={() => onNovaCorretora?.()}>+ Nova Corretora</button>
-        </div>
-      </div>
-
-      {/* ── Filtros globais ── */}
-      <div style={{ ...painel, padding: '14px 18px' }}>
-        <div className="filter-row" style={{ margin: 0 }}>
-          <div className="filter-group" style={{ flex: '1 1 140px' }}>
-            <label className="filter-label">Período: de</label>
-            <select className="fam-input" value={mesIni} onChange={(e) => setMesIni(e.target.value)}>
-              <option value="">Início</option>
-              {meses.map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}
-            </select>
-          </div>
-          <div className="filter-group" style={{ flex: '1 1 140px' }}>
-            <label className="filter-label">até</label>
-            <select className="fam-input" value={mesFim} onChange={(e) => setMesFim(e.target.value)}>
-              <option value="">Fim</option>
-              {meses.map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}
-            </select>
-          </div>
-          <div className="filter-group" style={{ flex: '1 1 160px' }}>
-            <label className="filter-label">Status</label>
-            <select className="fam-input" value={filtroStatus ?? ''} onChange={(e) => setFiltroStatus(e.target.value || null)}>
-              <option value="">Todos</option>
-              {statusFluxo.map((s) => <option key={s.nome} value={s.nome}>{s.nome}</option>)}
-            </select>
-          </div>
-          <div className="filter-group" style={{ flex: '1 1 210px' }}>
-            <label className="filter-label">Escopo</label>
-            <select className="fam-input" value={escopoStatus} onChange={(e) => setEscopoStatus(e.target.value as EscopoStatus)}
-              title="Funil ativo = mesmo recorte da tela de Operações (exclui Emitido, Perdido e Recusado). Carteira completa = todas as operações ativas.">
-              <option value="funil">Funil ativo (igual Operações)</option>
-              <option value="carteira">Carteira completa (com emitidas)</option>
-            </select>
-          </div>
-          <div className="filter-group" style={{ flex: '1 1 100px' }}>
-            <label className="filter-label">UF</label>
-            <select className="fam-input" value={filtroUF} onChange={(e) => setFiltroUF(e.target.value)}>
-              <option value="">Todas</option>
-              {ufsDisponiveis.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
-            </select>
-          </div>
-          <div className="filter-group" style={{ justifyContent: 'flex-end' }}>
-            <label className="filter-label">&nbsp;</label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {algumFiltro && <button className="btn-clear" onClick={limparTudo}>Limpar</button>}
-              <button className="btn-secondary" onClick={() => setMostrarPersonalizar((v) => !v)}>⚙ Personalizar</button>
+    <div className="ckp">
+      <div className="ckp-shell">
+        {/* ── HEADER ── */}
+        <header className="ckp-glass ckp-top">
+          <div className="ckp-brand">
+            <div className="ckp-logo">◆</div>
+            <div>
+              <div className="ckp-brand-title">Inteligência de Corretoras</div>
+              <div className="ckp-brand-sub">Cockpit executivo · visão por mês</div>
             </div>
           </div>
+          <div className="ckp-actions">
+            <button className="ckp-btn" onClick={exportarExcel} disabled={exportando || ranking.length === 0}>⬇ Excel</button>
+            <button className="ckp-btn" onClick={abrirPdfGeral} disabled={exportando || ranking.length === 0}>📄 PDF Geral</button>
+            <button className={`ckp-btn ckp-btn-ghost${mostrarPersonalizar ? ' on' : ''}`} onClick={() => setMostrarPersonalizar((v) => !v)}>⚙ Personalizar</button>
+            <button className="ckp-btn ckp-btn-gold" onClick={() => onNovaCorretora?.()}>+ Nova Corretora</button>
+          </div>
+        </header>
+
+        {/* ── FILTROS (UF removido) ── */}
+        <div className="ckp-glass" style={{ padding: '12px 16px', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <label className="ckp-field"><span className="ckp-field-lab">Mês de</span>
+            <select className="ckp-select" value={mesIni} onChange={(e) => setMesIni(e.target.value)}>
+              <option value="">Início</option>{meses.map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}
+            </select></label>
+          <label className="ckp-field"><span className="ckp-field-lab">até</span>
+            <select className="ckp-select" value={mesFim} onChange={(e) => setMesFim(e.target.value)}>
+              <option value="">Fim</option>{meses.map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}
+            </select></label>
+          <label className="ckp-field"><span className="ckp-field-lab">Status</span>
+            <select className="ckp-select" value={filtroStatus ?? ''} onChange={(e) => setFiltroStatus(e.target.value || null)}>
+              <option value="">Todos</option>{statusFluxo.map((s) => <option key={s.nome} value={s.nome}>{s.nome}</option>)}
+            </select></label>
+          <label className="ckp-field" title="Funil ativo = mesmo recorte de Operações (exclui Emitido, Perdido e Recusado). Carteira = todas as operações ativas.">
+            <span className="ckp-field-lab">Escopo</span>
+            <select className="ckp-select" value={escopoStatus} onChange={(e) => setEscopoStatus(e.target.value as EscopoStatus)}>
+              <option value="funil">Funil ativo</option><option value="carteira">Carteira completa</option>
+            </select></label>
+          {algumFiltro && <button className="ckp-btn" onClick={limparTudo} style={{ marginLeft: 'auto' }}>Limpar filtros</button>}
         </div>
+
+        {/* ── CATÁLOGO (Personalizar) ── */}
         {mostrarPersonalizar && (
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: `1px solid ${BORDER}` }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: SOFT }}>Mostrar blocos:</span>
+          <div className="ckp-catalog">
+            <span className="ckp-cat-lead">✦ Monte sua tela</span>
             {(Object.keys(CARDS_LABEL) as CardKey[]).map((k) => (
-              <label key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: INK, cursor: 'pointer' }}>
-                <input type="checkbox" checked={cards[k]} onChange={() => toggleCard(k)} />{CARDS_LABEL[k]}
-              </label>
+              <button key={k} type="button" className={`ckp-sw-item${cards[k] ? ' on' : ''}`} onClick={() => toggleCard(k)}>
+                <span className="ckp-sw" />{CARDS_LABEL[k]}{CARDS_NOVO[k] && <span className="ckp-cat-tag">novo</span>}
+              </button>
             ))}
           </div>
         )}
+
+        {/* ── CHIPS de filtros ativos ── */}
         {algumFiltro && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 12 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: SOFT }}>Ativos:</span>
-            {filtroCorretora && <Chip cor={NAVY_DK} label={`Corretora: ${nomeFiltroCorretora}`} onClear={() => { setFiltroCorretora(null); setDrillMes(null) }} />}
-            {filtroStatus && <Chip cor={statusFluxo.find((s) => s.nome === filtroStatus)?.cor ?? NAVY} label={filtroStatus} onClear={() => setFiltroStatus(null)} />}
-            {filtroUF && <Chip cor={GREEN} label={`UF: ${filtroUF}`} onClear={() => setFiltroUF('')} />}
-            {(pIni || pFim) && <Chip cor={GOLD} label={periodoLabel} onClear={() => { setMesIni(''); setMesFim('') }} />}
+          <div className="ckp-chips">
+            <span style={{ fontSize: 12, fontWeight: 700, color: TICK }}>Ativos:</span>
+            {filtroStatus && <ChipDark label={filtroStatus} onClear={() => setFiltroStatus(null)} />}
+            {(pIni || pFim) && <ChipDark label={periodoLabel} onClear={() => { setMesIni(''); setMesFim('') }} />}
           </div>
         )}
-      </div>
 
-      {/* ── KPIs ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
-        <KpiHero wide destaque label="Prêmio Previsto" valor={kpiBRL(kpis.premioTotal)} sub="soma no escopo" delta={delta.variacao} spark={sparkTotal} selMesIdx={selMesIdx} />
-        <KpiHero label="LMG (exposição)" valor={kpiBRL(kpis.lmgTotal)} sub="teto 80M/op" spark={[]} miniSerie={seriesMini.lmg} onMini={irParaGraficos} />
-        <KpiHero label="Operações" valor={String(kpis.nOperacoes)} sub="no escopo" spark={[]} miniSerie={seriesMini.operacoes} onMini={irParaGraficos} />
-        <KpiHero label="Tomadores" valor={String(totais.nTomadores)} sub="com operação no escopo" spark={[]} miniSerie={seriesMini.tomadores} onMini={irParaGraficos} />
-        <KpiHero label="Taxa Média Pond." valor={fmtPercent(kpis.taxaMediaPond / 100)} sub="min(LMG,80M)×vig." spark={[]} miniSerie={seriesMini.taxa} onMini={irParaGraficos} />
-      </div>
-
-      {/* ── Ranking (tabela única) ── */}
-      <div style={painel}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-          <div style={{ ...tituloBloco, marginBottom: 0 }}><span style={barraTitulo(NAVY)} />Ranking de corretoras: negócios, participação e tendência</div>
-          <input className="fam-input" placeholder="Buscar corretora ou CNPJ…" value={busca} onChange={(e) => setBusca(e.target.value)} style={{ height: 34, minWidth: 220, width: 'auto', fontSize: 13 }} />
+        {/* ── KPIs ── */}
+        <div className="ckp-kpis">
+          <KpiDark wide ico="✅" label="Prêmio Realizado" valor={kpiBRL(kpisReal.premioTotal)} sub="operações emitidas" delta={deltaReal.variacao} spark={sparkReal} />
+          <KpiDark ico="🛡️" label="LMG (exposição)" valor={kpiBRL(kpisReal.lmgTotal)} sub="emitidas · teto 80M/op" spark={seriesMiniReal.lmg} />
+          <KpiDark ico="📄" label="Operações" valor={String(kpisReal.nOperacoes)} sub="emitidas" spark={seriesMiniReal.operacoes} />
+          <KpiDark ico="🤝" label="Tomadores" valor={String(nTomadoresReal)} sub="com emissão" spark={seriesMiniReal.tomadores} />
+          <KpiDark ico="📈" label="Taxa Média Pond." valor={fmtPercent(kpisReal.taxaMediaPond / 100)} sub="min(LMG,80M)×vig." spark={seriesMiniReal.taxa} />
         </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table className="fam-table" style={{ minWidth: 760 }}>
-            <thead>
-              <tr>
-                <th style={{ width: 30 }}></th>
-                <th style={thSort} onClick={() => handleSort('nome')}>Corretora{sortIcon('nome')}</th>
-                <th style={{ ...thSort, textAlign: 'center' }} onClick={() => handleSort('nTomadores')}>Tomadores Cadastrados{sortIcon('nTomadores')}</th>
-                <th style={{ ...thSort, textAlign: 'center' }} onClick={() => handleSort('nOperacoes')}>Operações Cadastradas{sortIcon('nOperacoes')}</th>
-                <th style={{ ...thSort, minWidth: 190 }} onClick={() => handleSort('premio')}>Prêmio{sortIcon('premio')}</th>
-                <th style={{ ...thSort, textAlign: 'right' }} onClick={() => handleSort('participacao')}>Participação{sortIcon('participacao')}</th>
-                <th style={{ textAlign: 'center', width: 90 }}>Tendência</th>
-                <th style={{ textAlign: 'right' }}>Acumulado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rankingOrdenado.length === 0 ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 30, color: SOFT }}>Nenhuma corretora encontrada.</td></tr>
-              ) : rankingOrdenado.map((r, idx) => {
-                const cor = AZUIS[Math.min(idx, AZUIS.length - 1)]
-                const spark = serieMensalAlinhada(operacoesEscopo.filter((o) => o.corretora_id === r.id && (!filtroStatus || o.status === filtroStatus)), meses)
-                const selecionada = filtroCorretora === r.id
-                return (
-                  <tr key={r.id} onClick={() => onAbrirCorretora?.(r.id)} style={{ cursor: 'pointer', background: selecionada ? '#eaf2fc' : undefined, boxShadow: selecionada ? `inset 3px 0 0 ${GOLD}` : undefined }}>
-                    <td><span style={{ width: 12, height: 12, borderRadius: 3, background: cor, display: 'inline-block' }} /></td>
-                    <td style={{ fontWeight: 700, color: INK }}>
-                      {r.nome}
-                      {!r.ativa && <span className="badge badge-gray" style={{ marginLeft: 6 }}>inativa</span>}
-                      {ids8020.has(r.id) && <span className="badge badge-yellow" style={{ marginLeft: 6 }} title="Concentra 80% do prêmio">80/20</span>}
-                    </td>
-                    <td style={{ textAlign: 'center', fontSize: 13, color: SOFT }}>{r.nTomadores}</td>
-                    <td style={{ textAlign: 'center', fontSize: 13, color: SOFT }}>{r.nOperacoes}</td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ flex: 1, height: 9, background: '#eef4fa', borderRadius: 5, overflow: 'hidden', minWidth: 70 }}>
-                          <div style={{ width: `${(r.premioTotal / maxPremioRank) * 100}%`, height: '100%', background: NAVY, borderRadius: 5 }} />
-                        </div>
-                        <span style={{ fontSize: 12.5, fontWeight: 700, color: INK, whiteSpace: 'nowrap', minWidth: 92, textAlign: 'right' }}>{fmtMoeda(r.premioTotal)}</span>
-                      </div>
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 700, color: NAVY }}>{fmtPercent(r.participacaoPct ?? 0)}</td>
-                    <td style={{ textAlign: 'center' }}><Sparkline valores={spark} cor={NAVY} /></td>
-                    <td style={{ textAlign: 'right', fontSize: 12.5, color: SOFT }}>{fmtPercent(r.acumuladoPct ?? 0)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
-      {/* ── Desfecho: Emitidas · Perdidas · Recusadas · Em andamento ── */}
-      <div style={painel}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-          <div style={{ ...tituloBloco, marginBottom: 0 }}><span style={barraTitulo(GREEN)} />Desfecho das operações por corretora · que negócio ela traz</div>
-          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-            <Legenda cor={GREEN} texto={`Emitidas ${desfechoTotais.emitidas.n}`} />
-            <Legenda cor={NAVY} texto={`Em andamento ${desfechoTotais.andamento.n}`} />
-            <Legenda cor="#a0562a" texto={`Perdidas ${desfechoTotais.perdidas.n}`} />
-            <Legenda cor={RED} texto={`Recusadas ${desfechoTotais.recusadas.n}`} />
-            <span style={{ fontSize: 12.5, fontWeight: 800, color: NAVY_DK, borderLeft: `1px solid ${BORDER}`, paddingLeft: 14 }}>
-              Aproveitamento geral: <span style={{ color: GREEN }}>{fmtPercent(desfechoConv)}</span>
-            </span>
-          </div>
-        </div>
-        {desfecho.length === 0 ? <SemDados /> : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="fam-table" style={{ minWidth: 720 }}>
-              <thead>
-                <tr>
-                  <th>Corretora</th>
-                  <th style={{ textAlign: 'center', width: 90 }}>Apresen&shy;tadas</th>
-                  <th style={{ minWidth: 220 }}>Composição do desfecho</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>Prêmio emitido</th>
-                  <th style={{ textAlign: 'right', width: 110 }}>Aproveita&shy;mento</th>
-                </tr>
-              </thead>
-              <tbody>
-                {desfecho.map((d) => {
-                  const sel = filtroCorretora === d.id
-                  const pct = (n: number) => d.total > 0 ? (n / d.total) * 100 : 0
-                  return (
-                    <tr key={d.id} onClick={() => toggleCorretora(d.id)} style={{ cursor: 'pointer', background: sel ? '#eaf2fc' : undefined, boxShadow: sel ? `inset 3px 0 0 ${GOLD}` : undefined }}>
-                      <td style={{ fontWeight: 700, color: INK }}>{d.nome}</td>
-                      <td style={{ textAlign: 'center', fontSize: 13, color: SOFT }}>{d.total}</td>
-                      <td>
-                        <div style={{ display: 'flex', height: 14, borderRadius: 7, overflow: 'hidden', background: '#eef4fa', minWidth: 180 }}
-                          title={`Emitidas ${d.emitidas.n} · Em andamento ${d.andamento.n} · Perdidas ${d.perdidas.n} · Recusadas ${d.recusadas.n}`}>
-                          {d.emitidas.n > 0 && <span style={{ width: `${pct(d.emitidas.n)}%`, background: GREEN }} />}
-                          {d.andamento.n > 0 && <span style={{ width: `${pct(d.andamento.n)}%`, background: NAVY }} />}
-                          {d.perdidas.n > 0 && <span style={{ width: `${pct(d.perdidas.n)}%`, background: '#a0562a' }} />}
-                          {d.recusadas.n > 0 && <span style={{ width: `${pct(d.recusadas.n)}%`, background: RED }} />}
-                        </div>
-                      </td>
-                      <td style={{ textAlign: 'right', fontWeight: 700, color: d.emitidas.premio > 0 ? GREEN : SOFT, whiteSpace: 'nowrap' }}>{kpiBRL(d.emitidas.premio)}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 800, color: d.conversao >= 0.5 ? GREEN : d.conversao > 0 ? NAVY : SOFT }}>
-                        {d.decididas > 0 ? fmtPercent(d.conversao) : '·'}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div style={{ fontSize: 11.5, color: SOFT, marginTop: 8 }}>
-          Considera a <b>carteira inteira</b> (inclui emitidas, perdidas e recusadas), independente do filtro de escopo.
-          <b> Aproveitamento</b> = emitidas ÷ decididas (emitidas + perdidas + recusadas). Clique numa linha para filtrar o painel.
-        </div>
-      </div>
-
-      {/* ── Pareto 80/20 (sob demanda, educacional) ── */}
-      <div style={painel}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ ...tituloBloco, marginBottom: 0 }}><span style={barraTitulo(GOLD)} />Concentração 80/20 (Pareto)</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            {mostrarPareto && (
-              <select className="fam-input" value={metricaPareto} onChange={(e) => setMetricaPareto(e.target.value as MetricaPareto)} style={{ height: 34, width: 'auto', fontSize: 13 }}>
-                <option value="premio">Prêmio (status atual)</option>
-                <option value="tomadores">Nº de Tomadores</option>
-                <option value="operacoes">Nº de Operações</option>
-              </select>
-            )}
-            <button className="btn-secondary" onClick={() => setMostrarPareto((v) => !v)}>
-              {mostrarPareto ? 'Ocultar Pareto' : '📊 Analisar concentração'}
-            </button>
-          </div>
-        </div>
-        {mostrarPareto && (
-          paretoData.length === 0 ? <SemDados /> : (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ background: '#fdf8e6', border: `1px solid ${GOLD}`, borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 13, color: '#5a4a10' }}>
-                <b>{vitalFew}</b> corretora(s), os <b>{fmtPercent(vitalPct)}</b> de {paretoData.length}, concentram <b>80%</b> {metricaTxt}.
-                <span style={{ color: SOFT }}> É a “minoria vital” que sustenta a carteira (princípio de Pareto 80/20).</span>
-              </div>
-              <ResponsiveContainer width="100%" height={340}>
-                <ComposedChart data={paretoData} margin={{ left: 4, right: 8, top: 10, bottom: 66 }} onClick={(state) => { const p = (state as unknown as { activePayload?: { payload: { id: string } }[] })?.activePayload?.[0]?.payload; if (p) onAbrirCorretora?.(p.id) }}>
-                  <XAxis dataKey="nome" angle={-30} textAnchor="end" interval={0} height={76} tick={{ fontSize: 11, fill: '#304060' }} />
-                  <YAxis yAxisId="l" tickFormatter={(v) => metricaPareto === 'premio' ? eixoBRL(Number(v)) : String(Math.round(Number(v)))} tick={{ fontSize: 11, fill: '#304060' }} width={64} />
-                  <YAxis yAxisId="r" orientation="right" domain={[0, 1]} tickFormatter={(v) => Math.round(Number(v) * 100) + '%'} tick={{ fontSize: 11, fill: '#304060' }} width={42} />
-                  <Tooltip cursor={{ fill: 'rgba(30,64,128,.05)' }} formatter={(v, n) => n === 'Acumulado' ? [fmtPercent(Number(v)), 'Acumulado'] : [fmtParetoVal(Number(v)), 'Valor']} />
-                  <ReferenceLine yAxisId="r" y={0.8} stroke={GOLD} strokeDasharray="5 4" strokeWidth={1.5} label={{ value: '80%', position: 'right', fill: '#a0781a', fontSize: 11 }} />
-                  <Bar yAxisId="l" dataKey="valor" name="Valor" radius={[4, 4, 0, 0]} cursor="pointer" isAnimationActive={false}>
-                    {paretoData.map((x, i) => <Cell key={x.id} fill={i < vitalFew ? NAVY : '#c4d3e6'} />)}
-                  </Bar>
-                  <Line yAxisId="r" type="monotone" dataKey="acumPct" name="Acumulado" stroke={GOLD} strokeWidth={2.5} dot={{ r: 3, fill: GOLD }} isAnimationActive={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-              <div style={{ fontSize: 11.5, color: SOFT, marginTop: 6 }}>Barras <b style={{ color: NAVY }}>azuis</b> = a minoria vital (80%); barras claras = a “cauda longa”. Clique numa barra para abrir a corretora.</div>
-            </div>
-          )
-        )}
-      </div>
-
-      {/* ── Análises (grade 2 colunas): Evolução · Treemap · Mix status · Matriz ── */}
-      {(cards.mensal || cards.treemap || cards.status || cards.matriz) && (
-        <div className="corretoras-analise" id="graficos-corretoras">
-          {/* Evolução mensal (com drill-down semanal ao clicar num mês) */}
-          {cards.mensal && (
-            <div style={painel}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-                <div style={{ ...tituloBloco, marginBottom: 0 }}>
-                  <span style={barraTitulo(GOLD)} />
-                  {drillMes
-                    ? <>Evolução semanal · <span style={{ color: GOLD, fontWeight: 800 }}>{rotuloMes(drillMes)}</span></>
-                    : <>Evolução mensal do prêmio {(pIni || pFim) && <span style={{ color: GOLD, fontWeight: 700 }}>· {periodoLabel}</span>}</>}
-                </div>
-                {drillMes && (
-                  <button className="btn-secondary" onClick={() => setDrillMes(null)} style={{ height: 30, fontSize: 12.5, padding: '0 12px' }}>← Voltar aos meses</button>
-                )}
-              </div>
-
-              {drillMes ? (
-                // ── Drill-down: semanas do mês selecionado ──
-                serieSemanal.length === 0 ? <SemDados texto="Sem operações com data neste mês." /> : (
-                  <>
-                    <ResponsiveContainer width="100%" height={320}>
-                      <BarChart data={serieSemanal} margin={{ left: 4, right: 8, top: 10, bottom: 8 }}>
-                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#304060' }} />
-                        <YAxis tickFormatter={(v) => eixoBRL(Number(v))} tick={{ fontSize: 11, fill: '#304060' }} width={64} />
-                        <Tooltip cursor={{ fill: 'rgba(30,64,128,.05)' }} formatter={(v) => [fmtMoeda(Number(v)), 'Prêmio']} labelFormatter={(l) => `Semana de ${l}`} />
-                        <Bar dataKey="valor" name="Prêmio" radius={[5, 5, 0, 0]} fill={GOLD} isAnimationActive={false} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                    <div style={{ fontSize: 11.5, color: SOFT, marginTop: 6 }}>Cada barra é uma semana (data de início · seg–dom).</div>
-                  </>
-                )
-              ) : (
-                // ── Visão mensal (clique numa barra para abrir as semanas) ──
-                !mounted || serieMensal.length === 0 ? <SemDados texto="Sem histórico com datas." /> : (
-                  <>
-                    <ResponsiveContainer width="100%" height={320}>
-                      <BarChart data={serieMensal} margin={{ left: 4, right: 8, top: 10, bottom: 8 }} onClick={(state) => { const p = (state as unknown as { activePayload?: { payload: { mes: string } }[] })?.activePayload?.[0]?.payload; if (p) setDrillMes(p.mes) }}>
-                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#304060' }} />
-                        <YAxis tickFormatter={(v) => eixoBRL(Number(v))} tick={{ fontSize: 11, fill: '#304060' }} width={64} />
-                        <Tooltip cursor={{ fill: 'rgba(30,64,128,.05)' }} content={<TooltipMensal />} />
-                        <Bar dataKey="premio" name="Prêmio" radius={[5, 5, 0, 0]} cursor="pointer" isAnimationActive={false}>
-                          {serieMensal.map((p) => {
-                            const realce = (pIni || pFim) && noPeriodo(p.mes)
-                            return <Cell key={p.mes} fill={realce ? GOLD : NAVY} fillOpacity={(pIni || pFim) && !noPeriodo(p.mes) ? 0.3 : 1} />
-                          })}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                    <div style={{ fontSize: 11.5, color: SOFT, marginTop: 6 }}>Clique num mês para ver as <b>semanas</b> (drill-down).</div>
-                  </>
-                )
-              )}
-            </div>
-          )}
-
-          {/* Participação (treemap) */}
-          {cards.treemap && (
-            <div style={painel} ref={treemapRef}>
-              <div style={tituloBloco}><span style={barraTitulo(NAVY)} />Participação no prêmio (share do todo)</div>
-              {!mounted || treemapData.length === 0 ? <SemDados /> : (
-                <>
-                  <ResponsiveContainer width="100%" height={320}>
-                    <Treemap data={treemapData} dataKey="size" nameKey="name" stroke="#fff" isAnimationActive={false}
-                      content={<CelulaTreemap selectedId={filtroCorretora ?? ''} onPick={toggleCorretora} />} />
-                  </ResponsiveContainer>
-                  <div style={{ fontSize: 11.5, color: SOFT, marginTop: 6 }}>
-                    {filtroCorretora
-                      ? <>Filtrando por <b style={{ color: NAVY_DK }}>{nomeFiltroCorretora}</b> — os demais gráficos foram ajustados. <button onClick={() => { setFiltroCorretora(null); setDrillMes(null) }} style={{ background: 'none', border: 'none', color: NAVY, fontWeight: 700, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>limpar</button></>
-                      : <>Clique numa corretora para <b>filtrar</b> os demais gráficos (como no Power BI).</>}
+        {/* ── MAIN ── */}
+        <div className="ckp-main">
+          {/* ESQUERDA */}
+          <div className="ckp-left">
+            {cards.mensal && (
+              <section className="ckp-glass ckp-card">
+                <div className="ckp-card-head">
+                  <div className="ckp-title"><span className="ckp-title-bar" />Resultado Mensal<span className="ckp-sub">prêmio &amp; taxa méd. pond. · {periodoLabel}</span></div>
+                  <div className="ckp-seg">
+                    <button className={mensalView === 'graf' ? 'on' : ''} onClick={() => setMensalView('graf')}>Gráfico</button>
+                    <button className={mensalView === 'tab' ? 'on' : ''} onClick={() => setMensalView('tab')}>Tabela</button>
                   </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Mix por status */}
-          {cards.status && (
-            <div style={painel}>
-              <div style={tituloBloco}><span style={barraTitulo('#8a63c8')} />Mix por status</div>
-              {porStatus.length === 0 ? <SemDados /> : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                  {porStatus.map((s) => {
-                    const ativo = filtroStatus === s.name
-                    return (
-                      <button key={s.name} onClick={() => toggleStatus(s.name)}
-                        style={{ display: 'grid', gridTemplateColumns: '130px 1fr auto', gap: 10, alignItems: 'center', background: ativo ? '#f3eefb' : 'transparent', border: `1px solid ${ativo ? '#8a63c8' : BORDER}`, borderRadius: 8, padding: '8px 11px', cursor: 'pointer', textAlign: 'left' }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                          <span style={{ width: 10, height: 10, borderRadius: '50%', background: s.cor, flexShrink: 0 }} />
-                          <span style={{ fontSize: 12.5, fontWeight: 600, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-                        </span>
-                        <span style={{ height: 10, background: '#eef4fa', borderRadius: 5, overflow: 'hidden' }}>
-                          <span style={{ display: 'block', width: `${(s.value / maxStatus) * 100}%`, height: '100%', background: s.cor, borderRadius: 5 }} />
-                        </span>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: SOFT, whiteSpace: 'nowrap', textAlign: 'right' }}>{s.value} · {fmtMoedaCurta(s.premio)}</span>
-                      </button>
-                    )
-                  })}
                 </div>
-              )}
-            </div>
-          )}
+                {mensalView === 'graf' ? (
+                  <>
+                    <ResultadoMensalGraf mounted={mounted} serie={serieMensal} temPeriodo={!!(pIni || pFim)} noPeriodo={noPeriodo}
+                      taxaPeriodo={taxaPeriodoGraf} mesesSel={mesesSel} onToggleMes={toggleMes} />
+                    <div className="ckp-cap" style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <span style={{ flex: 1, minWidth: 220 }}>Barras: <b>prêmio previsto</b> por mês. Linha dourada: <b>taxa média ponderada</b> (eixo dir.), mesma fórmula do Dashboard; o tracejado é a taxa do período ({fmtTaxaPP(taxaPeriodoGraf)}). <b>Clique nas barras</b> para consolidar o(s) mês(es) no card à direita.</span>
+                      {mesesSel.size > 0 && <button type="button" className="ckp-btn" style={{ padding: '4px 11px', fontSize: 12 }} onClick={() => setMesesSel(new Set())}>✕ limpar {mesesSel.size} mês(es)</button>}
+                    </div>
+                  </>
+                ) : (
+                  <TabelaMensal serie={serieMensal} taxaPeriodo={taxaTotalTabela} />
+                )}
+              </section>
+            )}
 
-          {/* Matriz Corretora × Mês */}
-          {cards.matriz && (
-            <div style={painel}>
-              <div style={tituloBloco}><span style={barraTitulo(NAVY)} />Matriz Corretora × Mês: prêmio por mês (quanto mais escuro, maior)</div>
-              {matriz.linhas.length === 0 || matriz.meses.length === 0 ? <SemDados texto="Sem histórico com datas para montar a matriz." /> : (
-                <div style={{ overflowX: 'auto', maxHeight: 300, overflowY: 'auto' }}>
-                  <table className="fam-table" style={{ minWidth: 220 + matriz.meses.length * 72, borderCollapse: 'separate', borderSpacing: 0 }}>
+            {cards.grade && (
+              <section className="ckp-glass ckp-card">
+                <div className="ckp-card-head">
+                  <div className="ckp-title"><span className="ckp-title-bar" style={{ background: BLUE }} />Ranking de Corretoras<span className="ckp-sub">clique → dossiê à direita</span></div>
+                  <input className="fam-input" placeholder="Buscar corretora ou CNPJ…" value={busca} onChange={(e) => setBusca(e.target.value)}
+                    style={{ height: 34, minWidth: 200, width: 'auto', fontSize: 13, background: 'rgba(255,255,255,.06)', color: '#eaf0fb', border: '1px solid rgba(255,255,255,.12)' }} />
+                </div>
+                <div className="ckp-grade-scroll">
+                  <table className={`ckp-grade${mostrarTodas ? ' show-all' : ''}`}>
                     <thead>
                       <tr>
-                        <th style={{ position: 'sticky', left: 0, background: '#1a3560', zIndex: 2, minWidth: 180 }}>Corretora</th>
-                        {matriz.meses.map((m) => <th key={m} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>{rotuloMes(m)}</th>)}
-                        <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>Total</th>
+                        <th className="lft" onClick={() => handleSort('nome')}>Corretora{sortIcon('nome')}</th>
+                        <th onClick={() => handleSort('nOperacoes')}>Operações{sortIcon('nOperacoes')}</th>
+                        <th onClick={() => handleSort('premio')}>Prêmio{sortIcon('premio')}</th>
+                        <th onClick={() => handleSort('participacao')}>Participação{sortIcon('participacao')}</th>
+                        <th>Tend.</th>
+                        <th>Status</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {matriz.linhas.map((l) => (
-                        <tr key={l.id}>
-                          <td style={{ position: 'sticky', left: 0, background: '#fff', zIndex: 1, fontWeight: 700, color: INK, minWidth: 180 }}>{l.nome}</td>
-                          {l.valores.map((v, i) => {
-                            const a = v / matriz.maxCelula
-                            return (
-                              <td key={i} style={{ textAlign: 'center', fontSize: 11.5, fontWeight: v > 0 ? 700 : 400, background: v > 0 ? `rgba(30,64,128,${(a * 0.85 + 0.06).toFixed(3)})` : undefined, color: a > 0.5 ? '#fff' : '#334', whiteSpace: 'nowrap' }}>
-                                {v > 0 ? kpiBRL(v) : '·'}
-                              </td>
-                            )
-                          })}
-                          <td style={{ textAlign: 'right', fontWeight: 800, color: NAVY, whiteSpace: 'nowrap' }}>{kpiBRL(l.total)}</td>
-                        </tr>
-                      ))}
+                      {rankingOrdenado.length === 0 ? (
+                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: 26, color: TICK }}>Nenhuma corretora encontrada.</td></tr>
+                      ) : rankingOrdenado.map((r, idx) => {
+                        const spark = serieMensalAlinhada(operacoesEscopo.filter((o) => o.corretora_id === r.id && (!filtroStatus || o.status === filtroStatus)), meses)
+                        const sel = selecionada === r.id
+                        return (
+                          <tr key={r.id} className={`${idx >= VIS_GRADE ? 'row-extra' : ''}${sel ? ' sel' : ''}`} onClick={() => selecionar(r.id)}>
+                            <td>
+                              <div className="ckp-cname">
+                                <span className="ckp-cbadge" style={{ background: azulBadge(idx, rankingOrdenado.length) }}>{initials(r.nome)}</span>
+                                <span style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>{r.nome}</span>
+                                {!r.ativa && <span className="ckp-pill off">inativa</span>}
+                                {ids8020.has(r.id) && <span className="ckp-pill" style={{ background: 'rgba(232,184,75,.16)', color: GOLD }} title="Concentra 80% do prêmio">80/20</span>}
+                              </div>
+                            </td>
+                            <td>{r.nOperacoes}</td>
+                            <td>
+                              <div className="ckp-premcell">
+                                <span className="ckp-prembar"><i style={{ width: `${(r.premioTotal / maxPremioRank) * 100}%` }} /></span>
+                                <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{kpiBRL(r.premioTotal)}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <div className="ckp-partcell">
+                                <span style={{ fontWeight: 700, color: BLUE_BR }}>{fmtPercent(r.participacaoPct ?? 0)}</span>
+                                <span className="ckp-partbar"><i style={{ width: `${((r.participacaoPct ?? 0) / maxPartRank) * 100}%` }} /></span>
+                              </div>
+                            </td>
+                            <td><Sparkline valores={spark} cor={r.ativa ? BLUE_BR : '#6f7d9b'} /></td>
+                            <td><span className={`ckp-pill ${r.ativa ? 'on' : 'off'}`}>{r.ativa ? 'Ativa' : 'Inativa'}</span></td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
+                    <tfoot>
+                      <tr>
+                        <td className="lft"><span className="ckp-tot-sig">Σ</span>TOTAL · {rankingOrdenado.length} corretoras</td>
+                        <td>{totalOps}</td>
+                        <td className="ckp-tot-prem">{kpiBRL(totalPrem)}</td>
+                        <td>100%</td>
+                        <td></td><td></td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
+                {rankingOrdenado.length > VIS_GRADE && (
+                  <div className="ckp-more">
+                    <button className="ckp-btn" onClick={() => setMostrarTodas((v) => !v)}>
+                      {mostrarTodas ? '▴ Mostrar só as primeiras' : `▾ Ver todas as ${rankingOrdenado.length} corretoras`}
+                    </button>
+                  </div>
+                )}
+              </section>
+            )}
+          </div>
+
+          {/* DIREITA (fixa) */}
+          <aside className="ckp-right">
+            <div className="ckp-right-inner">
+              {corretoraSel ? (
+                <DossieCorretora corretora={corretoraSel} corretoras={corretoras} tomadores={tomadores} operacoes={operacoes}
+                  statusFluxo={statusFluxo} onVoltar={() => setSelecionada(null)} onEditar={() => onAbrirCorretora?.(corretoraSel.id)}
+                  onPdf={abrirPdfCorretora} exportando={exportando} />
+              ) : (
+                <>
+                  {/* ── DOSSIÊ FAM — painel futurista (glass + neon). Soma toda a FAM,
+                         respeitando o escopo (funil / carteira) e a seleção de meses. ── */}
+                  <div className="ckp-fam">
+                    <div className="ckp-fam-glow" />
+                    <div className="ckp-fam-head">
+                      <div className="ckp-fam-orb">◆</div>
+                      <div className="ckp-fam-id">
+                        <div className="ckp-fam-name">FAM Seguradora</div>
+                        <div className="ckp-fam-sub">Dossiê Consolidado</div>
+                      </div>
+                      <span className="ckp-fam-scope-pill">{escopoStatus === 'funil' ? 'Funil ativo' : 'Carteira'}</span>
+                    </div>
+                    <div className="ckp-fam-period">{cardLabel}</div>
+                    <div className="ckp-fam-grid">
+                      <div className="ckp-fam-cell gold"><span className="l">Prêmio Previsto</span><span className="v">{kpiBRL(kpisCard.premioTotal)}</span></div>
+                      <div className="ckp-fam-cell green"><span className="l">Prêmio Emitido</span><span className="v">{kpiBRL(premioEmitidoCard)}</span></div>
+                      <div className="ckp-fam-cell"><span className="l">LMG · exposição</span><span className="v">{kpiBRL(kpisCard.lmgTotal)}</span></div>
+                      <div className="ckp-fam-cell"><span className="l">Operações</span><span className="v">{kpisCard.nOperacoes}</span></div>
+                      <div className="ckp-fam-cell"><span className="l">Tomadores</span><span className="v">{nTomadoresCard}</span></div>
+                      <div className="ckp-fam-cell"><span className="l">Taxa Méd. Pond.</span><span className="v">{fmtPercent(kpisCard.taxaMediaPond / 100)}</span></div>
+                    </div>
+                    {mesesSel.size > 0 && <button type="button" className="ckp-fam-clear" onClick={() => setMesesSel(new Set())}>← ver todos os períodos</button>}
+                  </div>
+
+                  {cards.share && (
+                    <div className="ckp-glass ckp-panel">
+                      <div className="ckp-panel-title">Participação no prêmio<div className="ckp-pt-r"><span className="ckp-tag">share do todo</span><button className="ckp-exp" title="Expandir" onClick={() => setExpandido('share')}>⤢</button></div></div>
+                      <ShareView ranking={comPremio} />
+                    </div>
+                  )}
+
+                  {cards.pareto && (
+                    <div className="ckp-glass ckp-panel">
+                      <div className="ckp-panel-title">Concentração 80/20<div className="ckp-pt-r"><span className="ckp-tag">Pareto</span><button className={`ckp-exp${paretoNumeros ? ' on' : ''}`} title="Mostrar números no gráfico" onClick={() => setParetoNumeros((v) => !v)}>#</button><button className="ckp-exp" title="Expandir" onClick={() => setExpandido('pareto')}>⤢</button></div></div>
+                      {paretoData.length === 0 ? <div className="ckp-empty">Sem dados no escopo.</div> : <ParetoChart data={paretoData} mounted={mounted} vitalFew={vitalFew} metrica={metricaPareto} fmtVal={fmtParetoVal} onSelect={selecionar} numeros={paretoNumeros} />}
+                    </div>
+                  )}
+
+                  {cards.desfecho && (
+                    <div className="ckp-glass ckp-panel">
+                      <div className="ckp-panel-title">Desfecho por corretora<div className="ckp-pt-r"><span className="ckp-tag">que negócio traz</span><button className="ckp-exp" title="Expandir" onClick={() => setExpandido('desfecho')}>⤢</button></div></div>
+                      {desfecho.length === 0 ? <div className="ckp-empty">Sem dados no período.</div> : <DesfechoView desfecho={desfecho} totais={desfechoTotais} conv={desfechoConv} onSelect={selecionar} />}
+                    </div>
+                  )}
+
+                  {cards.movers && (
+                    <div className="ckp-glass ckp-panel">
+                      <div className="ckp-panel-title">Maiores em prêmio emitido<span className="ckp-tag">carteira</span></div>
+                      {desfecho.filter((d) => d.emitidas.premio > 0).length === 0 ? <div className="ckp-empty">Nenhuma emissão no período.</div> : (
+                        <div>{desfecho.filter((d) => d.emitidas.premio > 0).slice(0, 5).map((d, i) => (
+                          <button key={d.id} type="button" className="ckp-mover" style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', color: 'inherit' }} onClick={() => selecionar(d.id)}>
+                            <span className="ckp-mv-rank">{i + 1}</span><span className="ckp-mv-name" style={{ textAlign: 'left' }}>{d.nome}</span><span className="ckp-mv-val" style={{ color: GOOD }}>{kpiBRL(d.emitidas.premio)}</span>
+                          </button>
+                        ))}</div>
+                      )}
+                    </div>
+                  )}
+
+                  {cards.status && (
+                    <div className="ckp-glass ckp-panel">
+                      <div className="ckp-panel-title">Mix por status<div className="ckp-pt-r"><span className="ckp-tag">{porStatus.reduce((s, d) => s + d.value, 0)} op</span><button className="ckp-exp" title="Expandir" onClick={() => setExpandido('status')}>⤢</button></div></div>
+                      {porStatus.length === 0 ? <div className="ckp-empty">Sem dados no escopo.</div> : <StatusDonut dados={porStatus} />}
+                    </div>
+                  )}
+
+                  {cards.matriz && (
+                    <div className="ckp-glass ckp-panel">
+                      <div className="ckp-panel-title">Matriz Corretora×Mês<div className="ckp-pt-r"><span className="ckp-tag">heatmap</span><button className="ckp-exp" title="Expandir" onClick={() => setExpandido('matriz')}>⤢</button></div></div>
+                      {matriz.linhas.length === 0 ? <div className="ckp-empty">Sem histórico com datas.</div> : <MatrizView matriz={matriz} />}
+                    </div>
+                  )}
+                </>
               )}
             </div>
-          )}
+          </aside>
+        </div>
+      </div>
+
+      {/* ── MODAL EXPANDIR ── */}
+      {expandido && (
+        <div className="ckp-modal-ov" onClick={() => setExpandido(null)}>
+          <div className="ckp-modal-box ckp-glass" onClick={(e) => e.stopPropagation()}>
+            <div className="ckp-modal-h">
+              <div className="ckp-title" style={{ fontSize: 17 }}><span className="ckp-title-bar" />{EXPAND_TITULO[expandido]}</div>
+              <button className="ckp-modal-x" onClick={() => setExpandido(null)}>✕</button>
+            </div>
+            <div className="ckp-modal-body">
+              {expandido === 'share' && <ShareView ranking={comPremio} big />}
+              {expandido === 'pareto' && (
+                paretoData.length === 0 ? <div className="ckp-empty">Sem dados no escopo.</div> : (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: '#aab7d0', fontSize: 13, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={paretoNumeros} onChange={(e) => setParetoNumeros(e.target.checked)} /> Números no gráfico
+                      </label>
+                      <select className="ckp-select" value={metricaPareto} onChange={(e) => setMetricaPareto(e.target.value as MetricaPareto)} style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.14)', borderRadius: 10, padding: '6px 10px' }}>
+                        <option value="premio">Prêmio</option><option value="tomadores">Nº de Tomadores</option><option value="operacoes">Nº de Operações</option>
+                      </select>
+                    </div>
+                    <div className="ckp-cap" style={{ marginTop: 0, marginBottom: 12 }}><b>{vitalFew}</b> corretora(s), os <b>{fmtPercent(vitalPct)}</b> de {paretoData.length}, concentram <b>80%</b> {metricaTxt}. É a “minoria vital” (princípio de Pareto 80/20).</div>
+                    <ParetoChart data={paretoData} mounted={mounted} vitalFew={vitalFew} metrica={metricaPareto} fmtVal={fmtParetoVal} onSelect={selecionar} numeros={paretoNumeros} big />
+                  </>
+                )
+              )}
+              {expandido === 'desfecho' && <DesfechoView desfecho={desfecho} totais={desfechoTotais} conv={desfechoConv} onSelect={selecionar} big />}
+              {expandido === 'status' && <StatusDonut dados={porStatus} big />}
+              {expandido === 'matriz' && <MatrizView matriz={matriz} big />}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* ── Rodapé de totais ── */}
-      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', background: `linear-gradient(135deg, ${NAVY_DK}, ${NAVY})`, color: '#fff', borderRadius: 14, padding: '14px 20px' }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: '#a9c4e8', textTransform: 'uppercase', letterSpacing: '.4px' }}>Totais no escopo</span>
-        <TotalRodape label="Corretoras" valor={String(totais.nCorretoras)} />
-        <TotalRodape label="Tomadores" valor={String(totais.nTomadores)} />
-        <TotalRodape label="Operações" valor={String(totais.nOperacoes)} />
-        <TotalRodape label="Prêmio" valor={kpiBRL(totais.premioTotal)} destaque />
-        <TotalRodape label="LMG" valor={kpiBRL(totais.lmgTotal)} />
-        <TotalRodape label="Taxa Média" valor={fmtPercent(totais.taxaMediaPond / 100)} />
-      </div>
-
-      {/* ── Pré-visualização do PDF ── */}
+      {/* ── PRÉ-VISUALIZAÇÃO DO PDF (preservado) ── */}
       {preview && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(6,14,26,.72)', zIndex: 9999, display: 'flex', flexDirection: 'column', padding: '2vh 2vw' }} onClick={() => setPreview(null)}>
           <div style={{ background: '#0a1628', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, boxShadow: '0 20px 60px rgba(0,0,0,.5)' }} onClick={(e) => e.stopPropagation()}>
@@ -877,164 +698,425 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
   )
 }
 
+const EXPAND_TITULO: Record<ExpandKey, string> = {
+  share: 'Participação no prêmio · share do todo', pareto: 'Concentração 80/20 (Pareto)',
+  desfecho: 'Desfecho das operações por corretora · que negócio ela traz', status: 'Mix por status', matriz: 'Matriz Corretora × Mês · prêmio por mês',
+}
+
 // ── Subcomponentes ──────────────────────────────────────────────────────────
 
-function TotalRodape({ label, valor, destaque = false }: { label: string; valor: string; destaque?: boolean }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <span style={{ fontSize: 10.5, fontWeight: 700, color: '#a9c4e8', textTransform: 'uppercase', letterSpacing: '.5px' }}>{label}</span>
-      <span style={{ fontSize: destaque ? 18 : 15, fontWeight: 800, color: destaque ? GOLD : '#fff' }}>{valor}</span>
-    </div>
-  )
+function ChipDark({ label, onClear }: { label: string; onClear: () => void }) {
+  return <span className="ckp-chip">{label}<button onClick={onClear} aria-label="Remover filtro">✕</button></span>
 }
 
-function Legenda({ cor, texto }: { cor: string; texto: string }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: SOFT, whiteSpace: 'nowrap' }}>
-      <span style={{ width: 10, height: 10, borderRadius: 3, background: cor, flexShrink: 0 }} />{texto}
-    </span>
-  )
-}
-
-function Chip({ cor, label, onClear }: { cor: string; label: string; onClear: () => void }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 20, padding: '4px 6px 4px 10px', fontSize: 12.5, fontWeight: 700, color: INK }}>
-      <span style={{ width: 9, height: 9, borderRadius: '50%', background: cor }} />
-      {label}
-      <button onClick={onClear} aria-label="Remover filtro" style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', background: '#eef2f7', color: SOFT, cursor: 'pointer', fontSize: 12, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
-    </span>
-  )
-}
-
-function KpiHero({ label, valor, sub, delta, spark, selMesIdx = -1, destaque = false, wide = false, miniSerie, onMini }: {
-  label: string; valor: string; sub: string; delta?: number | null; spark: number[]; selMesIdx?: number; destaque?: boolean; wide?: boolean; miniSerie?: number[]; onMini?: () => void
+function KpiDark({ ico, label, valor, sub, delta, spark, wide = false }: {
+  ico: string; label: string; valor: string; sub: string; delta?: number | null; spark?: number[]; wide?: boolean
 }) {
-  const temDelta = delta != null && isFinite(delta)
-  const positivo = (delta ?? 0) >= 0
-  const compacto = !!onMini // os 4 cards menores: densos, com mini-gráfico ocupando a faixa inferior
+  const has = delta != null && isFinite(delta)
+  const pos = (delta ?? 0) >= 0
   return (
-    <div style={{
-      gridColumn: wide ? 'span 2' : undefined,
-      background: destaque ? `linear-gradient(135deg, ${NAVY_DK}, ${NAVY})` : '#fff',
-      color: destaque ? '#fff' : INK,
-      border: `1px solid ${destaque ? 'transparent' : BORDER}`, borderRadius: 14,
-      padding: compacto ? '12px 14px 10px' : '15px 16px 12px',
-      boxShadow: destaque ? '0 8px 22px rgba(16,32,64,.28)' : '0 6px 18px rgba(16,32,64,.13)', position: 'relative', overflow: 'hidden',
-      display: 'flex', flexDirection: 'column',
-    }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.8px', textTransform: 'uppercase', color: destaque ? '#a9c4e8' : SOFT }}>{label}</div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: compacto ? 3 : 5, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: compacto ? 'clamp(16px, 4vw, 20px)' : 'clamp(17px, 4.5vw, 22px)', fontWeight: 800, color: destaque ? GOLD : INK, lineHeight: 1.05, wordBreak: 'break-word' }}>{valor}</div>
-        {temDelta && (
-          <span style={{ fontSize: 11.5, fontWeight: 800, whiteSpace: 'nowrap', color: positivo ? (destaque ? '#7ee0a8' : GREEN) : (destaque ? '#f2a3a3' : RED) }}>
-            {positivo ? '▲' : '▼'} {fmtPercent(Math.abs(delta as number))}
-          </span>
-        )}
+    <div className={`ckp-kpi ckp-glass${wide ? ' wide' : ''}`}>
+      <div className="ckp-k-top">
+        <div className="ckp-k-ico">{ico}</div>
+        {spark && spark.length > 1 && <Sparkline valores={spark} cor={wide ? GOLD : BLUE_BR} largura={90} altura={26} />}
       </div>
-      <div style={{ fontSize: 11.5, color: destaque ? '#a9c4e8' : SOFT, marginTop: 3 }}>{sub}</div>
-      {spark.length > 1 && <div style={{ marginTop: 8 }}><Sparkline valores={spark} cor={destaque ? GOLD : NAVY} largura={200} altura={30} destaqueIdx={selMesIdx} fluida /></div>}
-      {miniSerie && <MiniBarras valores={miniSerie} cor={NAVY} altura={40} onClick={onMini} ariaLabel={`Ver análises mensais — ${label}`} />}
+      <div className="ckp-k-label">{label}</div>
+      <div className="ckp-k-val">{valor}</div>
+      <div className="ckp-k-foot">
+        {has && <span className={`ckp-k-delta ${pos ? 'up' : 'down'}`}>{pos ? '▲' : '▼'} {fmtPercent(Math.abs(delta as number))}</span>}
+        <span className="ckp-k-sub">{sub}</span>
+      </div>
     </div>
   )
 }
 
-// Mini-gráfico de barras (SVG inline leve, no espírito do Sparkline). Barras finas
-// de topo levemente arredondado, ancoradas na base, gap ~2px; a ÚLTIMA em GOLD
-// (destaca o mês mais recente). É um botão: clicar leva às análises do fim da tela.
-function MiniBarras({ valores, cor = NAVY, altura = 40, onClick, ariaLabel }: {
-  valores: number[]; cor?: string; altura?: number; onClick?: () => void; ariaLabel?: string
-}) {
-  const W = 220, H = altura
-  const n = valores.length
-  const max = Math.max(...valores, 0)
-  const vazio = n < 2 || max <= 0
-  const GAP = 2.5, PAD_TOP = 3 // gap ~2px na tela + respiro p/ a barra mais alta
-  const barW = n > 0 ? Math.max(1, (W - GAP * (n - 1)) / n) : W
-  const raio = Math.min(barW / 2, 1.8) // topo levemente arredondado (raio pequeno)
-  const ultimo = n - 1
-  return (
-    <button type="button" className="kpi-mini" onClick={onClick} aria-label={ariaLabel}>
-      <svg viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" aria-hidden="true">
-        {vazio ? (
-          // <2 valores ou tudo zero: apenas uma linha-base discreta.
-          <line x1={0} y1={H - 1} x2={W} y2={H - 1} stroke={BORDER} strokeWidth={1} />
-        ) : valores.map((v, i) => {
-          const h = (v / max) * (H - PAD_TOP)
-          if (h <= 0) return null
-          const x = i * (barW + GAP)
-          const y = H - h
-          const rr = Math.min(raio, h, barW / 2)
-          // topo arredondado, base reta ancorada em H
-          const d = `M${x},${H} L${x},${y + rr} Q${x},${y} ${x + rr},${y} L${x + barW - rr},${y} Q${x + barW},${y} ${x + barW},${y + rr} L${x + barW},${H} Z`
-          return <path key={i} d={d} fill={i === ultimo ? GOLD : cor} />
-        })}
-      </svg>
-      <span className="kpi-mini-hint">ver análise <span className="kpi-mini-seta" aria-hidden="true">↗</span></span>
-    </button>
-  )
-}
-
-function Sparkline({ valores, cor, largura = 78, altura = 22, destaqueIdx = -1, fluida = false }: { valores: number[]; cor: string; largura?: number; altura?: number; destaqueIdx?: number; fluida?: boolean }) {
-  if (valores.length < 2) return <span style={{ fontSize: 11, color: '#c0ccda' }}>·</span>
-  const max = Math.max(...valores, 1)
-  const min = Math.min(...valores, 0)
-  const span = max - min || 1
+function Sparkline({ valores, cor, largura = 78, altura = 22 }: { valores: number[]; cor: string; largura?: number; altura?: number }) {
+  if (valores.length < 2) return <span style={{ fontSize: 11, color: '#516079' }}>·</span>
+  const max = Math.max(...valores, 1), min = Math.min(...valores, 0), span = max - min || 1
   const dx = largura / (valores.length - 1)
   const y = (v: number) => altura - 3 - ((v - min) / span) * (altura - 6)
   const pts = valores.map((v, i) => `${i * dx},${y(v)}`).join(' ')
-  const ultimo = valores.length - 1
+  const ult = valores.length - 1
   return (
-    <svg width={fluida ? '100%' : largura} height={altura} viewBox={`0 0 ${largura} ${altura}`} preserveAspectRatio={fluida ? 'none' : 'xMidYMid meet'} style={{ display: 'block', overflow: 'visible' }}>
-      <polyline points={pts} fill="none" stroke={cor} strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" />
-      {destaqueIdx >= 0 && destaqueIdx < valores.length && (
-        <circle cx={destaqueIdx * dx} cy={y(valores[destaqueIdx])} r={3} fill={GOLD} stroke="#fff" strokeWidth={1} />
-      )}
-      <circle cx={ultimo * dx} cy={y(valores[ultimo])} r={2.4} fill={cor} />
+    <svg width={largura} height={altura} viewBox={`0 0 ${largura} ${altura}`} style={{ display: 'block', overflow: 'visible' }}>
+      <polyline points={pts} fill="none" stroke={cor} strokeWidth={1.8} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={ult * dx} cy={y(valores[ult])} r={2.6} fill={cor} />
     </svg>
   )
 }
 
-function SemDados({ texto = 'Sem dados no escopo atual.' }: { texto?: string }) {
-  return <div style={{ textAlign: 'center', color: '#a0b8d0', padding: '38px 0', fontSize: 13 }}>{texto}</div>
-}
-
-function TooltipMensal({ active, payload, label }: { active?: boolean; payload?: { payload: { premio: number; qtd: number } }[]; label?: string }) {
+function TooltipMensal({ active, payload, label }: { active?: boolean; payload?: { payload: { premio: number; qtd: number; taxa?: number } }[]; label?: string }) {
   if (!active || !payload?.length) return null
   const p = payload[0].payload
   return (
-    <div style={{ background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 12px', boxShadow: '0 4px 16px rgba(16,32,64,.14)', fontSize: 12.5 }}>
-      <div style={{ fontWeight: 800, color: INK, marginBottom: 4 }}>{label}</div>
-      <div style={{ color: NAVY, fontWeight: 700 }}>{fmtMoeda(p.premio)}</div>
-      <div style={{ color: SOFT }}>{p.qtd} operação(ões)</div>
+    <div style={{ ...tooltipDark, padding: '8px 12px' }}>
+      <div style={{ fontWeight: 800, marginBottom: 4 }}>{label}</div>
+      <div style={{ color: BLUE_BR, fontWeight: 700 }}>{fmtMoeda(p.premio)}</div>
+      <div style={{ color: GOLD, fontWeight: 700 }}>{fmtTaxaPP(p.taxa ?? 0)} <span style={{ color: TICK, fontWeight: 500 }}>taxa méd. pond.</span></div>
+      <div style={{ color: TICK }}>{p.qtd} operação(ões)</div>
     </div>
   )
 }
 
-// Célula do Treemap: azul sequencial por rank, rótulo legível (nome + %).
-// selectedId (cross-filter): a célula escolhida ganha contorno dourado; as
-// demais ficam esmaecidas — feedback visual "à la Power BI".
-function CelulaTreemap(props: {
-  x?: number; y?: number; width?: number; height?: number
-  name?: string; id?: string; rank?: number; pct?: number; selectedId?: string; onPick?: (id: string) => void
+function ResultadoMensalGraf({ mounted, serie, temPeriodo, noPeriodo, taxaPeriodo, mesesSel, onToggleMes }: {
+  mounted: boolean; serie: ReturnType<typeof serieMensalPremioTaxa>; temPeriodo: boolean; noPeriodo: (m: string) => boolean
+  taxaPeriodo: number; mesesSel: Set<string>; onToggleMes: (mes: string) => void
 }) {
-  const { x = 0, y = 0, width = 0, height = 0, name = '', id = '', rank = 0, pct = 0, selectedId = '', onPick } = props
-  if (!id) return null
-  const outras = id === '__outras__'
-  const cor = outras ? '#7d97bd' : AZUIS[Math.min(rank, AZUIS.length - 1)]
-  const claro = rank >= 4
-  const txt = claro ? '#0a1628' : '#fff'
-  const selecionada = !!selectedId && id === selectedId
-  const esmaecida = !!selectedId && !selecionada
-  // Trunca o nome conforme a largura real da célula (evita texto vazando).
-  const maxChars = Math.max(4, Math.floor((width - 14) / 7.2))
-  const nomeCurto = name.length > maxChars ? name.slice(0, Math.max(1, maxChars - 1)) + '…' : name
-  const cabeNome = width > 46 && height > 26
-  const cabePct = width > 46 && height > 44
+  if (!mounted) return <div className="ckp-empty">Carregando gráfico…</div>
+  if (serie.length === 0) return <div className="ckp-empty">Sem histórico com datas.</div>
+  const anySel = mesesSel.size > 0
   return (
-    <g style={{ cursor: outras ? 'default' : 'pointer', opacity: esmaecida ? 0.35 : 1 }} onClick={() => !outras && id && onPick?.(id)}>
-      <rect x={x} y={y} width={width} height={height} fill={cor} stroke={selecionada ? GOLD : '#fff'} strokeWidth={selecionada ? 3.5 : 2} />
-      {cabeNome && <text x={x + 10} y={y + 22} fontFamily={FONTE} fontSize={13.5} fontWeight={700} fill={txt}>{nomeCurto}</text>}
-      {cabePct && <text x={x + 10} y={y + 41} fontFamily={FONTE} fontSize={12.5} fontWeight={600} fill={txt} opacity={0.92}>{(pct * 100).toFixed(1).replace('.', ',')}%</text>}
-    </g>
+    <div className="ckp-mensal-graf">
+    <ResponsiveContainer width="100%" height={252}>
+      <ComposedChart data={serie} margin={{ left: 4, right: 14, top: 16, bottom: 8 }}
+        onClick={(state) => { const idx = Number((state as { activeTooltipIndex?: number | string })?.activeTooltipIndex); if (Number.isInteger(idx) && idx >= 0 && idx < serie.length) onToggleMes(serie[idx].mes) }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.06)" vertical={false} />
+        <XAxis dataKey="label" tick={{ fontSize: 11, fill: TICK }} />
+        <YAxis yAxisId="l" tickFormatter={(v) => eixoBRL(Number(v))} tick={{ fontSize: 11, fill: TICK }} width={62} />
+        <YAxis yAxisId="r" orientation="right" domain={[0, 'auto']} tickFormatter={(v) => fmtTaxaPP(Number(v))} tick={{ fontSize: 10.5, fill: GOLD }} width={50} />
+        <Tooltip cursor={{ fill: 'rgba(74,144,208,.08)' }} content={<TooltipMensal />} />
+        <Bar yAxisId="l" dataKey="premio" name="Prêmio" radius={[5, 5, 0, 0]} isAnimationActive={false} maxBarSize={46} cursor="pointer">
+          {serie.map((p) => {
+            const realce = anySel ? mesesSel.has(p.mes) : (temPeriodo && noPeriodo(p.mes))
+            const apagar = anySel ? !mesesSel.has(p.mes) : (temPeriodo && !noPeriodo(p.mes))
+            return <Cell key={p.mes} fill={realce ? GOLD : NAVY_BAR} fillOpacity={apagar ? 0.35 : 1} />
+          })}
+        </Bar>
+        {taxaPeriodo > 0 && <ReferenceLine yAxisId="r" y={taxaPeriodo} stroke={GOLD} strokeDasharray="5 4" strokeWidth={1.2} strokeOpacity={0.55} />}
+        <Line yAxisId="r" type="monotone" dataKey="taxa" name="Taxa Méd. Pond." stroke={GOLD} strokeWidth={2.4}
+          dot={{ r: 2.6, fill: GOLD, stroke: '#0a1020', strokeWidth: 1 }} isAnimationActive={false} />
+      </ComposedChart>
+    </ResponsiveContainer>
+    </div>
+  )
+}
+
+function TabelaMensal({ serie, taxaPeriodo }: { serie: ReturnType<typeof serieMensalPremioTaxa>; taxaPeriodo: number }) {
+  if (serie.length === 0) return <div className="ckp-empty">Sem histórico com datas.</div>
+  const max = Math.max(1, ...serie.map((m) => m.premio))
+  const total = serie.reduce((s, m) => s + m.premio, 0)
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table className="ckp-mtab">
+        <thead><tr><th>Mês</th><th className="num">Prêmio</th><th className="m-cell">Volume</th><th className="num">Part. período</th><th className="num">Taxa Méd.</th><th className="num">Operações</th></tr></thead>
+        <tbody>
+          {serie.map((m) => (
+            <tr key={m.mes}>
+              <td>{m.label}</td>
+              <td className="num">{kpiBRL(m.premio)}</td>
+              <td className="m-cell"><div className="ckp-databar" style={{ width: `${(m.premio / max) * 100}%` }} /></td>
+              <td className="num">{fmtPercent(total > 0 ? m.premio / total : 0)}</td>
+              <td className="num" style={{ color: GOLD }}>{m.taxa > 0 ? fmtTaxaPP(m.taxa) : '—'}</td>
+              <td className="num">{m.qtd}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td className="num">{kpiBRL(total)}</td>
+            <td className="m-cell"></td>
+            <td className="num">100%</td>
+            <td className="num" style={{ color: GOLD }}>{taxaPeriodo > 0 ? fmtTaxaPP(taxaPeriodo) : '—'}</td>
+            <td className="num">{serie.reduce((s, m) => s + m.qtd, 0)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+function ShareView({ ranking, big = false }: { ranking: CorretoraAgg[]; big?: boolean }) {
+  if (ranking.length === 0) return <div className="ckp-empty">Sem prêmio no escopo.</div>
+  const total = ranking.reduce((s, r) => s + r.premioTotal, 0) || 1
+  const ord = [...ranking].sort((a, b) => b.premioTotal - a.premioTotal)
+  const n = ord.length
+  if (big) {
+    const max = Math.max(1, ...ord.map((r) => r.premioTotal))
+    let cum = 0, k = 0
+    for (const r of ord) { cum += r.premioTotal; k++; if (cum / total >= 0.8) break }
+    const somaK = ord.slice(0, k).reduce((s, r) => s + r.premioTotal, 0)
+    return (
+      <div>
+        <div className="ckp-cap" style={{ marginTop: 0, marginBottom: 14 }}>Das <b>{n}</b> corretoras, as <b>{k}</b> primeiras concentram <b>{fmtPercent(somaK / total)}</b> do prêmio ({kpiBRL(somaK)} de {kpiBRL(total)}).</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="ckp-mtab">
+            <thead><tr><th>Corretora</th><th className="m-cell">Participação</th><th className="num">%</th><th className="num">Prêmio</th></tr></thead>
+            <tbody>
+              {ord.map((r, i) => (
+                <tr key={r.id}>
+                  <td><span className="ckp-sw2" style={{ display: 'inline-block', background: azul(i, n), marginRight: 8, verticalAlign: 'middle' }} />{r.nome}</td>
+                  <td className="m-cell"><span style={{ display: 'block', height: 12, borderRadius: 5, background: 'rgba(255,255,255,.06)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${(r.premioTotal / max) * 100}%`, background: azul(i, n), borderRadius: 5 }} /></span></td>
+                  <td className="num" style={{ fontSize: 14, fontWeight: 800, color: BLUE_BR }}>{fmtPercent(r.premioTotal / total)}</td>
+                  <td className="num" style={{ fontSize: 14, fontWeight: 700 }}>{kpiBRL(r.premioTotal)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr><td>TOTAL · {n} corretoras</td><td className="m-cell"></td><td className="num">100%</td><td className="num">{kpiBRL(total)}</td></tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    )
+  }
+  const top = ord.slice(0, 4)
+  const restoPct = ord.slice(4).reduce((s, r) => s + r.premioTotal, 0) / total
+  return (
+    <>
+      <div className="ckp-share-bar" title="Cada fatia é uma corretora">{ord.map((r, i) => <i key={r.id} style={{ width: `${(r.premioTotal / total) * 100}%`, background: azul(i, n) }} title={`${r.nome}: ${fmtPercent(r.premioTotal / total)}`} />)}</div>
+      <div className="ckp-share-legend">
+        {top.map((r, i) => <div key={r.id} className="ckp-sl"><span className="ckp-sw2" style={{ background: azul(i, n) }} /><span className="ckp-sl-n">{r.nome}</span><span className="ckp-sl-v">{fmtPercent(r.premioTotal / total)} · {kpiBRL(r.premioTotal)}</span></div>)}
+        {n > 4 && <div className="ckp-sl"><span className="ckp-sw2" style={{ background: '#3b5170' }} /><span className="ckp-sl-n" style={{ color: '#7787a3' }}>demais {n - 4} corretoras</span><span className="ckp-sl-v" style={{ color: '#7787a3' }}>{fmtPercent(restoPct)}</span></div>}
+      </div>
+    </>
+  )
+}
+
+function ParetoChart({ data, mounted, vitalFew, metrica, fmtVal, onSelect, numeros = false, big = false }: {
+  data: { id: string; nome: string; valor: number; acumPct: number }[]; mounted: boolean; vitalFew: number
+  metrica: MetricaPareto; fmtVal: (v: number) => string; onSelect?: (id: string) => void; numeros?: boolean; big?: boolean
+}) {
+  if (!mounted) return <div className="ckp-empty">Carregando…</div>
+  const fmtNum = (v: number) => metrica === 'premio' ? eixoBRL(Number(v)) : String(Math.round(Number(v)))
+  return (
+    <ResponsiveContainer width="100%" height={big ? 440 : 270}>
+      <ComposedChart data={data} margin={{ left: 2, right: 6, top: numeros ? 20 : 12, bottom: big ? 70 : 8 }}
+        onClick={(state) => { const p = (state as unknown as { activePayload?: { payload: { id: string } }[] })?.activePayload?.[0]?.payload; if (p?.id) onSelect?.(p.id) }}>
+        {big && <XAxis dataKey="nome" angle={-30} textAnchor="end" interval={0} height={78} tick={{ fontSize: 11, fill: TICK }} />}
+        {!big && <XAxis dataKey="nome" tick={false} height={4} />}
+        <YAxis yAxisId="l" tickFormatter={(v) => fmtNum(Number(v))} tick={{ fontSize: 10.5, fill: TICK }} width={54} />
+        <YAxis yAxisId="r" orientation="right" domain={[0, 1]} tickFormatter={(v) => Math.round(Number(v) * 100) + '%'} tick={{ fontSize: 10.5, fill: TICK }} width={38} />
+        <Tooltip cursor={{ fill: 'rgba(74,144,208,.06)' }} contentStyle={tooltipDark} formatter={(v, n) => n === 'Acumulado' ? [fmtPercent(Number(v)), 'Acumulado'] : [fmtVal(Number(v)), 'Valor']} />
+        <ReferenceLine yAxisId="r" y={0.8} stroke={GOLD} strokeDasharray="5 4" strokeWidth={1.5} label={{ value: '80%', position: 'right', fill: GOLD, fontSize: 11 }} />
+        <Bar yAxisId="l" dataKey="valor" name="Valor" radius={[4, 4, 0, 0]} isAnimationActive={false} cursor="pointer">
+          {data.map((x, i) => <Cell key={x.id} fill={i < vitalFew ? NAVY_BAR : '#33445e'} />)}
+          {numeros && <LabelList dataKey="valor" position="top" fontSize={big ? 10 : 8} fill="#c9d6ec" formatter={(v) => fmtNum(Number(v))} />}
+        </Bar>
+        <Line yAxisId="r" type="monotone" dataKey="acumPct" name="Acumulado" stroke={GOLD} strokeWidth={2.4} dot={{ r: 2.6, fill: GOLD }} isAnimationActive={false} />
+      </ComposedChart>
+    </ResponsiveContainer>
+  )
+}
+
+const DESF_CATS: { key: 'emitidas' | 'andamento' | 'perdidas' | 'recusadas'; label: string; cor: string }[] = [
+  { key: 'emitidas', label: 'Emitidas', cor: '#3a9e82' }, { key: 'andamento', label: 'Em andamento', cor: '#4d7ea8' },
+  { key: 'perdidas', label: 'Perdidas', cor: '#b07a44' }, { key: 'recusadas', label: 'Recusadas', cor: '#bd655d' },
+]
+function DesfechoView({ desfecho, totais, conv, onSelect, big = false }: {
+  desfecho: DesfechoCorretora[]; totais: { emitidas: { n: number }; andamento: { n: number }; perdidas: { n: number }; recusadas: { n: number } }
+  conv: number; onSelect: (id: string) => void; big?: boolean
+}) {
+  const rows = big ? desfecho : desfecho.slice(0, 6)
+  const thr = big ? 4 : 12
+  return (
+    <>
+      <div className="ckp-legend-row">
+        {DESF_CATS.map((c) => <span key={c.key} className="ckp-leg"><span className="ckp-sw2" style={{ background: c.cor }} />{c.label} {totais[c.key].n}</span>)}
+        {big && <span style={{ fontSize: 12.5, fontWeight: 800, color: GOOD, borderLeft: '1px solid rgba(255,255,255,.12)', paddingLeft: 12 }}>Aproveitamento: {fmtPercent(conv)}</span>}
+      </div>
+      <div className={big ? 'ckp-desf-big' : ''}>
+        {rows.map((d) => {
+          const pct = (n: number) => d.total > 0 ? (n / d.total) * 100 : 0
+          return (
+            <div key={d.id} className="ckp-desf-row" onClick={() => onSelect(d.id)}>
+              <div className="ckp-desf-name" title={d.nome}>{d.nome}</div>
+              <div className="ckp-stack" title={`Emitidas ${d.emitidas.n} · Em andamento ${d.andamento.n} · Perdidas ${d.perdidas.n} · Recusadas ${d.recusadas.n}`}>
+                {DESF_CATS.map((c) => { const seg = d[c.key]; const w = pct(seg.n); return seg.n > 0 ? <i key={c.key} style={{ width: `${w}%`, background: c.cor }}>{w >= thr && <span className="ckp-seg-num">{seg.n}</span>}</i> : null })}
+              </div>
+              <div className="ckp-desf-emit">{d.decididas > 0 ? fmtPercent(d.conversao) : '·'}</div>
+            </div>
+          )
+        })}
+      </div>
+      {big && <div className="ckp-cap" style={{ fontSize: 11.5 }}>Considera a <b>carteira inteira</b> (emitidas, perdidas e recusadas). <b>Aproveitamento</b> = emitidas ÷ decididas. Clique numa linha para abrir a corretora.</div>}
+    </>
+  )
+}
+
+function StatusDonut({ dados, big = false }: { dados: { name: string; value: number; premio: number; cor: string }[]; big?: boolean }) {
+  if (!dados.length) return <div className="ckp-empty">Sem dados no escopo.</div>
+  const total = dados.reduce((s, d) => s + d.value, 0) || 1
+  const ord = [...dados].sort((a, b) => b.value - a.value)
+  const stops: string[] = []
+  let acc = 0
+  for (const d of ord) { const p = (d.value / total) * 100; stops.push(`${d.cor} ${acc}% ${acc + p}%`); acc += p }
+  const grad = stops.join(',')
+  const maior = ord[0]
+  return (
+    <div className="ckp-donut-wrap">
+      <div className={`ckp-donut${big ? ' ckp-donut-big' : ''}`} style={{ background: `conic-gradient(from -90deg,${grad})` }}>
+        <div className="ckp-donut-cent"><div><b style={{ fontSize: big ? 30 : 18 }}>{fmtPercent(maior ? maior.value / total : 0).replace(',00', '')}</b><span>{maior?.name ?? ''}</span></div></div>
+      </div>
+      <div className="ckp-legend">
+        {ord.map((d) => (
+          <div key={d.name} className="ckp-leg" style={{ fontSize: big ? 14 : 12 }}>
+            <span className="ckp-sw2" style={{ background: d.cor }} /><span className="ckp-lg-name">{d.name}</span>
+            <span className="ckp-lg-val">{d.value}{big ? ` · ${fmtMoedaCurta(d.premio)}` : ''} · {Math.round((d.value / total) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MatrizView({ matriz, big = false }: { matriz: ReturnType<typeof matrizCorretoraMes>; big?: boolean }) {
+  return (
+    <div className="ckp-heat-scroll">
+      <table className={`ckp-heat${big ? ' ckp-heat-big' : ''}`}>
+        <thead><tr><th className="rowlab"></th>{matriz.meses.map((m) => <th key={m}>{rotuloMes(m)}</th>)}{big && <th>Total</th>}</tr></thead>
+        <tbody>
+          {matriz.linhas.map((l) => (
+            <tr key={l.id}>
+              <th className="rowlab" title={l.nome}>{big ? l.nome : initials(l.nome)}</th>
+              {l.valores.map((v, i) => {
+                const t = v / matriz.maxCelula
+                const bg = v > 0 ? lerpHex(HEAT_LO, HEAT_HI, Math.pow(t, 0.75)) : 'rgba(255,255,255,.03)'
+                const txt = t > 0.5 ? '#0a1020' : '#c7d3ea'
+                return <td key={i} style={{ background: bg }} title={`${l.nome} · ${rotuloMes(matriz.meses[i])}: ${v > 0 ? kpiBRL(v) : '—'}`}>{big && v > 0 && <span className="ckp-hnum" style={{ color: txt }}>{kpiBRL(v).replace('R$ ', '')}</span>}</td>
+              })}
+              {big && <td style={{ textAlign: 'right', fontWeight: 800, background: 'transparent', width: 'auto', color: '#eaf0fb' }}>{kpiBRL(l.total)}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="ckp-heat-legend">menor <span className="ckp-heat-ramp" /> maior · prêmio no mês</div>
+    </div>
+  )
+}
+
+// ── Dossiê da corretora (painel direito) — reusa os dados já carregados ──────
+function posicaoDe<T extends { id: string }>(lista: T[], id: string, val: (x: T) => number): number | null {
+  const ord = [...lista].sort((a, b) => val(b) - val(a))
+  const i = ord.findIndex((x) => x.id === id)
+  return i >= 0 ? i + 1 : null
+}
+function DossieCorretora({ corretora, corretoras, tomadores, operacoes, statusFluxo, onVoltar, onEditar, onPdf, exportando }: {
+  corretora: Corretora; corretoras: Corretora[]; tomadores: TomAgg[]; operacoes: OpAgg[]
+  statusFluxo: Pick<StatusFluxo, 'nome' | 'cor'>[]; onVoltar: () => void; onEditar: () => void
+  onPdf: (payload: Parameters<typeof gerarPdfCorretora>[0]) => void; exportando: boolean
+}) {
+  const [abertas, setAbertas] = useState<Set<string>>(new Set())
+  const rankGlobal = useMemo<CorretoraAgg[]>(
+    () => comPareto(agregarPorCorretora(corretoras.map((c) => ({ id: c.id, razao_social: c.razao_social, nome_fantasia: c.nome_fantasia, status: c.status })), tomadores, operacoes)),
+    [corretoras, tomadores, operacoes],
+  )
+  const emitPorCor = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const o of operacoes) { if (!o.corretora_id) continue; if ((o.status || '').toLowerCase().includes('emiti')) m.set(o.corretora_id, (m.get(o.corretora_id) ?? 0) + (Number(o.premio_previsto) || 0)) }
+    return m
+  }, [operacoes])
+  const total = rankGlobal.length
+  const posPremio = posicaoDe(rankGlobal, corretora.id, (r) => r.premioTotal)
+  const posTom = posicaoDe(rankGlobal, corretora.id, (r) => r.nTomadores)
+  const posOp = posicaoDe(rankGlobal, corretora.id, (r) => r.nOperacoes)
+  const listaEmit = useMemo(() => corretoras.map((c) => ({ id: c.id, v: emitPorCor.get(c.id) ?? 0 })), [corretoras, emitPorCor])
+  const posEmit = posicaoDe(listaEmit, corretora.id, (x) => x.v)
+
+  const opsCor = useMemo(() => operacoes.filter((o) => o.corretora_id === corretora.id), [operacoes, corretora.id])
+  const tomsCor = useMemo(() => tomadores.filter((t) => t.corretora_id === corretora.id), [tomadores, corretora.id])
+  const kpis = useMemo(() => kpisDeOperacoes(opsCor), [opsCor])
+  const conv = useMemo(() => taxaConversao(opsCor), [opsCor])
+  const emitidas = useMemo(() => opsCor.filter((o) => (o.status || '').toLowerCase().includes('emiti')).length, [opsCor])
+  const premioEmit = emitPorCor.get(corretora.id) ?? 0
+  const rankTom = useMemo(() => comParticipacao(rankingTomadores(tomsCor, opsCor)), [tomsCor, opsCor])
+  const maxTom = useMemo(() => Math.max(1, ...rankTom.map((t) => t.premioTotal)), [rankTom])
+  const corStatus = useMemo(() => new Map(statusFluxo.map((s) => [s.nome, s.cor])), [statusFluxo])
+  const nome = corretora.nome_fantasia || corretora.razao_social
+  const toggle = (id: string) => setAbertas((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n })
+
+  return (
+    <div className="ckp-dossie">
+      <div className="ckp-hero">
+        <div className="ckp-hero-top"><span className="ckp-hero-tag">Dossiê da corretora</span><button className="ckp-back" onClick={onVoltar}>← consolidado</button></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+          <div className="ckp-dossie-badge">{initials(nome)}</div>
+          <div style={{ minWidth: 0 }}>
+            <div className="ckp-dossie-name">{nome}</div>
+            <span className={`ckp-pill ${corretora.status === 'ativo' ? 'on' : 'off'}`} style={{ marginTop: 4, display: 'inline-block' }}>{corretora.status === 'ativo' ? 'Ativa' : 'Inativa'}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="ckp-glass ckp-panel">
+        <div className="ckp-mini-kpis">
+          <div className="ckp-mini-k"><div className="ckp-mk-l">Prêmio Previsto</div><div className="ckp-mk-v" style={{ color: GOLD }}>{kpiBRL(kpis.premioTotal)}</div></div>
+          <div className="ckp-mini-k"><div className="ckp-mk-l">Prêmio Emitido</div><div className="ckp-mk-v" style={{ color: GOOD }}>{kpiBRL(premioEmit)}</div></div>
+          <div className="ckp-mini-k"><div className="ckp-mk-l">LMG (exposição)</div><div className="ckp-mk-v">{kpiBRL(kpis.lmgTotal)}</div></div>
+          <div className="ckp-mini-k"><div className="ckp-mk-l">Operações</div><div className="ckp-mk-v">{kpis.nOperacoes}</div></div>
+          <div className="ckp-mini-k"><div className="ckp-mk-l">Tomadores</div><div className="ckp-mk-v">{tomsCor.length}</div></div>
+          <div className="ckp-mini-k"><div className="ckp-mk-l">Taxa Média</div><div className="ckp-mk-v">{fmtPercent(kpis.taxaMediaPond / 100)}</div></div>
+        </div>
+      </div>
+
+      <div className="ckp-glass ckp-panel">
+        <div className="ckp-panel-title">Posição no ranking<span className="ckp-tag">entre {total}</span></div>
+        <div className="ckp-pos">
+          <PosItem label="Prêmio previsto" pos={posPremio} />
+          <PosItem label="Prêmio emitido" pos={posEmit} />
+          <PosItem label="Tomadores" pos={posTom} />
+          <PosItem label="Operações" pos={posOp} />
+        </div>
+      </div>
+
+      <div className="ckp-glass ckp-panel">
+        <div className="ckp-panel-title">Cadeia · Tomador → Operação<span className="ckp-tag">{fmtPercent(conv)} emitidas</span></div>
+        <div className="ckp-funnel" style={{ marginBottom: 14 }}>
+          <div className="ckp-fn-row"><div className="ckp-fn-bar" style={{ width: '100%', background: 'linear-gradient(90deg,#5a9cd8,#4a90d0)' }}>{kpis.nOperacoes} operações</div><span className="ckp-fn-meta">{tomsCor.length} tomadores</span></div>
+          <div className="ckp-fn-row"><div className="ckp-fn-bar" style={{ width: `${Math.max(kpis.nOperacoes > 0 ? (emitidas / kpis.nOperacoes) * 100 : 0, 12)}%`, background: 'linear-gradient(90deg,#2fa885,#38c58e)' }}>{emitidas} emitidas</div></div>
+        </div>
+        <div className="ckp-cadeia">
+          {rankTom.length === 0 ? <div className="ckp-empty">Sem tomadores/operações.</div> : rankTom.map((t) => {
+            const aberta = abertas.has(t.id)
+            const opsTom = operacoesDoTomador(opsCor, t.id)
+            return (
+              <div key={t.id}>
+                <div className="ckp-cad-tom" onClick={opsTom.length ? () => toggle(t.id) : undefined} style={{ cursor: opsTom.length ? 'pointer' : 'default' }}>
+                  <span style={{ width: 12, color: '#7787a3', fontSize: 10 }}>{opsTom.length ? (aberta ? '▼' : '▶') : ''}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.nome}</div>
+                    <div style={{ fontSize: 11, color: '#7787a3' }}>{t.nOperacoes} op · {fmtPercent(t.participacaoPct ?? 0)}</div>
+                  </div>
+                  <div style={{ width: 70, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="ckp-partbar" style={{ width: 40 }}><i style={{ width: `${(t.premioTotal / maxTom) * 100}%` }} /></span>
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 800, minWidth: 70, textAlign: 'right' }}>{kpiBRL(t.premioTotal)}</span>
+                </div>
+                {aberta && [...opsTom].sort((a, b) => (Number(b.premio_previsto) || 0) - (Number(a.premio_previsto) || 0)).map((o) => {
+                  const cor = corStatus.get(o.status) ?? '#94a3b8'
+                  return (
+                    <div key={o.id} className="ckp-cad-op">
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: cor, flexShrink: 0 }} />
+                      <span style={{ fontWeight: 600, color: cor, whiteSpace: 'nowrap' }}>{o.status || 'Sem status'}</span>
+                      <span style={{ flex: 1, minWidth: 0, color: '#7787a3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.modalidade || 'Operação'}{o.estado ? ` · ${o.estado}` : ''}</span>
+                      <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{kpiBRL(Number(o.premio_previsto) || 0)}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+        </div>
+        <div className="ckp-dossie-actions" style={{ marginTop: 14 }}>
+          <button className="ckp-btn" style={{ flex: 1 }} onClick={onEditar}>✎ Editar cadastro</button>
+          <button className="ckp-btn" style={{ flex: 1 }} disabled={exportando} onClick={() => onPdf({
+            corretoraNome: nome,
+            kpis: { premioTotal: kpis.premioTotal, lmgTotal: kpis.lmgTotal, nOperacoes: kpis.nOperacoes, nTomadores: tomsCor.length, ticketMedio: kpis.ticketMedio, taxaMediaPond: kpis.taxaMediaPond },
+            tomadores: rankTom.map((t) => ({ nome: t.nome, nOperacoes: t.nOperacoes, premioTotal: t.premioTotal, lmgTotal: t.lmgTotal, participacaoPct: t.participacaoPct ?? 0 })),
+            periodoLabel: 'Todos os períodos', chart: null,
+          })}>📄 PDF</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PosItem({ label, pos }: { label: string; pos: number | null }) {
+  const medalha = pos != null && pos <= 3
+  return (
+    <div className="ckp-pos-item">
+      <span className="ckp-pos-num" style={{ color: medalha ? GOLD : BLUE_BR }}>{pos != null ? `${pos}º` : '·'}</span>
+      <span className="ckp-pos-lab">{label}</span>
+    </div>
   )
 }

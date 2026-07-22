@@ -8,7 +8,6 @@ import { maskCNPJ, maskTelefone, maskCEP, titleCase, validarCNPJ } from '@/lib/u
 import type { Corretora } from '@/types'
 import AnexosSection from '@/components/AnexosSection'
 import PainelGerencial from '@/components/corretoras/PainelGerencial'
-import CorretoraDetalhe from '@/components/corretoras/CorretoraDetalhe'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -215,14 +214,14 @@ export default function CorretorasPage() {
       {/* ── Modal: tela da corretora (esquerda = cadastro · direita = números & cadeia) ── */}
       {mostrarForm && (
         <div className="modal-overlay">
-          <div className="modal-box" style={editando ? { maxWidth: '98vw', width: '98vw', height: '95vh', display: 'flex', flexDirection: 'column' } : { maxWidth: 720, width: '96%' }}>
+          <div className="modal-box" style={{ maxWidth: 720, width: '96%' }}>
             <div className="modal-header">
               <div className="modal-title">{editando ? `🏢 ${editando.nome_fantasia || editando.razao_social}` : '+ Nova Corretora'}</div>
               <button onClick={fecharForm} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: editando ? 'repeat(auto-fit, minmax(360px, 1fr))' : '1fr', gap: 20, alignItems: 'start', ...(editando ? { flex: 1, overflow: 'auto', minHeight: 0 } : {}) }}>
-              {/* ── ESQUERDA: cadastro (como hoje) ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 20, alignItems: 'start' }}>
+              {/* ── Cadastro da corretora (os números vivem no dossiê do cockpit) ── */}
               <div style={{ minWidth: 0 }}>
                 {mensagem && (
                   <div className={mensagem.tipo === 'sucesso' ? 'alert-success' : 'alert-error'} style={{ marginBottom: 16 }}>
@@ -403,13 +402,6 @@ export default function CorretorasPage() {
                   </>
                 )}
               </div>
-
-              {/* ── DIREITA: números & cadeia da corretora ── */}
-              {editando && (
-                <div style={{ minWidth: 0, background: '#fafcff', border: '1px solid #e0ecf8', borderRadius: 12, padding: 16 }}>
-                  <CorretoraDetalhe corretora={editando} />
-                </div>
-              )}
             </div>
           </div>
         </div>
