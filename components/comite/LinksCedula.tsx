@@ -142,7 +142,7 @@ export default function LinksCedula({ operacaoId }: { operacaoId: string }) {
 
       {sandbox ? (
         <div style={{ fontSize: 13, color: T.textoFraco, lineHeight: 1.6, padding: '10px 0' }}>
-          A cédula usa o banco real e o Storage — não funciona no sandbox.
+          A cédula usa o banco real e o Storage, então não funciona no sandbox.
           Teste em <strong style={{ color: T.texto }}>npm run dev</strong> ou em produção.
         </div>
       ) : carregando ? (
@@ -160,7 +160,7 @@ export default function LinksCedula({ operacaoId }: { operacaoId: string }) {
               borderRadius: 12, padding: 14, marginBottom: 14,
             }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: '#4ade80', marginBottom: 5 }}>
-                📢 Lista de transmissão — envio único
+                📢 Lista de transmissão · envio único
               </div>
               <div style={{ fontSize: 12, color: T.textoFraco, lineHeight: 1.6, marginBottom: 11 }}>
                 Copie e envie <strong style={{ color: T.texto }}>uma vez</strong> na sua lista de
@@ -202,7 +202,7 @@ export default function LinksCedula({ operacaoId }: { operacaoId: string }) {
           </div>
           <div style={{ fontSize: 11.5, color: T.textoFraco, lineHeight: 1.55, marginBottom: 10 }}>
             Toque em <strong style={{ color: '#4ade80' }}>Enviar</strong> para abrir o WhatsApp do diretor já
-            com a mensagem pronta — é só apertar enviar no celular. A mensagem não usa emojis, então chega
+            com a mensagem pronta. É só apertar enviar no celular. A mensagem não usa emojis, então chega
             perfeita em qualquer aparelho.
           </div>
 

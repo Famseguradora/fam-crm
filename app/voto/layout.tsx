@@ -4,7 +4,7 @@ import type { Metadata, Viewport } from 'next'
 import './voto.css'
 
 export const metadata: Metadata = {
-  title: 'Cédula do Comitê — FAM Seguradora',
+  title: 'Cédula do Comitê · FAM Seguradora',
   // Link sigiloso: nunca pode virar resultado de busca.
   robots: { index: false, follow: false, nocache: true },
 }

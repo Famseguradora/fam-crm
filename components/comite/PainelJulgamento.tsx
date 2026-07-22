@@ -291,7 +291,7 @@ export default function PainelJulgamento({
         <div style={{ background: 'rgba(232,184,75,0.10)', border: `1.5px solid ${T.dourado}`, borderRadius: 12, padding: '10px 14px', marginBottom: 14, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ fontSize: 22 }}>⏸️</div>
           <div style={{ flex: '1 1 240px' }}>
-            <div style={{ fontWeight: 800, color: T.douradoTexto, fontSize: 13 }}>Processo em VISTA — deliberação pausada</div>
+            <div style={{ fontWeight: 800, color: T.douradoTexto, fontSize: 13 }}>Processo em VISTA (deliberação pausada)</div>
             <div style={{ fontSize: 12, color: T.texto, marginTop: 2 }}>
               Pedida por <strong>{op.comite_vista_por}</strong>{op.comite_vista_cargo ? ` (${op.comite_vista_cargo})` : ''}.
               {op.comite_vista_justificativa && <> Motivo: “{op.comite_vista_justificativa}”</>}
@@ -309,7 +309,7 @@ export default function PainelJulgamento({
           <div style={{ fontSize: 18, lineHeight: 1.2 }}>ⓘ</div>
           <div style={{ flex: '1 1 240px', fontSize: 12, color: T.texto, lineHeight: 1.5 }}>
             {autorComentario ? <>Você está identificado como <strong>{autorComentario.nome}</strong> e </> : 'Seu login '}
-            não consta como <strong>diretor votante</strong> desta bancada — por isso o botão de voto não aparece.
+            não consta como <strong>diretor votante</strong> desta bancada, por isso o botão de voto não aparece.
             Cada diretor vota no próprio nome (pelo CRM com o seu login, ou pela cédula no WhatsApp).
             Você ainda pode registrar <strong>razões e contrarrazões</strong> abaixo.
             {' '}Se você é diretor e deveria votar aqui, peça para vincular seu login ao seu cadastro de usuário.
@@ -401,7 +401,7 @@ export default function PainelJulgamento({
                           <button
                             onClick={(e) => { e.stopPropagation(); retratarVoto(m.id) }}
                             disabled={emVista}
-                            title={emVista ? 'Deliberação pausada (em vista)' : 'Retratar/alterar o SEU voto — o voto atual fica no histórico'}
+                            title={emVista ? 'Deliberação pausada (em vista)' : 'Retratar/alterar o SEU voto. O voto atual fica no histórico'}
                             style={{ marginTop: 7, cursor: emVista ? 'not-allowed' : 'pointer', opacity: emVista ? 0.5 : 1, background: 'transparent', color: T.douradoTexto, border: `1px solid ${T.dourado}66`, borderRadius: 7, padding: '4px 10px', fontSize: 10.5, fontWeight: 700 }}
                           >↩ Retratar meu voto</button>
                         ) : (
@@ -411,7 +411,7 @@ export default function PainelJulgamento({
                     ) : meu ? (
                       <button onClick={() => abrirVoto(m.id)} disabled={emVista} title={emVista ? 'Deliberação pausada (em vista)' : 'Registrar o seu voto'} style={{ cursor: emVista ? 'not-allowed' : 'pointer', opacity: emVista ? 0.5 : 1, background: votandoId === m.id ? T.roxo : T.roxoSuave, color: votandoId === m.id ? '#fff' : T.roxoTexto, border: `1px solid ${T.roxo}55`, borderRadius: 8, padding: '6px 16px', fontSize: 12, fontWeight: 700 }}>🗳️ Votar</button>
                     ) : (
-                      <div title="Cada diretor vota no próprio nome — pelo CRM ou pela cédula no celular" style={{ fontSize: 10, color: T.textoFraco, padding: '6px 8px' }}>⏳ Aguardando voto</div>
+                      <div title="Cada diretor vota no próprio nome, pelo CRM ou pela cédula no celular" style={{ fontSize: 10, color: T.textoFraco, padding: '6px 8px' }}>⏳ Aguardando voto</div>
                     )}
                   </div>
                 )
@@ -432,7 +432,7 @@ export default function PainelJulgamento({
           </div>
           {retratandoId && (
             <div style={{ background: 'rgba(232,184,75,0.10)', border: `1px solid ${T.dourado}66`, borderRadius: 8, padding: '8px 11px', marginBottom: 11, fontSize: 12, color: T.douradoTexto, lineHeight: 1.45 }}>
-              Você está <strong>retratando</strong> um voto já proferido. Escolha o novo voto e justifique com os novos elementos — o voto anterior fica preservado no <strong>histórico</strong>.
+              Você está <strong>retratando</strong> um voto já proferido. Escolha o novo voto e justifique com os novos elementos. O voto anterior fica preservado no <strong>histórico</strong>.
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -579,7 +579,7 @@ export default function PainelJulgamento({
             </div>
           ) : (
             <div style={{ fontSize: 12, color: T.textoFraco, fontStyle: 'italic' }}>
-              Ainda não há razões registradas. Registre a sua acima — cada membro tem a própria fala.
+              Ainda não há razões registradas. Registre a sua acima. Cada membro tem a própria fala.
             </div>
           )}
         </div>
@@ -651,7 +651,7 @@ export default function PainelJulgamento({
                       <div style={{ fontSize: 18, flexShrink: 0 }}>🖋️</div>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: T.texto }}>
-                          Parecer da Subscrição{op.subscritor_nome ? ` — ${op.subscritor_nome}` : ''}
+                          Parecer da Subscrição{op.subscritor_nome ? `: ${op.subscritor_nome}` : ''}
                           {op.voto_subscricao && <span style={{ ...pill(op.voto_subscricao), marginLeft: 8, fontSize: 10 }}>{VOTO_META[op.voto_subscricao].emoji} {VOTO_META[op.voto_subscricao].label}</span>}
                         </div>
                         {op.parecer_subscricao && <div style={{ fontSize: 12.5, color: T.textoFraco, marginTop: 3, lineHeight: 1.45 }}>“{op.parecer_subscricao}”</div>}
@@ -681,7 +681,7 @@ export default function PainelJulgamento({
                     <div style={{ display: 'flex', gap: 10, borderTop: `1px dashed ${T.borda}`, paddingTop: 10 }}>
                       <div style={{ fontSize: 18, flexShrink: 0 }}>⏸️</div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: T.douradoTexto }}>Pedido de Vista — {op.comite_vista_por}{op.comite_vista_cargo ? ` (${op.comite_vista_cargo})` : ''}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: T.douradoTexto }}>Pedido de Vista: {op.comite_vista_por}{op.comite_vista_cargo ? ` (${op.comite_vista_cargo})` : ''}</div>
                         {op.comite_vista_justificativa && <div style={{ fontSize: 12.5, color: T.textoFraco, marginTop: 3, lineHeight: 1.45 }}>“{op.comite_vista_justificativa}”</div>}
                       </div>
                     </div>

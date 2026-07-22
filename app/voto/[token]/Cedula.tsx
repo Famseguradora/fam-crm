@@ -175,7 +175,7 @@ export default function Cedula(props: Props) {
       setConfirmado(j.voto)
       setParecerFinal(j.parecerFinal ?? null)
     } catch {
-      setErro('Falha de conexão. Seu voto NÃO foi registrado — tente de novo.')
+      setErro('Falha de conexão. Seu voto NÃO foi registrado. Tente de novo.')
     } finally {
       setEnviando(false)
     }
@@ -426,7 +426,7 @@ export default function Cedula(props: Props) {
                   {operacao.parecer}
                   {(operacao.subscritor || operacao.votoSubscricao) && (
                     <div className="voto-parecer-autor">
-                      — {operacao.subscritor ?? 'Subscrição'}
+                      por {operacao.subscritor ?? 'Subscrição'}
                       {operacao.votoSubscricao && (
                         <>
                           {' · '}
@@ -673,12 +673,12 @@ function AbaCalculo({ dossie }: { dossie: DossieCedula }) {
           <div className="voto-secao-titulo">Simulação de cenário</div>
 
           {c.lmgNum <= 0 ? (
-            <div className="voto-meta-vazio">LMG não informado — não há o que simular.</div>
+            <div className="voto-meta-vazio">LMG não informado, não há o que simular.</div>
           ) : (
             <>
               {alterado && (
                 <div className="voto-sim-aviso">
-                  ⚡ Simulando — os números abaixo não alteram a operação.
+                  ⚡ Simulando. Os números abaixo não alteram a operação.
                 </div>
               )}
 
@@ -793,7 +793,7 @@ function CardMeta({ bloco }: { bloco: BlocoMeta }) {
               <div style={{ marginTop: 12, fontSize: 13, color: '#4a5a6e', lineHeight: 1.6 }}>
                 Faltariam <strong style={{ color: '#a02020' }}>{bloco.gap}</strong> para fechar a meta
                 {bloco.opsParaFechar > 0 && (
-                  <> — cerca de <strong>{bloco.opsParaFechar}</strong> operação(ões) no ticket médio de {bloco.ticketMedio}.</>
+                  <>, cerca de <strong>{bloco.opsParaFechar}</strong> operação(ões) no ticket médio de {bloco.ticketMedio}.</>
                 )}
               </div>
             )}
@@ -895,7 +895,7 @@ function AbaDados({ dossie }: { dossie: DossieCedula }) {
 
               {org.diretores.length > 0 && (
                 <>
-                  <SubTitulo>⚖️ Diretores — assinam como responsáveis</SubTitulo>
+                  <SubTitulo>⚖️ Diretores (assinam como responsáveis)</SubTitulo>
                   {org.diretores.map((d2, i) => (
                     <div key={`${d2.nome}-${i}`} className="voto-org-item">
                       <span style={{ fontSize: 15 }}>👔</span>
@@ -995,7 +995,7 @@ function Doc({
   token, doc, titulo, emoji, cor, bg,
 }: { token: string; doc: DocInfo | null; titulo: string; emoji: string; cor: string; bg: string }) {
   if (!doc) {
-    return <div className="voto-doc-vazio">{emoji} {titulo} — não anexada</div>
+    return <div className="voto-doc-vazio">{emoji} {titulo}: não anexada</div>
   }
   return (
     <a className="voto-doc" href={`/voto/${token}/doc/${doc.id}`} target="_blank" rel="noopener noreferrer">
