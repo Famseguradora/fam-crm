@@ -196,9 +196,14 @@ export default function LinksCedula({ operacaoId }: { operacaoId: string }) {
             </div>
           )}
 
-          {/* ── Acompanhamento por diretor ── */}
-          <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: T.textoFraco, marginBottom: 9 }}>
-            Acompanhamento · link individual
+          {/* ── Envio individual: 1 toque por diretor ── */}
+          <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: T.textoFraco, marginBottom: 3 }}>
+            Envio individual · 1 toque por diretor
+          </div>
+          <div style={{ fontSize: 11.5, color: T.textoFraco, lineHeight: 1.55, marginBottom: 10 }}>
+            Toque em <strong style={{ color: '#4ade80' }}>Enviar</strong> para abrir o WhatsApp do diretor já
+            com a mensagem pronta — é só apertar enviar no celular. A mensagem não usa emojis, então chega
+            perfeita em qualquer aparelho.
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -225,41 +230,44 @@ export default function LinksCedula({ operacaoId }: { operacaoId: string }) {
                     {s.label}
                   </div>
 
-                  {/* Copiar a mensagem completa preserva os emojis (a área de
-                      transferência é UTF-8); é o caminho recomendado. */}
-                  <button
-                    onClick={async () => { if (await copiar(p.mensagem)) { flash(`${p.conviteId}:msg`); marcarEnviado(p.conviteId) } }}
-                    style={{
-                      cursor: 'pointer', background: '#25d366', color: '#0a1628', border: 'none',
-                      borderRadius: 8, padding: '6px 11px', fontWeight: 800, fontSize: 11.5, whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {copiado === `${p.conviteId}:msg` ? '✓ Copiado!' : '📋 Copiar'}
-                  </button>
-
-                  {p.whatsapp && (
+                  {/* Caminho principal: abre o WhatsApp do diretor com a mensagem
+                      pronta. Sem emojis no texto, o wa.me não corrompe mais nada. */}
+                  {p.whatsapp ? (
                     <a
                       href={`https://wa.me/${p.whatsapp}?text=${encodeURIComponent(p.mensagem)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={() => marcarEnviado(p.conviteId)}
-                      title="Abre o WhatsApp com a mensagem. Em alguns aparelhos os emojis podem chegar quebrados — se acontecer, use 📋 Copiar e cole no chat."
+                      title={`Abre o WhatsApp de ${p.nome} com a mensagem pronta`}
                       style={{
-                        background: 'rgba(37,211,102,0.12)', color: '#4ade80',
-                        border: '1px solid rgba(37,211,102,0.4)', borderRadius: 8,
-                        padding: '6px 11px', fontWeight: 700, fontSize: 11.5,
-                        textDecoration: 'none', whiteSpace: 'nowrap',
+                        background: '#25d366', color: '#0a1628', border: 'none', borderRadius: 8,
+                        padding: '7px 15px', fontWeight: 800, fontSize: 12, textDecoration: 'none',
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      📲 Abrir chat
+                      📲 Enviar
                     </a>
+                  ) : (
+                    // Sem telefone cadastrado: não dá para abrir o chat — resta
+                    // copiar a mensagem e colar manualmente.
+                    <button
+                      onClick={async () => { if (await copiar(p.mensagem)) { flash(`${p.conviteId}:msg`); marcarEnviado(p.conviteId) } }}
+                      style={{
+                        cursor: 'pointer', background: 'rgba(37,211,102,0.12)', color: '#4ade80',
+                        border: '1px solid rgba(37,211,102,0.4)', borderRadius: 8, padding: '7px 13px',
+                        fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {copiado === `${p.conviteId}:msg` ? '✓ Copiado!' : '📋 Copiar mensagem'}
+                    </button>
                   )}
 
                   <button
                     onClick={async () => { if (await copiar(p.url)) flash(`${p.conviteId}:link`) }}
+                    title="Copia só o link da cédula deste diretor"
                     style={{
                       cursor: 'pointer', background: 'transparent', color: T.textoFraco,
-                      border: `1px solid ${T.borda}`, borderRadius: 8, padding: '6px 11px',
+                      border: `1px solid ${T.borda}`, borderRadius: 8, padding: '7px 11px',
                       fontWeight: 600, fontSize: 11.5, whiteSpace: 'nowrap',
                     }}
                   >

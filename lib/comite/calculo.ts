@@ -31,15 +31,28 @@ export function sufVig(p: string | null | undefined): string {
   return 'a'
 }
 
+// Unidade da vigência já com singular/plural certo ("1 ano", "28 meses",
+// "1 dia"). Para valores ≠ 1 devolve exatamente o rótulo antigo (em minúsculas),
+// então não muda nada dos casos comuns — só corrige o singular.
+function unidadeVig(periodicidade: string | null | undefined, valor: number): string {
+  const p = periodicidade ?? 'Anos'
+  const uno = valor === 1
+  if (p === 'Anos') return uno ? 'ano' : 'anos'
+  if (p === 'Meses') return uno ? 'mês' : 'meses'
+  if (p === 'Dias') return uno ? 'dia' : 'dias'
+  // Periodicidade fora do padrão: mantém o rótulo original em minúsculas.
+  return p.toLowerCase()
+}
+
 // Vigência por extenso, como aparece na aba "Dados" do Comitê.
 // ATENÇÃO: aqui `vigencia_anos` tem precedência — regra DIFERENTE de anosVig().
-// É assim no CRM (OperacaoDados.tsx) e a cédula precisa mostrar igual.
+// FONTE ÚNICA: usada pela aba "Dados" (OperacaoDados.tsx), pela cédula pública
+// e pelo convite do WhatsApp — todos precisam mostrar o mesmo texto.
 export function vigenciaTxt(op: VigenciaLike): string {
   if (op.vigencia_anos != null) {
-    const per = (op.periodicidade_vigencia ?? 'Anos').toLowerCase()
-    return `${op.vigencia_anos} ${per}`
+    return `${op.vigencia_anos} ${unidadeVig(op.periodicidade_vigencia, op.vigencia_anos)}`
   }
-  if (op.vigencia_dias != null) return `${op.vigencia_dias} dias`
+  if (op.vigencia_dias != null) return `${op.vigencia_dias} ${op.vigencia_dias === 1 ? 'dia' : 'dias'}`
   return '—'
 }
 

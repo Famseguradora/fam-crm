@@ -13,6 +13,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Operacao, Tomador, Socio } from '@/types'
 import { fmtMoeda, fmtPercent, maskCNPJ, maskCEP, maskTelefone, fmtData, badgeClassTomador, badgeClassOperacao } from '@/lib/utils'
 import { montarArvore, extrairDiretores, contarSocios } from '@/lib/relatorio-socios'
+import { vigenciaTxt } from '@/lib/comite/calculo'
 import OrganogramaView from '@/components/OrganogramaView'
 
 interface Props {
@@ -47,15 +48,6 @@ function Secao({ titulo, cor, extra, aberta, onToggle, children }: {
       {aberta && <div style={{ padding: '12px 16px 16px' }}>{children}</div>}
     </div>
   )
-}
-
-function vigenciaTxt(op: Operacao): string {
-  if (op.vigencia_anos != null) {
-    const per = (op.periodicidade_vigencia ?? 'Anos').toLowerCase()
-    return `${op.vigencia_anos} ${per}`
-  }
-  if (op.vigencia_dias != null) return `${op.vigencia_dias} dias`
-  return '—'
 }
 
 export default function OperacaoDados({ op }: Props) {

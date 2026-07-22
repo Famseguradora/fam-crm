@@ -6,6 +6,7 @@
 // ============================================================================
 import { fmtMoeda, fmtPercent } from '@/lib/utils'
 import { VOTO_META, type PlacarComite } from '@/lib/comite/votacao'
+import { vigenciaTxt } from '@/lib/comite/calculo'
 import type { Operacao, VotoComite, ParecerFinal } from '@/types'
 
 export interface DadosConvite {
@@ -26,37 +27,37 @@ function primeiroNome(nome: string): string {
   return (nome || '').trim().split(/\s+/)[0] || nome
 }
 
-function prazoTxt(op: Operacao): string {
-  if (op.vigencia_anos != null) return `${op.vigencia_anos} ${op.vigencia_anos === 1 ? 'ano' : 'anos'}`
-  if (op.vigencia_dias != null) return `${op.vigencia_dias} dias`
-  return '—'
-}
-
 // Convite personalizado que cada diretor "recebe" no WhatsApp.
+//
+// SEM emojis de propósito: o envio individual abre pelo WhatsApp (URL wa.me),
+// e o WhatsApp no Windows corrompe emojis compostos (o "�" que aparecia no
+// "⏳ Prazo"). Texto limpo com *negrito* rende bem e chega igual em qualquer
+// aparelho. O prazo usa vigenciaTxt (respeita a periodicidade: 28 MESES não
+// vira "28 anos") — a MESMA fonte da aba "Dados" do Comitê e da cédula.
 export function montarConvite({ diretorNome, subscritorNome, remetenteCargo, op }: DadosConvite): string {
   const tomador = op.tomador?.razao_social ?? 'Tomador'
   // Cargo antes do nome, sem artigo — assim funciona para qualquer gênero
   // ("Executivo de Crédito Marco", "Diretora de Produtos Camila").
   const cargo = (remetenteCargo ?? '').trim() || 'Subscritor'
   const linhas = [
-    diretorNome ? `Olá, *Sr(a). ${diretorNome}* 👋` : 'Prezados Diretores 👋',
+    diretorNome ? `Olá, *Sr(a). ${diretorNome}*,` : '*Prezados Diretores,*',
     '',
     diretorNome
-      ? `${cargo} *${subscritorNome}* acabou de te convidar a conhecer uma operação que entrou em *Comitê*.`
+      ? `${cargo} *${subscritorNome}* convida você a analisar uma operação que entrou em *Comitê*.`
       : `${cargo} *${subscritorNome}* convida o Comitê a analisar uma operação que entrou em julgamento.`,
     '',
-    `🏢 *Tomador:* ${tomador}`,
-    `📋 *Operação:* ${op.modalidade ?? op.produto?.nome ?? '—'}`,
+    `*Tomador:* ${tomador}`,
+    `*Operação:* ${op.modalidade ?? op.produto?.nome ?? '—'}`,
     '',
-    `💰 Prêmio: *${op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—'}*`,
-    `🛡️ LMG: *${op.lmg ? fmtMoeda(op.lmg) : '—'}*`,
-    `📈 Taxa: *${op.taxa ? fmtPercent(op.taxa / 100) : '—'}*`,
-    `⏳ Prazo: *${prazoTxt(op)}*`,
+    `*Prêmio:* ${op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—'}`,
+    `*LMG:* ${op.lmg ? fmtMoeda(op.lmg) : '—'}`,
+    `*Taxa:* ${op.taxa ? fmtPercent(op.taxa / 100) : '—'}`,
+    `*Prazo:* ${vigenciaTxt(op)}`,
     '',
     op.parecer_subscricao
-      ? `🖋️ _Parecer da Subscrição:_ "${op.parecer_subscricao}"`
+      ? `_Parecer da Subscrição:_ "${op.parecer_subscricao}"`
       : '',
-    'Toque abaixo para abrir a análise de crédito ou registrar seu voto. ⚖️',
+    'Abra o link abaixo para ver a análise completa e registrar o seu voto.',
   ].filter((l) => l !== '')
   return linhas.join('\n')
 }

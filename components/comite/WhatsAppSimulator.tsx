@@ -10,6 +10,7 @@ import { useState } from 'react'
 import type { Operacao, Usuario, ComiteVoto, VotoComite } from '@/types'
 import { fmtMoeda, fmtPercent, maskCNPJ } from '@/lib/utils'
 import { VOTO_META, VOTOS_ORDENADOS, calcularPlacar } from '@/lib/comite/votacao'
+import { vigenciaTxt } from '@/lib/comite/calculo'
 import { montarConvite, montarConfirmacaoVoto, montarVeredito } from '@/lib/comite/whatsapp-sim'
 
 interface Props {
@@ -54,11 +55,10 @@ function formatarInline(linha: string): React.ReactNode[] {
   return partes
 }
 
-// Prazo legível da operação (espelha o helper interno do whatsapp-sim).
+// Prazo legível da operação. Usa vigenciaTxt (respeita a periodicidade) — a
+// MESMA fonte do convite e da aba "Dados"; assim 28 MESES não vira "28 anos".
 function prazoTxt(op: Operacao): string {
-  if (op.vigencia_anos != null) return `${op.vigencia_anos} ${op.vigencia_anos === 1 ? 'ano' : 'anos'}`
-  if (op.vigencia_dias != null) return `${op.vigencia_dias} dias`
-  return '—'
+  return vigenciaTxt(op)
 }
 
 export default function WhatsAppSimulator({ op, subscritorNome, membros, votos, onVotar, onFechar }: Props) {

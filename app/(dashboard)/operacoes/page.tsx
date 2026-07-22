@@ -278,6 +278,19 @@ export default function OperacoesPage() {
     () => (usuarioAtual?.cargo ?? '').toLowerCase().includes('subscri'),
     [usuarioAtual],
   )
+  // No sandbox (demo) qualquer um vota/edita para simular a bancada num login só.
+  const votacaoLivre = process.env.NEXT_PUBLIC_SANDBOX === 'true'
+  // Quem assina uma razão/contrarazão: o usuário logado. Sem cadastro em
+  // `usuarios`, só o sandbox libera uma identidade sintética (o demo).
+  const autorComentario = useMemo(
+    () =>
+      usuarioAtual
+        ? { nome: usuarioAtual.nome, cargo: usuarioAtual.cargo ?? null }
+        : votacaoLivre
+          ? { nome: usuarioInfo?.nome ?? 'Você', cargo: null }
+          : null,
+    [usuarioAtual, usuarioInfo, votacaoLivre],
+  )
 
   // ── Cadastro Básico Tomador ──
   const [mostrarFormTomador, setMostrarFormTomador] = useState(false)
@@ -785,6 +798,25 @@ export default function OperacoesPage() {
       comite_vista_por: null, comite_vista_cargo: null, comite_vista_justificativa: null,
     }).eq('id', op.id)
     await carregarOperacoes()
+    notifyComiteChange()
+  }
+
+  // Razão/contrarazão do usuário logado (não é o Parecer da Subscrição). Cada um
+  // registra a PRÓPRIA fala, assinada; é append-only, ninguém altera a do outro.
+  async function comentarComite(op: Operacao, texto: string) {
+    const txt = texto.trim().slice(0, 2000)
+    if (!txt) return
+    const supabase = createClient()
+    await supabase.from('comite_comentarios').insert({
+      operacao_id: op.id,
+      usuario_id: usuarioAtual?.id ?? null,
+      autor: usuarioAtual?.nome ?? usuarioInfo?.nome ?? 'Usuário',
+      cargo: usuarioAtual?.cargo ?? null,
+      comentario: txt,
+      tipo: 'geral',
+      canal: 'crm',
+    })
+    await carregarComentariosComite([op.id])
     notifyComiteChange()
   }
 
@@ -3860,6 +3892,11 @@ export default function OperacoesPage() {
                                   onAbrirWhatsapp={() => setWhatsappSimOpId(op.id)}
                                   comentarios={comentariosComite[op.id] ?? []}
                                   onEnviarConvite={() => enviarConvitesComite(op)}
+                                  usuarioAtualId={usuarioAtual?.id ?? null}
+                                  votacaoLivre={votacaoLivre}
+                                  podeEditarParecer={ehSubscritorAtual || votacaoLivre}
+                                  autorComentario={autorComentario}
+                                  onComentar={(texto) => comentarComite(op, texto)}
                                 />
                               )}
                             </div>

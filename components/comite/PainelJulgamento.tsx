@@ -42,6 +42,16 @@ interface Props {
   onRetomarVista: () => void
   onAbrirWhatsapp: () => void
   onEnviarConvite: () => void
+  // Governança da bancada: em produção, só o dono do login vota/altera o
+  // PRÓPRIO voto (impede que um usuário mude o voto de outro diretor).
+  usuarioAtualId: string | null
+  // Sandbox (demo): libera votar por qualquer diretor para simular a bancada.
+  votacaoLivre: boolean
+  // Só um subscritor edita o Parecer da Subscrição.
+  podeEditarParecer: boolean
+  // Quem assina uma razão/contrarazão (usuário logado). null = ninguém compõe.
+  autorComentario: { nome: string; cargo: string | null } | null
+  onComentar: (texto: string) => Promise<void> | void
 }
 
 // Paleta ESCURA premium (sala de comitê). Acentos seguem a marca FAM.
@@ -120,6 +130,11 @@ export default function PainelJulgamento({
   onRetomarVista,
   onAbrirWhatsapp,
   onEnviarConvite,
+  usuarioAtualId,
+  votacaoLivre,
+  podeEditarParecer,
+  autorComentario,
+  onComentar,
 }: Props) {
   const [votandoId, setVotandoId] = useState<string | null>(null)
   const [retratandoId, setRetratandoId] = useState<string | null>(null)
@@ -130,9 +145,29 @@ export default function PainelJulgamento({
   const [votoSubscritor, setVotoSubscritor] = useState<VotoComite | null>(op.voto_subscricao)
   const [historicoAberto, setHistoricoAberto] = useState(false)
   const [focoVotoId, setFocoVotoId] = useState<string | null>(null)
+  const [razaoTexto, setRazaoTexto] = useState('')
+  const [enviandoRazao, setEnviandoRazao] = useState(false)
   function abrirHistorico(usuarioId: string | null) {
     setFocoVotoId(usuarioId)
     setHistoricoAberto(true)
+  }
+
+  // Cada diretor vota SOMENTE no próprio nome — é o que dá credibilidade à
+  // votação (ninguém muda o voto de outro pela tela). No sandbox a trava cai
+  // para o demo poder simular a bancada inteira num login só.
+  const podeVotar = (membroId: string) =>
+    votacaoLivre || (!!usuarioAtualId && membroId === usuarioAtualId)
+
+  async function enviarRazao() {
+    const txt = razaoTexto.trim()
+    if (!txt || enviandoRazao) return
+    setEnviandoRazao(true)
+    try {
+      await onComentar(txt)
+      setRazaoTexto('')
+    } finally {
+      setEnviandoRazao(false)
+    }
   }
 
   const votoPorUsuario = new Map<string, ComiteVoto>()
@@ -166,11 +201,12 @@ export default function PainelJulgamento({
   }, [votos])
 
   // ── Handlers do painel de voto ──
-  function abrirVoto(usuarioId: string) { setVotandoId(usuarioId); setRetratandoId(null); setOpcao(''); setTexto('') }
+  function abrirVoto(usuarioId: string) { if (!podeVotar(usuarioId)) return; setVotandoId(usuarioId); setRetratandoId(null); setOpcao(''); setTexto('') }
   // Retratar: reabre o painel já preenchido com o voto vigente do diretor. Ao
   // confirmar, o voto anterior é arquivado no histórico (server-side) e o novo
   // passa a valer — assim a mudança fica registrada sem apagar a trilha.
   function retratarVoto(usuarioId: string) {
+    if (!podeVotar(usuarioId)) return
     const atual = votoPorUsuario.get(usuarioId)
     setVotandoId(usuarioId)
     setRetratandoId(usuarioId)
@@ -265,6 +301,22 @@ export default function PainelJulgamento({
         </div>
       )}
 
+      {/* Aviso quando o login atual NÃO é um diretor votante desta bancada:
+          explica por que o botão de voto não aparece (evita a impressão de bug)
+          e aponta o caminho — cada diretor vota no próprio login ou pela cédula. */}
+      {!votacaoLivre && !membros.some((m) => m.id === usuarioAtualId) && (
+        <div style={{ background: 'rgba(59,130,246,0.08)', border: `1px solid ${T.azul}55`, borderRadius: 12, padding: '10px 14px', marginBottom: 14, display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 18, lineHeight: 1.2 }}>ⓘ</div>
+          <div style={{ flex: '1 1 240px', fontSize: 12, color: T.texto, lineHeight: 1.5 }}>
+            {autorComentario ? <>Você está identificado como <strong>{autorComentario.nome}</strong> e </> : 'Seu login '}
+            não consta como <strong>diretor votante</strong> desta bancada — por isso o botão de voto não aparece.
+            Cada diretor vota no próprio nome (pelo CRM com o seu login, ou pela cédula no WhatsApp).
+            Você ainda pode registrar <strong>razões e contrarrazões</strong> abaixo.
+            {' '}Se você é diretor e deveria votar aqui, peça para vincular seu login ao seu cadastro de usuário.
+          </div>
+        </div>
+      )}
+
       {/* ── LINHA: Placar (esq) + Bancada (dir) ── */}
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: 14 }}>
         {/* Placar + Anexos */}
@@ -328,6 +380,8 @@ export default function PainelJulgamento({
                 const voto = votoPorUsuario.get(m.id)
                 const meta = voto ? VOTO_META[voto.voto] : null
                 const glow = meta ? { border: `1.5px solid ${meta.cor}`, boxShadow: `0 0 0 1px ${meta.cor}55, 0 0 22px ${meta.cor}33` } : { border: `1px solid ${T.borda}` }
+                // Este cartão é do próprio usuário logado? Só ele vota/retrata aqui.
+                const meu = podeVotar(m.id)
                 return (
                   <div
                     key={m.id}
@@ -336,22 +390,28 @@ export default function PainelJulgamento({
                     style={{ width: 150, background: '#0f1a30', borderRadius: 12, padding: 13, textAlign: 'center', cursor: voto ? 'pointer' : 'default', ...glow }}
                   >
                     <div style={{ width: 50, height: 50, borderRadius: '50%', margin: '0 auto 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 16, color: '#fff', background: 'linear-gradient(160deg,#1e4080,#2a5aa0)', border: `2.5px solid ${meta ? meta.cor : '#3a4f78'}`, filter: voto ? 'none' : 'grayscale(0.4) opacity(0.85)' }}>{iniciais(m.nome)}</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', lineHeight: 1.15 }}>{m.nome}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', lineHeight: 1.15 }}>{m.nome}{meu && !votacaoLivre && <span style={{ color: T.azulClaro }}> · você</span>}</div>
                     <div style={{ fontSize: 10.5, color: T.textoFraco, marginBottom: 8 }}>{m.cargo || 'Diretor(a)'}</div>
                     {meta ? (
                       <>
                         <span style={pill(voto!.voto)}>{meta.emoji} {meta.label}</span>
                         {voto!.segue_subscritor && <div style={{ fontSize: 9.5, color: T.douradoTexto, marginTop: 4, fontWeight: 700 }}>⚖️ Acompanha</div>}
                         <div style={{ marginTop: 6, fontSize: 9.5, color: T.azulClaro, fontWeight: 700 }}>ver detalhes →</div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); retratarVoto(m.id) }}
-                          disabled={emVista}
-                          title={emVista ? 'Deliberação pausada (em vista)' : 'Retratar/alterar o voto — o voto atual fica no histórico'}
-                          style={{ marginTop: 7, cursor: emVista ? 'not-allowed' : 'pointer', opacity: emVista ? 0.5 : 1, background: 'transparent', color: T.douradoTexto, border: `1px solid ${T.dourado}66`, borderRadius: 7, padding: '4px 10px', fontSize: 10.5, fontWeight: 700 }}
-                        >↩ Retratar voto</button>
+                        {meu ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); retratarVoto(m.id) }}
+                            disabled={emVista}
+                            title={emVista ? 'Deliberação pausada (em vista)' : 'Retratar/alterar o SEU voto — o voto atual fica no histórico'}
+                            style={{ marginTop: 7, cursor: emVista ? 'not-allowed' : 'pointer', opacity: emVista ? 0.5 : 1, background: 'transparent', color: T.douradoTexto, border: `1px solid ${T.dourado}66`, borderRadius: 7, padding: '4px 10px', fontSize: 10.5, fontWeight: 700 }}
+                          >↩ Retratar meu voto</button>
+                        ) : (
+                          <div title="Só o próprio diretor altera o voto dele" style={{ marginTop: 7, fontSize: 9.5, color: T.textoFraco }}>🔒 voto do diretor</div>
+                        )}
                       </>
+                    ) : meu ? (
+                      <button onClick={() => abrirVoto(m.id)} disabled={emVista} title={emVista ? 'Deliberação pausada (em vista)' : 'Registrar o seu voto'} style={{ cursor: emVista ? 'not-allowed' : 'pointer', opacity: emVista ? 0.5 : 1, background: votandoId === m.id ? T.roxo : T.roxoSuave, color: votandoId === m.id ? '#fff' : T.roxoTexto, border: `1px solid ${T.roxo}55`, borderRadius: 8, padding: '6px 16px', fontSize: 12, fontWeight: 700 }}>🗳️ Votar</button>
                     ) : (
-                      <button onClick={() => abrirVoto(m.id)} disabled={emVista} title={emVista ? 'Deliberação pausada (em vista)' : 'Registrar voto'} style={{ cursor: emVista ? 'not-allowed' : 'pointer', opacity: emVista ? 0.5 : 1, background: votandoId === m.id ? T.roxo : T.roxoSuave, color: votandoId === m.id ? '#fff' : T.roxoTexto, border: `1px solid ${T.roxo}55`, borderRadius: 8, padding: '6px 16px', fontSize: 12, fontWeight: 700 }}>🗳️ Votar</button>
+                      <div title="Cada diretor vota no próprio nome — pelo CRM ou pela cédula no celular" style={{ fontSize: 10, color: T.textoFraco, padding: '6px 8px' }}>⏳ Aguardando voto</div>
                     )}
                   </div>
                 )
@@ -406,8 +466,13 @@ export default function PainelJulgamento({
           <strong style={{ fontSize: 13, color: T.azulClaro }}>📋 Parecer da Subscrição</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {op.voto_subscricao && !editandoParecer && <span style={pill(op.voto_subscricao)}>{VOTO_META[op.voto_subscricao].emoji} {VOTO_META[op.voto_subscricao].label}</span>}
-            {!editandoParecer && (
+            {/* Só a Subscrição registra/edita este parecer. Os demais membros
+                usam "Razões e Contrarrazões" abaixo — cada um com a própria fala. */}
+            {podeEditarParecer && !editandoParecer && (
               <button onClick={() => setEditandoParecer(true)} style={{ cursor: 'pointer', background: 'transparent', border: `1px solid ${T.borda}`, color: T.azulClaro, borderRadius: 7, padding: '4px 12px', fontSize: 12, fontWeight: 600 }}>{op.parecer_subscricao || op.voto_subscricao ? '✏️ Editar' : '+ Registrar parecer'}</button>
+            )}
+            {!podeEditarParecer && !editandoParecer && (
+              <span title="Somente a Subscrição registra este parecer" style={{ fontSize: 10.5, color: T.textoFraco, whiteSpace: 'nowrap' }}>🔒 só a Subscrição</span>
             )}
           </div>
         </div>
@@ -449,31 +514,74 @@ export default function PainelJulgamento({
         <button onClick={onEnviarConvite} style={{ cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#fff', border: `1px solid ${T.borda}`, borderRadius: 10, padding: '10px 18px', fontWeight: 700, fontSize: 13 }}>📲 Enviar convite</button>
       </div>
 
-      {/* Debate da bancada — comentários escritos pelos diretores na cédula,
-          separados do voto. Chegam aqui em tempo real pelo realtime dos votos. */}
-      {comentarios.length > 0 && (
+      {/* ── RAZÕES E CONTRARRAZÕES DA BANCADA ──
+          O Parecer (acima) é só da Subscrição. AQUI todo membro registra a
+          própria razão/contrarazão — texto assinado, e ninguém edita o do
+          outro (é append-only: cada fala fica preservada, mantendo a
+          parcimônia da deliberação). Chegam em tempo real (realtime). */}
+      {(autorComentario || comentarios.length > 0) && (
         <div style={{ marginTop: 14, background: T.cardGrad, border: `1px solid ${T.borda}`, borderRadius: 14, padding: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: T.roxoTexto, marginBottom: 12 }}>
-            💬 Comentários da Bancada ({comentarios.length})
+            💬 Razões e Contrarrazões da Bancada ({comentarios.length})
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-            {comentarios.map((c) => (
-              <div key={c.id} style={{ background: T.inputBg, border: `1px solid ${T.borda}`, borderRadius: 10, padding: '11px 13px' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 700, color: T.texto }}>
-                    {c.autor}
-                    {c.cargo && <span style={{ color: T.textoFraco, fontWeight: 500 }}> · {c.cargo}</span>}
-                  </span>
-                  <span style={{ fontSize: 10.5, color: T.textoFraco }}>
-                    {CANAL_CURTO[c.canal] ?? CANAL_CURTO.crm} · 🕒 {fmtDataHora(c.created_at)}
-                  </span>
-                </div>
-                <div style={{ fontSize: 13, color: T.texto, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
-                  {c.comentario}
-                </div>
+
+          {/* Compositor: cada usuário envia a PRÓPRIA fala. */}
+          {autorComentario && (
+            <div style={{ marginBottom: comentarios.length > 0 ? 16 : 4 }}>
+              <textarea
+                value={razaoTexto}
+                onChange={(e) => setRazaoTexto(e.target.value)}
+                rows={3}
+                maxLength={2000}
+                placeholder="Escreva suas razões ou contrarazões sobre esta operação…"
+                style={inputBox}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginTop: 8 }}>
+                <span style={{ fontSize: 11, color: T.textoFraco, lineHeight: 1.45 }}>
+                  Assinando como <strong style={{ color: T.texto }}>{autorComentario.nome}</strong>
+                  {autorComentario.cargo ? ` · ${autorComentario.cargo}` : ''}. Seu texto entra assinado e
+                  não altera o de ninguém.
+                </span>
+                <button
+                  onClick={enviarRazao}
+                  disabled={!razaoTexto.trim() || enviandoRazao}
+                  style={{
+                    cursor: !razaoTexto.trim() || enviandoRazao ? 'not-allowed' : 'pointer',
+                    opacity: !razaoTexto.trim() || enviandoRazao ? 0.5 : 1,
+                    background: T.roxo, color: '#fff', border: 'none', borderRadius: 8,
+                    padding: '8px 18px', fontWeight: 800, fontSize: 13, whiteSpace: 'nowrap',
+                  }}
+                >
+                  {enviandoRazao ? 'Publicando…' : '✍️ Publicar minha razão'}
+                </button>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+
+          {comentarios.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+              {comentarios.map((c) => (
+                <div key={c.id} style={{ background: T.inputBg, border: `1px solid ${T.borda}`, borderRadius: 10, padding: '11px 13px' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: T.texto }}>
+                      {c.autor}
+                      {c.cargo && <span style={{ color: T.textoFraco, fontWeight: 500 }}> · {c.cargo}</span>}
+                    </span>
+                    <span style={{ fontSize: 10.5, color: T.textoFraco }}>
+                      {CANAL_CURTO[c.canal] ?? CANAL_CURTO.crm} · 🕒 {fmtDataHora(c.created_at)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 13, color: T.texto, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                    {c.comentario}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: T.textoFraco, fontStyle: 'italic' }}>
+              Ainda não há razões registradas. Registre a sua acima — cada membro tem a própria fala.
+            </div>
+          )}
         </div>
       )}
 
