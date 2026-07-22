@@ -268,6 +268,42 @@ body {
   .form-field.full { grid-column: 1; }
 }
 
+/* ── Painel de Corretoras: grade de análises (desktop = coluna esquerda maior, 1 col no mobile) ──
+   Coluna esquerda (Evolução mensal) ~63% · direita (Participação) ~37%.
+   minmax(0, …) é ESSENCIAL: sem ele, o fr default vira minmax(auto, …) e o conteúdo
+   largo (Matriz, tabelas, ResponsiveContainer) força a coluna a esticar, ANULANDO a
+   proporção e estourando o mobile. Com minmax(0, …) + min-width:0 nos filhos, a
+   proporção é respeitada e o conteúdo largo rola por dentro do próprio card. */
+.corretoras-analise { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.corretoras-analise > * { min-width: 0; }
+@media (max-width: 980px) { .corretoras-analise { grid-template-columns: minmax(0, 1fr); } }
+/* Âncora dos mini-gráficos dos cards de KPI: compensa o header sticky
+   (header 64 + faixas de cotação/notícias ≈ 118px) com folga, para o topo dos
+   gráficos não ficar escondido ao rolar. */
+#graficos-corretoras { scroll-margin-top: 140px; }
+
+/* ── Mini-gráfico clicável dos cards de KPI (barras finas; leva às análises) ── */
+.kpi-mini {
+  margin-top: auto; width: 100%;
+  display: flex; flex-direction: column; gap: 3px;
+  border: none; background: transparent; padding: 7px 2px 2px; border-radius: 9px;
+  cursor: pointer; text-align: left; transition: background .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.kpi-mini:hover { background: #f2f7fd; }
+.kpi-mini:focus-visible { outline: 2px solid #1e4080; outline-offset: 2px; }
+.kpi-mini svg { display: block; width: 100%; transition: filter .15s; }
+.kpi-mini:hover svg { filter: brightness(1.06) saturate(1.04); }
+/* micro-legenda: âncora sutil que revela que o card leva às análises do fim da tela */
+.kpi-mini-hint {
+  align-self: flex-end; display: inline-flex; align-items: center; gap: 4px;
+  font-family: 'Calibri', 'Segoe UI', sans-serif; font-size: 10.5px; font-weight: 700; letter-spacing: .2px;
+  color: #6080a0; transition: color .15s;
+}
+.kpi-mini:hover .kpi-mini-hint { color: #1e4080; }
+.kpi-mini-seta { display: inline-block; font-weight: 800; transition: transform .15s; }
+.kpi-mini:hover .kpi-mini-seta { transform: translate(1px, -1px); }
+
 /* ── Ajustes mobile (≤768px de largura OU ≤600px de altura = celular deitado) ── */
 @media (max-width: 768px), (max-height: 600px) {
   body { font-size: 14px; }
