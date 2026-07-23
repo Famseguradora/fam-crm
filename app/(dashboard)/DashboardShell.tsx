@@ -37,8 +37,9 @@ const TABS: Tab[] = [
   { label: '📦 Produtos',   href: '/produtos',   adminOnly: true },
 ]
 
-// Telas essenciais que aparecem no menu do app no celular (as demais ficam só no desktop)
-const MOBILE_NAV_HREFS = ['/', '/operacoes', '/tomadores']
+// Telas que aparecem no menu do app no celular (as demais ficam só no desktop).
+// Corretoras entra no mobile (respeitando adminOnly); o cockpit é responsivo.
+const MOBILE_NAV_HREFS = ['/', '/operacoes', '/tomadores', '/corretoras']
 
 const SUBSCRICAO_ITEMS: { label: string; href: string; icon: string; disabled?: boolean }[] = []
 
@@ -510,7 +511,9 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
         )}
 
         {/* ── Conteúdo ── */}
-        <div style={{ flex: 1, padding: isMobile ? '16px 12px' : '28px 32px', minWidth: 0 }}>
+        {/* Corretoras usa o cockpit em tela cheia (full-bleed): sem o padding da
+            área de conteúdo, o painel ocupa todo o espaço, sem a moldura clara. */}
+        <div style={{ flex: 1, padding: pathname === '/corretoras' ? 0 : (isMobile ? '16px 12px' : '28px 32px'), minWidth: 0 }}>
           <DateRangeProvider initialDate={dataInicio}>
             {children}
           </DateRangeProvider>
@@ -543,11 +546,11 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
               >✕</button>
             </div>
 
-            {/* Navegação essencial no mobile: Dashboard, Operações, Tomadores.
-                Telas de admin/cadastro (Corretoras, Produtos, Sistema, Usuários…)
-                ficam disponíveis só no desktop. */}
+            {/* Navegação no mobile: Dashboard, Operações, Tomadores e Corretoras
+                (esta só para admin, igual ao desktop). Demais telas de
+                admin/cadastro (Produtos, Sistema, Usuários…) seguem só no desktop. */}
             <div style={{ paddingTop: 8 }}>
-              {TABS.filter((t) => MOBILE_NAV_HREFS.includes(t.href)).map((tab) => {
+              {TABS.filter((t) => MOBILE_NAV_HREFS.includes(t.href) && (!t.adminOnly || isAdmin)).map((tab) => {
                 const isActive = tab.href === '/' ? pathname === '/' : pathname.startsWith(tab.href)
                 return (
                   <button

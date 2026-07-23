@@ -525,10 +525,13 @@ ul.org-tree > li.org-subtree::after { display: none; }
     radial-gradient(900px 520px at 104% -4%, rgba(232,184,75,.12), transparent 55%),
     radial-gradient(1000px 700px at 50% 120%, rgba(152,120,208,.10), transparent 60%),
     linear-gradient(180deg,#0a1122 0%,#070b16 60%);
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius: 18px;
-  padding: 18px;
+  /* Full-bleed: o cockpit preenche toda a área de Corretoras (sem moldura
+     clara). Sem borda/arredondamento externos; respiro interno confortável. */
+  border: none;
+  border-radius: 0;
+  padding: 20px 24px;
   display: flex; flex-direction: column; gap: 16px;
+  min-height: 100%;
 }
 .ckp-glass {
   background: linear-gradient(180deg,var(--surf2),var(--surf));
@@ -778,7 +781,14 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .ckp-cad-op { display: flex; align-items: center; gap: 8px; padding: 6px 11px 6px 30px; border-top: 1px dashed rgba(255,255,255,.06); font-size: 11.5px; background: rgba(255,255,255,.02); }
 /* modal expandir */
 .ckp-modal-ov { position: fixed; inset: 0; z-index: 1500; background: rgba(4,8,18,.74); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); display: grid; place-items: center; padding: 24px; }
-.ckp-modal-box { width: min(1100px,95vw); max-height: 90vh; display: flex; flex-direction: column; padding: 24px; }
+.ckp-modal-box { width: min(1100px,95vw); max-height: 90vh; display: flex; flex-direction: column; padding: 24px;
+  /* Realce ao expandir o gráfico em tela cheia: um véu de laranja (tom claro)
+     sobre o vidro dá calor à visualização, sem tirar a transparência que fica linda. */
+  background:
+    linear-gradient(155deg, rgba(224,140,74,.30), rgba(205,116,60,.10) 60%),
+    linear-gradient(180deg, var(--surf2), var(--surf));
+  border-color: rgba(226,150,86,.52);
+  box-shadow: inset 0 1px 0 rgba(255,222,182,.16), 0 24px 60px -18px rgba(0,0,0,.6); }
 .ckp-modal-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .ckp-modal-x { background: var(--surf); border: 1px solid var(--bd); color: var(--ink2); font-size: 16px; cursor: pointer; border-radius: 9px; width: 34px; height: 34px; flex: none; }
 .ckp-modal-x:hover { color: var(--ink); border-color: var(--bd2); }
