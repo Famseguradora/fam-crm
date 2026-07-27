@@ -624,11 +624,21 @@ export default function OperacoesPage() {
     const obsComMotivo = motivo
       ? `Motivo: ${motivo}${form.observacao ? '\n\n' + form.observacao : ''}`
       : form.observacao || null
-    // Segurança do vínculo: a corretora gravada SEMPRE espelha a corretora
-    // cadastrada no Tomador. O campo na tela só seleciona — nunca redefine o
-    // vínculo (isso é exclusivo da tela de Tomador). Sem tomador, vale o filtro.
-    const tomadorSel = form.tomador_id ? tomadores.find((t) => t.id === form.tomador_id) : null
-    const corretoraTravada = tomadorSel ? (tomadorSel.corretora_id ?? null) : (form.corretora_id || null)
+    // Segurança do vínculo: a corretora gravada SEMPRE espelha a corretora ATUAL
+    // do Tomador, lida do banco NO MOMENTO do save — nunca do estado em memória, que
+    // pode estar desatualizado se o vínculo mudou noutra aba/sessão (era por aí que o
+    // furo reabria em silêncio). O campo na tela só seleciona; o vínculo é exclusivo
+    // da tela de Tomador. Sem tomador, vale a corretora escolhida como filtro.
+    let corretoraTravada: string | null = form.corretora_id || null
+    if (form.tomador_id) {
+      const sbTom = createClient()
+      const { data: tomAtual } = await sbTom
+        .from('tomadores')
+        .select('corretora_id')
+        .eq('id', form.tomador_id)
+        .single()
+      corretoraTravada = tomAtual?.corretora_id ?? null
+    }
     const payload: Record<string, unknown> = {
       tomador_id: form.tomador_id || null,
       corretora_id: corretoraTravada,
@@ -2598,9 +2608,15 @@ export default function OperacoesPage() {
                   </div>
                   <div className="form-grid" style={{ marginBottom: 20 }}>
                     <div className="form-field full">
-                      <label className="form-label">Tomador</label>
+                      <label className="form-label">Tomador
+                        {editando?.tomador_id && (
+                          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#7a5000' }}>
+                            🔒 vínculo fixo — não é possível trocar o tomador de uma operação existente
+                          </span>
+                        )}
+                      </label>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <select className="fam-input" style={{ flex: 1 }} disabled={opFinalizada} value={form.tomador_id} onChange={(e) => {
+                        <select className="fam-input" style={{ flex: 1 }} disabled={opFinalizada || !!editando?.tomador_id} value={form.tomador_id} onChange={(e) => {
                           const tomadorId = e.target.value
                           const tomador = tomadores.find((t) => t.id === tomadorId)
                           // Selecionar um tomador trava a corretora no vínculo cadastrado dele.
@@ -2612,7 +2628,7 @@ export default function OperacoesPage() {
                         </select>
                         <button
                           type="button"
-                          disabled={opFinalizada}
+                          disabled={opFinalizada || !!editando?.tomador_id}
                           onClick={() => setMostrarFormTomador(true)}
                           title="Cadastrar novo tomador básico"
                           style={{

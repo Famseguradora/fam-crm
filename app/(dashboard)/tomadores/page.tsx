@@ -284,6 +284,17 @@ export default function TomadoresPage() {
       if (editando) {
         const { error } = await supabase.from('tomadores').update(payload).eq('id', editando.id)
         if (error) throw new Error(error.message)
+        // Fonte única do vínculo Tomador→Corretora: a corretora só é alterada
+        // AQUI (tela de Tomadores). Quando muda, precisa alcançar as operações do
+        // tomador, que espelham esse vínculo — senão elas ficariam com a corretora
+        // antiga (foi exatamente o furo da Petrobras).
+        if ((editando.corretora_id ?? null) !== (payload.corretora_id ?? null)) {
+          const { error: errProp } = await supabase
+            .from('operacoes')
+            .update({ corretora_id: payload.corretora_id })
+            .eq('tomador_id', editando.id)
+          if (errProp) throw new Error(errProp.message)
+        }
         await supabase.from('audit_log').insert({
           tabela: 'tomadores',
           acao: 'alteracao',
