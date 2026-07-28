@@ -518,6 +518,9 @@ ul.org-tree > li.org-subtree::after { display: none; }
   --inset: inset 0 1px 0 rgba(255,255,255,.08);
   color: var(--ink);
   font-family: 'Calibri','Segoe UI',sans-serif;
+  /* Deslocamento do topo fixo do app (header 64 + 2 tickers ~54 = 118px). A área
+     principal (.ckp-main) gruda logo abaixo disto. Ajuste só aqui se o topo mudar. */
+  --ckp-top: 118px;
 }
 .ckp-shell {
   background:
@@ -566,6 +569,10 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .ckp-sw-item.on .ckp-sw::after { left: 15px; background: #fff; }
 .ckp-sw-item.on { color: var(--ink); }
 .ckp-cat-tag { font-size: 9px; font-weight: 800; letter-spacing: .5px; color: var(--gold); background: rgba(232,184,75,.16); border-radius: 5px; padding: 1px 5px; }
+.ckp-cat-div { width: 1px; align-self: stretch; min-height: 24px; background: rgba(255,255,255,.14); margin: 0 6px; }
+/* Toggle de Escopo (Funil/Carteira) no card Dossiê Consolidado */
+.ckp-fam-scope { flex: none; padding: 2px; background: rgba(6,12,26,.55); }
+.ckp-fam-scope button { font-size: 11px; padding: 4px 10px; }
 /* chips filtros ativos */
 .ckp-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .ckp-chip { display: inline-flex; align-items: center; gap: 7px; background: var(--surf2); border: 1px solid var(--bd); border-radius: 20px; padding: 4px 6px 4px 11px; font-size: 12.5px; font-weight: 700; color: var(--ink); }
@@ -583,10 +590,14 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .ckp-k-delta.up { color: #8ff0c4; background: rgba(56,197,142,.14); }
 .ckp-k-delta.down { color: #f2a3a3; background: rgba(224,104,95,.14); }
 .ckp-k-sub { font-size: 11px; color: var(--ink3); }
-/* main grid */
-.ckp-main { display: grid; grid-template-columns: minmax(0,1fr) 470px; gap: 16px; align-items: start; }
-.ckp-left { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.ckp-left > *, .ckp-right-inner > * { min-width: 0; }
+/* main grid — gruda abaixo do topo fixo do app e trava na altura da tela; o topo
+   do cockpit (título + KPIs) rola para fora acima dela. */
+.ckp-main { display: grid; grid-template-columns: minmax(0,1fr) 470px; gap: 16px; align-items: stretch;
+  position: sticky; top: var(--ckp-top); height: calc(100vh - var(--ckp-top)); }
+/* Esquerda: rola como um bloco só (o gráfico sobe junto com a lista). Direita: rola sozinha. */
+.ckp-left { display: flex; flex-direction: column; gap: 16px; min-width: 0; min-height: 0; height: 100%; overflow-y: auto; padding-right: 4px; }
+.ckp-right-inner > * { min-width: 0; flex-shrink: 0; }
+.ckp-left > * { min-width: 0; flex-shrink: 0; }
 .ckp-card { padding: 18px; }
 .ckp-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .ckp-title { font-size: 15px; font-weight: 800; display: flex; align-items: center; gap: 9px; }
@@ -595,6 +606,11 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .ckp-seg { display: inline-flex; background: #0b1020; border: 1px solid var(--bd); border-radius: 11px; padding: 3px; }
 .ckp-seg button { border: none; background: transparent; color: var(--ink3); font-size: 12px; font-weight: 700; padding: 6px 13px; border-radius: 8px; cursor: pointer; transition: .15s; font-family: inherit; }
 .ckp-seg button.on { background: linear-gradient(180deg,#3f74b8,#2b527f); color: #fff; box-shadow: 0 4px 12px -3px rgba(63,116,184,.6); }
+/* Caixa "como é calculada" (ⓘ) e sombra das barras do Resultado Mensal */
+.ckp-formula-box { margin: 6px 0 4px; padding: 12px 14px; background: rgba(232,184,75,.06); border: 1px solid rgba(232,184,75,.28); border-radius: 12px; font-size: 12.5px; color: var(--ink2); line-height: 1.55; }
+.ckp-formula-tt { font-weight: 800; color: var(--gold); margin-bottom: 5px; font-size: 13px; }
+.ckp-formula-box code { display: block; margin-top: 8px; background: rgba(255,255,255,.05); border: 1px solid var(--bd); border-radius: 8px; padding: 8px 10px; font-size: 12px; color: var(--ink); white-space: pre-wrap; }
+.ckp-mensal-graf .recharts-bar-rectangle { filter: drop-shadow(0 4px 5px rgba(0,0,0,.5)); }
 /* monthly TABLE */
 .ckp-mtab { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ckp-mtab thead th { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--ink3); font-weight: 700; padding: 9px 10px; border-bottom: 1px solid var(--bd); text-align: left; }
@@ -608,7 +624,9 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .ckp-mtab tr.hi td:first-child { color: var(--gold); font-weight: 800; }
 .ckp-mtab tfoot td { font-weight: 800; color: var(--ink); border-top: 1.5px solid var(--gold-dp); border-bottom: none; padding-top: 11px; background: rgba(232,184,75,.05); }
 /* grade */
-.ckp-grade-scroll { overflow: auto; max-height: 68vh; }
+/* A coluna esquerda inteira rola (gráfico + lista). A tabela não tem scroll
+   próprio; o cabeçalho/rodapé fixos grudam na rolagem da coluna esquerda. */
+.ckp-grade-scroll { overflow: visible; max-height: none; }
 .ckp-grade { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
 .ckp-grade thead th { position: sticky; top: 0; z-index: 3; background: #0d1220; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--ink3); font-weight: 700; padding: 11px 12px; text-align: right; border-bottom: 1px solid var(--bd); cursor: pointer; white-space: nowrap; }
 .ckp-grade thead th:first-child, .ckp-grade thead th.lft { text-align: left; }
@@ -661,14 +679,17 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .ckp-heat th { color: var(--ink3); font-weight: 700; padding: 3px 5px; font-variant-numeric: tabular-nums; }
 .ckp-heat th.rowlab { text-align: right; white-space: nowrap; color: var(--ink2); padding-right: 9px; }
 .ckp-heat td { width: 30px; height: 24px; border-radius: 5px; text-align: center; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04); }
-.ckp-heat-big { border-spacing: 4px; min-width: 720px; }
-.ckp-heat-big td { width: 58px; height: 34px; }
+/* Matriz expandida: maior e ocupando toda a largura (tela numérica). */
+.ckp-heat-big { border-spacing: 5px; min-width: 760px; width: 100%; font-size: 14px; }
+.ckp-heat-big th { font-size: 14px; padding: 5px 7px; }
+.ckp-heat-big td { width: auto; height: 54px; }
+.ckp-heat-big .ckp-hnum { font-size: 14.5px; }
 .ckp-hnum { font-size: 11px; font-weight: 700; }
 .ckp-heat-legend { display: flex; align-items: center; gap: 9px; margin-top: 14px; font-size: 11px; color: var(--ink3); }
 .ckp-heat-ramp { width: 130px; height: 10px; border-radius: 6px; background: linear-gradient(90deg,#16233d,#3f74b8,#66aef0); }
 /* right column fixo */
-.ckp-right { position: sticky; top: 76px; align-self: start; max-height: calc(100vh - 92px); min-width: 0; }
-.ckp-right-inner { max-height: calc(100vh - 92px); display: flex; flex-direction: column; gap: 14px; overflow-y: auto; padding-right: 3px; }
+.ckp-right { height: 100%; overflow: hidden; min-height: 0; min-width: 0; }
+.ckp-right-inner { height: 100%; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; padding-right: 3px; }
 .ckp-right-inner::-webkit-scrollbar { width: 6px; }
 .ckp-right-inner::-webkit-scrollbar-thumb { background: var(--bd2); border-radius: 6px; }
 .ckp-panel { padding: 16px; }
@@ -745,8 +766,8 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .ckp-donut-cent { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; z-index: 2; }
 .ckp-donut-cent b { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .ckp-donut-cent span { font-size: 10px; color: var(--ink3); display: block; }
-.ckp-donut-big { width: 200px; height: 200px; }
-.ckp-donut-big::after { inset: 46px; }
+.ckp-donut-big { width: 264px; height: 264px; }
+.ckp-donut-big::after { inset: 60px; }
 .ckp-donut-wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .ckp-legend { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 160px; }
 .ckp-lg-name { color: var(--ink2); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -781,32 +802,98 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .ckp-cad-op { display: flex; align-items: center; gap: 8px; padding: 6px 11px 6px 30px; border-top: 1px dashed rgba(255,255,255,.06); font-size: 11.5px; background: rgba(255,255,255,.02); }
 /* modal expandir */
 .ckp-modal-ov { position: fixed; inset: 0; z-index: 1500; background: rgba(4,8,18,.74); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); display: grid; place-items: center; padding: 24px; }
-.ckp-modal-box { width: min(1100px,95vw); max-height: 90vh; display: flex; flex-direction: column; padding: 24px;
+.ckp-modal-box { width: min(1200px,95vw); height: 90vh; max-height: 90vh; display: flex; flex-direction: column; padding: 24px;
   /* Realce ao expandir o gráfico em tela cheia: um véu de laranja (tom claro)
-     sobre o vidro dá calor à visualização, sem tirar a transparência que fica linda. */
+     sobre o vidro dá calor à visualização. As MESMAS camadas de cor de antes
+     (véu laranja + vidro) ficam agora sobre uma base escura quase opaca — mantém
+     o tom amarelado e o ar de vidro, mas o gráfico fica nítido em qualquer monitor. */
   background:
     linear-gradient(155deg, rgba(224,140,74,.30), rgba(205,116,60,.10) 60%),
-    linear-gradient(180deg, var(--surf2), var(--surf));
+    linear-gradient(180deg, var(--surf2), var(--surf)),
+    rgba(10,17,32,.90);
   border-color: rgba(226,150,86,.52);
   box-shadow: inset 0 1px 0 rgba(255,222,182,.16), 0 24px 60px -18px rgba(0,0,0,.6); }
 .ckp-modal-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .ckp-modal-x { background: var(--surf); border: 1px solid var(--bd); color: var(--ink2); font-size: 16px; cursor: pointer; border-radius: 9px; width: 34px; height: 34px; flex: none; }
 .ckp-modal-x:hover { color: var(--ink); border-color: var(--bd2); }
-.ckp-modal-body { overflow: auto; padding-right: 4px; }
+/* O corpo do modal preenche toda a altura disponível (flex) para o gráfico
+   crescer e ocupar o espaço, sem sobrar o "vazão" escuro embaixo. */
+.ckp-modal-body { flex: 1; min-height: 0; overflow: auto; padding-right: 4px; display: flex; flex-direction: column; }
+/* Zoom das páginas expandidas: controle +/- no cabeçalho do modal. Usa
+   transform:scale (não altera o layout, então o recharts mede o tamanho lógico
+   e não amplia duas vezes); origin top-left para o scroll alcançar tudo. */
+.ckp-zoomable { width: 100%; transform: scale(var(--zoom, 1)); transform-origin: top left; }
+.ckp-zoom { display: inline-flex; align-items: center; gap: 2px; background: var(--surf); border: 1px solid var(--bd); border-radius: 10px; padding: 3px; flex: none; }
+.ckp-zoom-b { width: 30px; height: 30px; border: none; background: transparent; color: var(--ink2); font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; border-radius: 8px; }
+.ckp-zoom-b:hover:not(:disabled) { background: var(--surf2); color: var(--ink); }
+.ckp-zoom-b:disabled { opacity: .38; cursor: default; }
+.ckp-zoom-pct { min-width: 54px; height: 30px; border: none; background: transparent; color: var(--ink); font-size: 13px; font-weight: 700; cursor: pointer; border-radius: 8px; font-variant-numeric: tabular-nums; }
+.ckp-zoom-pct:hover { background: var(--surf2); }
+/* ── Ficha da corretora em TELA CHEIA (overlay) — mesma paleta do cockpit ── */
+.ckp-ficha-ov { position: fixed; inset: 0; z-index: 1500; background: rgba(4,8,18,.74); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); display: grid; place-items: center; padding: 24px; }
+.ckp-ficha-box { width: min(1200px,96vw); height: 92vh; display: flex; flex-direction: column; overflow: hidden;
+  background: linear-gradient(180deg, var(--surf2), var(--surf)), rgba(10,17,32,.94);
+  border: 1px solid rgba(255,255,255,.14); border-radius: 18px; box-shadow: 0 30px 80px -20px rgba(0,0,0,.72); }
+.ckp-ficha-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; }
+/* Em tela cheia o dossiê vira 2 colunas: cabeçalho no topo, KPIs+posição à esq., cadeia à dir. */
+.ckp-dossie.ckp-dossie-full { display: grid; grid-template-columns: 360px minmax(0,1fr);
+  grid-template-areas: "hero hero" "kpis cadeia" "pos cadeia"; gap: 16px; align-content: start; }
+.ckp-dossie-full > .ckp-hero { grid-area: hero; }
+.ckp-dossie-full > .ckp-d-kpis { grid-area: kpis; }
+.ckp-dossie-full > .ckp-d-pos { grid-area: pos; align-self: start; }
+.ckp-dossie-full > .ckp-d-cadeia { grid-area: cadeia; }
+@media (max-width: 860px) {
+  .ckp-ficha-ov { place-items: end center; padding: 0; }
+  .ckp-ficha-box { width: 100%; height: 94vh; border-radius: 16px 16px 0 0; }
+  .ckp-dossie.ckp-dossie-full { grid-template-columns: 1fr; grid-template-areas: "hero" "kpis" "pos" "cadeia"; }
+}
+/* ── Comparativo (corretoras / gráficos lado a lado) ── */
+.ckp-comp-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.10); flex-wrap: wrap; }
+.ckp-comp-chk { width: 16px; height: 16px; accent-color: #e8b84b; cursor: pointer; flex: none; }
+.ckp-grade tbody tr.comp-sel { background: linear-gradient(90deg, rgba(232,184,75,.16), rgba(232,184,75,.04)); box-shadow: inset 3px 0 0 var(--gold); }
+.ckp-comp-tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ckp-comp-tbl th, .ckp-comp-tbl td { padding: 11px 12px; text-align: right; border-bottom: 1px solid rgba(255,255,255,.06); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ckp-comp-tbl th.lab, .ckp-comp-tbl td.lab { text-align: left; color: var(--ink2); font-weight: 700; }
+.ckp-comp-tbl thead th { position: sticky; top: 0; background: #0d1220; font-size: 13.5px; font-weight: 800; color: var(--ink); border-bottom: 1px solid rgba(255,255,255,.16); z-index: 1; }
+.ckp-comp-tbl thead th.lab { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink3); }
+.ckp-comp-cell { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.ckp-comp-cell .v { font-weight: 800; }
+.ckp-comp-bar { width: 130px; max-width: 15vw; height: 7px; border-radius: 5px; background: rgba(255,255,255,.07); overflow: hidden; }
+.ckp-comp-bar > i { display: block; height: 100%; border-radius: 5px; background: linear-gradient(90deg,#3f74b8,#66aef0); }
+.ckp-comp-tbl td.best .v { color: var(--gold); }
+.ckp-comp-tbl td.best .ckp-comp-bar > i { background: linear-gradient(90deg,#e8b84b,#c0901a); }
+.ckp-comp-pick { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.ckp-comp-figs { display: flex; flex-wrap: wrap; gap: 16px; }
+.ckp-comp-fig { flex: 1 1 440px; min-width: 300px; background: rgba(10,17,32,.6); border: 1px solid rgba(255,255,255,.10); border-radius: 14px; padding: 14px; }
+.ckp-comp-fig-tt { font-size: 14px; font-weight: 800; color: var(--ink); margin-bottom: 10px; }
+/* Montador do relatório: linha do Ranking + lista de gráficos (ordenar/dimensionar) */
+.ckp-rel-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ckp-rel-figs { display: flex; flex-direction: column; gap: 8px; }
+.ckp-rel-fig { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--bd); border-radius: 12px; background: var(--surf); opacity: .6; transition: .15s; }
+.ckp-rel-fig.on { opacity: 1; border-color: var(--bd2); }
+.ckp-rel-moves { display: flex; flex-direction: column; gap: 3px; flex: none; }
+.ckp-rel-move { width: 26px; height: 17px; border: 1px solid var(--bd); background: var(--surf); color: var(--ink2); border-radius: 6px; cursor: pointer; font-size: 9px; line-height: 1; display: grid; place-items: center; font-family: inherit; }
+.ckp-rel-move:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+.ckp-rel-move:disabled { opacity: .3; cursor: default; }
+.ckp-seg button:disabled { opacity: .45; cursor: default; }
+.ckp-seg.ckp-seg-off { opacity: .5; }
 /* empty state */
 .ckp-empty { text-align: center; color: var(--ink3); padding: 34px 0; font-size: 13px; }
 /* responsivo */
 @media (max-width: 768px) {
   /* modal de expandir vira bottom-sheet, como o modal de cadastro do app */
   .ckp-modal-ov { place-items: end center; padding: 0; }
-  .ckp-modal-box { width: 100%; max-width: 100%; max-height: 92vh; border-radius: 16px 16px 0 0; padding: 18px; }
+  .ckp-modal-box { width: 100%; max-width: 100%; height: 92vh; max-height: 92vh; border-radius: 16px 16px 0 0; padding: 18px; }
 }
 @media (max-width: 1080px) {
-  .ckp-main { grid-template-columns: minmax(0,1fr); }
-  .ckp-right { position: static; max-height: none; }
-  .ckp-right-inner { max-height: none; overflow: visible; }
+  /* Reverte a viewport travada/rolagem dupla do desktop: no mobile a página rola. */
+  .ckp-main { position: static; height: auto; grid-template-columns: minmax(0,1fr); }
+  .ckp-left { height: auto; overflow: visible; }
+  .ckp-left > .ckp-card, .ckp-left > .ckp-card-rank { flex: none; display: block; min-height: 0; }
+  .ckp-right { position: static; height: auto; overflow: visible; max-height: none; }
+  .ckp-right-inner { height: auto; max-height: none; overflow: visible; }
   /* Coluna única: a lista flui na página (sem scroll vertical aninhado / armadilha de toque). */
-  .ckp-grade-scroll { max-height: none; }
+  .ckp-grade-scroll { max-height: none; overflow: visible; flex: none; }
   .ckp-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .ckp-kpi.wide { grid-column: span 2; }
 }

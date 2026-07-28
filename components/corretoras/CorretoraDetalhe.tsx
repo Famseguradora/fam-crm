@@ -12,11 +12,12 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtMoeda, fmtPercent, fmtData } from '@/lib/utils'
 import {
   agregarPorCorretora, comPareto, comParticipacao, rankingTomadores, operacoesDoTomador,
-  kpisDeOperacoes, taxaConversao, serieTemporal, filtrarPorPeriodo, rotuloMes,
+  kpisDeOperacoes, taxaConversao, serieTemporal, filtrarPorPeriodo, rotuloMes, TAXA_PONDERADA_INFO,
   type OpAgg, type TomAgg, type CorretoraAgg, type Granularidade, type MetricaSerie,
 } from '@/lib/corretoras/agregacoes'
 import { gerarPdfCorretora } from '@/lib/corretoras/pdf'
 import type { Corretora, StatusFluxo } from '@/types'
+import RacionalTaxaBox from '@/components/RacionalTaxaBox'
 
 const NAVY = '#1e4080', NAVY_DK = '#102040', GOLD = '#e8b84b', GREEN = '#27a96c', INK = '#0a1628', SOFT = '#6080a0', BORDER = '#e0ecf8'
 
@@ -57,6 +58,7 @@ export default function CorretoraDetalhe({ corretora }: { corretora: Corretora }
   const [gran, setGran] = useState<Granularidade>('mensal')
   const [metricaSerie, setMetricaSerie] = useState<MetricaSerie>('premio')
   const [mesFoco, setMesFoco] = useState<string | null>(null) // mês YYYY-MM em drill-down semanal
+  const [mostrarRacional, setMostrarRacional] = useState(false)
   const capturaRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -180,6 +182,13 @@ export default function CorretoraDetalhe({ corretora }: { corretora: Corretora }
           <Mini label="Taxa Média Pond." valor={fmtPercent(kpis.taxaMediaPond / 100)} />
           <Mini label="Conversão" valor={fmtPercent(conv)} />
           <Mini label="Ticket Médio" valor={brCurto(kpis.ticketMedio)} />
+        </div>
+        <div>
+          <button type="button" onClick={() => setMostrarRacional(v => !v)}
+            style={{ background: 'none', border: 'none', color: NAVY, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', padding: 0, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
+            ⓘ Como calculamos a Taxa Média Pond.
+          </button>
+          {mostrarRacional && <div style={{ marginTop: 8 }}><RacionalTaxaBox info={TAXA_PONDERADA_INFO} tema="claro" /></div>}
         </div>
 
         {/* Posições no ranking */}

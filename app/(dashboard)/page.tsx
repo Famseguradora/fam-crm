@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useDateRange } from '@/lib/context/date-range-context'
 import { fmtData, fmtPercent } from '@/lib/utils'
+import { taxaMediaPonderada, TAXA_PONDERADA_INFO } from '@/lib/corretoras/agregacoes'
+import RacionalTaxaBox from '@/components/RacionalTaxaBox'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -47,6 +49,8 @@ interface RawOperacao {
   lmg: number | null
   taxa: number | null
   vigencia_anos: number | null
+  vigencia_dias: number | null
+  periodicidade_vigencia: string | null
   status: string | null
   data_entrada: string | null
 }
@@ -106,6 +110,7 @@ export default function DashboardPage() {
   const [modalCartoes, setModalCartoes] = useState(false)
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null)
   const [gerandoPdf, setGerandoPdf] = useState(false)
+  const [racionalTaxaAberto, setRacionalTaxaAberto] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -147,7 +152,7 @@ export default function DashboardPage() {
           .select('id, status, corretora_id, corretora:corretoras(id,razao_social), limite_aprovado, data_entrada'),
         supabase
           .from('operacoes')
-          .select('id, corretora_id, corretora:corretoras(id,razao_social), modalidade, premio_previsto, lmg, taxa, vigencia_anos, status, data_entrada')
+          .select('id, corretora_id, corretora:corretoras(id,razao_social), modalidade, premio_previsto, lmg, taxa, vigencia_anos, vigencia_dias, periodicidade_vigencia, status, data_entrada')
           .eq('ativo', true),
         supabase.from('corretoras').select('*', { count: 'exact', head: true }),
         supabase.from('status_fluxo_tomador').select('*').order('ordem'),
@@ -195,9 +200,10 @@ export default function DashboardPage() {
   const opsFechadas = operacoes.filter(o => o.status === 'Emitido')
   const premioFechado = opsFechadas.reduce((s, o) => s + (o.premio_previsto ?? 0), 0)
   const lmgFechado = opsFechadas.reduce((s, o) => s + Math.min(o.lmg ?? 0, CAP_LMG), 0)
-  const taxaMediaFechada = lmgFechado > 0
-    ? opsFechadas.reduce((s, o) => s + (o.taxa ?? 0) * Math.min(o.lmg ?? 0, CAP_LMG) * Math.min(o.vigencia_anos ?? 1, 1), 0) / lmgFechado
-    : 0
+  // Fonte única: mesma fórmula do cockpit de Corretoras e da tela de Operações
+  // (pró-rata por dias, teto de 1 ano). Antes usava vigencia_anos cru, que tratava
+  // 10 meses como 1 ano inteiro; agora bate com as demais telas.
+  const taxaMediaFechada = taxaMediaPonderada(opsFechadas)
 
   const corretorasComTomadores = new Set(tomadores.map(t => t.corretora_id).filter(Boolean)).size
   const tomadoresAtivos = tomadores.filter(t => t.status !== 'Perdido' && t.status !== 'Recusado')
@@ -403,10 +409,19 @@ export default function DashboardPage() {
               <div style={{ fontSize: 'clamp(19px, 5vw, 28px)', fontWeight: 800, color: '#6ab0e8', lineHeight: 1.05, overflowWrap: 'anywhere' }}>{fmtBRL(lmgFechado)}</div>
             </div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>Taxa Méd. Ponderada</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#a0c0e8', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                Taxa Méd. Ponderada
+                <button type="button" onClick={() => setRacionalTaxaAberto(v => !v)} title="Como calculamos"
+                  style={{ width: 22, height: 22, lineHeight: '20px', borderRadius: '50%', border: '1.5px solid rgba(160,192,232,0.5)', background: racionalTaxaAberto ? 'rgba(232,184,75,0.2)' : 'rgba(255,255,255,0.06)', color: '#a0c0e8', fontSize: 12, fontWeight: 800, cursor: 'pointer', padding: 0, flexShrink: 0 }}>ⓘ</button>
+              </div>
               <div style={{ fontSize: 'clamp(19px, 5vw, 28px)', fontWeight: 800, color: '#e8b84b', lineHeight: 1.05, overflowWrap: 'anywhere' }}>{fmtPercent(taxaMediaFechada / 100)}</div>
             </div>
           </div>
+          {racionalTaxaAberto && (
+            <div style={{ marginTop: 16 }}>
+              <RacionalTaxaBox info={TAXA_PONDERADA_INFO} tema="escuro" />
+            </div>
+          )}
         </div>
       )}
 

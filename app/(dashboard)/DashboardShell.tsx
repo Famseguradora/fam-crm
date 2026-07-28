@@ -395,8 +395,15 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
           display: 'flex',
           flexDirection: 'column',
           transition: 'width 0.2s ease, min-width 0.2s ease',
-          overflow: 'hidden',
+          overflowY: 'auto',
+          overflowX: 'hidden',
           flexShrink: 0,
+          // Menu lateral SEMPRE visível: gruda abaixo do topo fixo do app
+          // (header + tickers ≈ 118px) e não acompanha a rolagem da página.
+          position: 'sticky',
+          top: 118,
+          alignSelf: 'flex-start',
+          height: 'calc(100vh - 118px)',
         }}>
 
           {/* Performance — com a seta de recolher na mesma linha do título

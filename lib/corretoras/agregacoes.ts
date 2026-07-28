@@ -37,9 +37,15 @@ export function anosVigencia(o: Pick<OpAgg, 'vigencia_dias' | 'vigencia_anos' | 
   return v
 }
 
-// Taxa média ponderada de um conjunto de operações — mesma fórmula de Operações:
-// Σ(taxa × min(lmg,80M) × min(anosVig,1)) ÷ Σ min(lmg,80M).
-export function taxaMediaPonderada(ops: OpAgg[]): number {
+// Campos mínimos para calcular a taxa média ponderada (reusável fora do cockpit).
+export type OpTaxaLike = Pick<OpAgg, 'lmg' | 'taxa' | 'vigencia_dias' | 'vigencia_anos' | 'periodicidade_vigencia'>
+
+// ⭐ FONTE ÚNICA da Taxa Média Ponderada da FAM — usada no cockpit de Corretoras,
+// na tela de Operações e na tela "KPIs por Mês" (todas devem bater).
+// Fórmula: Σ(taxa × min(lmg,80M) × min(anosVig,1)) ÷ Σ min(lmg,80M).
+// Pondera pela EXPOSIÇÃO (LMG, teto de 80M) e pelo PRAZO (vigência em anos, teto 1):
+// operação com menos de 1 ano contribui proporcional ao seu prazo.
+export function taxaMediaPonderada(ops: OpTaxaLike[]): number {
   let numer = 0
   let denom = 0
   for (const o of ops) {
@@ -48,6 +54,34 @@ export function taxaMediaPonderada(ops: OpAgg[]): number {
     denom += capLmg(o.lmg)
   }
   return denom > 0 ? numer / denom : 0
+}
+
+// Explicação da taxa TOTAL PONDERADA (com prazo) — usada nos KPIs consolidados.
+export const TAXA_PONDERADA_INFO = {
+  titulo: 'Taxa Média Ponderada (carteira, base anual)',
+  formula: 'Σ( taxa × LMG[teto R$ 80 Mi] × mín(vigência em anos, 1) )  ÷  Σ LMG[teto R$ 80 Mi]',
+  texto: 'Taxa efetiva da carteira, em base anual. Cada operação entra com a taxa cadastrada, ponderada por dois fatores. (1) EXPOSIÇÃO: o LMG, limitado a R$ 80 Mi por operação. (2) PRAZO: a vigência é contada em DIAS e dividida por 365, o que já captura o ano bissexto (que tem 1 dia a mais). Operação com menos de 1 ano entra proporcional ao prazo (ex.: 10 meses ≈ 304/365 do ano); operação de 1 ano ou mais trava em 1 ano, sem multiplicar a taxa anual pelos anos (2% em 2 anos continua 2%).',
+}
+
+// Taxa média MENSAL (regime de COMPETÊNCIA) — SEM o fator de prazo. Pondera só
+// pela exposição (LMG, teto 80M). É a taxa praticada NAQUELE mês, junto do prêmio
+// do mês. Usada nos gráficos/tabelas de "Resultado Mensal" e "KPIs por Mês".
+// Σ(taxa × mín(LMG,80M)) ÷ Σ mín(LMG,80M).
+export function taxaMediaMensal(ops: OpTaxaLike[]): number {
+  let numer = 0
+  let denom = 0
+  for (const o of ops) {
+    const w = capLmg(o.lmg)
+    numer += (Number(o.taxa) || 0) * w
+    denom += w
+  }
+  return denom > 0 ? numer / denom : 0
+}
+
+export const TAXA_MENSAL_INFO = {
+  titulo: 'Taxa Média Mensal (competência)',
+  formula: 'Σ( taxa × LMG[teto R$ 80 Mi] )  ÷  Σ LMG[teto R$ 80 Mi]',
+  texto: 'Taxa praticada NO MÊS, em regime de COMPETÊNCIA: média das taxas cadastradas das operações daquele mês, ponderada só pela EXPOSIÇÃO (LMG, limitado a R$ 80 Mi por operação). NÃO aplica o fator de prazo/vigência; mostra a taxa do mês junto com o prêmio do mês. O ajuste por prazo entra na "Taxa Média Ponderada" da carteira, tratada à parte.',
 }
 
 // ── KPIs de um conjunto de operações ────────────────────────────────────────
@@ -216,9 +250,9 @@ export function evolucaoMensal(operacoes: OpAgg[]): PontoMensal[] {
 }
 
 // Série mensal COMPLETA para o gráfico central do cockpit: prêmio, qtd e a
-// TAXA MÉDIA PONDERADA do mês (fórmula canônica — a mesma do Dashboard, da tela
-// de Operações e do KPI "Taxa Média Pond." do cockpit). Agrupa por mês de
-// referência (data_emissao senão data_entrada), ordenado cronologicamente.
+// TAXA MÉDIA MENSAL do mês (competência, SEM o fator de prazo; ver taxaMediaMensal).
+// É a taxa praticada naquele mês; a Ponderada (com prazo) da carteira é tratada à
+// parte. Agrupa por mês de referência (data_emissao senão data_entrada), ordenado.
 export interface PontoMensalTaxa extends PontoMensal { taxa: number }
 export function serieMensalPremioTaxa(operacoes: OpAgg[]): PontoMensalTaxa[] {
   const acc = new Map<string, OpAgg[]>()
@@ -239,7 +273,7 @@ export function serieMensalPremioTaxa(operacoes: OpAgg[]): PontoMensalTaxa[] {
         label: `${MESES[m] ?? mes}/${mes.slice(2, 4)}`,
         qtd: ops.length,
         premio: ops.reduce((s, o) => s + (Number(o.premio_previsto) || 0), 0),
-        taxa: taxaMediaPonderada(ops),
+        taxa: taxaMediaMensal(ops),
       }
     })
 }

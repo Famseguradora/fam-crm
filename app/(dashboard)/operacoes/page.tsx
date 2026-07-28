@@ -15,6 +15,8 @@ import WhatsAppSimulator from '@/components/comite/WhatsAppSimulator'
 import { membrosComite as filtrarMembrosComite, calcularPlacar } from '@/lib/comite/votacao'
 import { anosVig, sufVig } from '@/lib/comite/calculo'
 import { notifyComiteChange, onComiteChange } from '@/lib/comite/realtime'
+import RacionalTaxaBox from '@/components/RacionalTaxaBox'
+import { TAXA_PONDERADA_INFO } from '@/lib/corretoras/agregacoes'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Line, AreaChart, Area, CartesianGrid, Cell } from 'recharts'
 
 interface ModalidadeBasica {
@@ -249,6 +251,7 @@ export default function OperacoesPage() {
   const [modoBook, setModoBook] = useState<'emitidas' | 'book'>('emitidas')
   const [showLmgLimiteFam, setShowLmgLimiteFam] = useState(false)
   const [exposicaoAberta, setExposicaoAberta] = useState(true)
+  const [racionalTaxaAberto, setRacionalTaxaAberto] = useState(false)
 
   // ── Comitê — Julgamento (votação dos diretores + WhatsApp simulado) ──
   const [usuariosTodos, setUsuariosTodos] = useState<Usuario[]>([])
@@ -1313,7 +1316,9 @@ export default function OperacoesPage() {
       if (op.taxa != null) {
         map[m].taxaMin = Math.min(map[m].taxaMin, op.taxa)
         map[m].taxaMax = Math.max(map[m].taxaMax, op.taxa)
-        map[m].taxaLmg += op.taxa * lmgCap
+        // Ponderada (TMP): taxa × exposição × fator de prazo (mín(vigência,1 ano),
+        // contada em dias). Sem o fator, sub-1-ano ficava superavaliada.
+        map[m].taxaLmg += op.taxa * lmgCap * Math.min(anosVig(op), 1)
       }
     }
     return Object.entries(map).map(([modalidade, d]) => ({
@@ -1338,7 +1343,7 @@ export default function OperacoesPage() {
       map[tid].qtd++
       map[tid].lmg += lmgCapT
       map[tid].premio += op.premio_previsto ?? 0
-      if (op.taxa != null) map[tid].taxaLmg += op.taxa * lmgCapT
+      if (op.taxa != null) map[tid].taxaLmg += op.taxa * lmgCapT * Math.min(anosVig(op), 1)
     }
     return Object.values(map).map(d => ({
       nome: d.nome.length > 22 ? d.nome.slice(0, 20) + '…' : d.nome,
@@ -3141,6 +3146,7 @@ export default function OperacoesPage() {
                   <th style={thSort} onClick={() => handleSort('lmg')}>LMG - Limite FAM{sortIcon('lmg')}</th>
                   {showLmgLimiteFam && <th style={thSort} onClick={() => handleSort('lmg')}>LMG Original{sortIcon('lmg')}</th>}
                   <th style={thSort} onClick={() => handleSort('taxa')}>Taxa{sortIcon('taxa')}</th>
+                  <th>Vigência</th>
                   <th style={thSort} onClick={() => handleSort('premio')}>Prêmio{sortIcon('premio')}</th>
                   <th style={thSort} onClick={() => handleSort('temperatura')}>Temp.{sortIcon('temperatura')}</th>
                   <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
@@ -3149,9 +3155,9 @@ export default function OperacoesPage() {
               </thead>
               <tbody>
                 {carregando ? (
-                  <tr><td colSpan={9 + (showLmgLimiteFam ? 1 : 0)} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={10 + (showLmgLimiteFam ? 1 : 0)} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : operacoesFiltradas.length === 0 ? (
-                  <tr><td colSpan={9 + (showLmgLimiteFam ? 1 : 0)} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                  <tr><td colSpan={10 + (showLmgLimiteFam ? 1 : 0)} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                     {busca || filtroStatus.length > 0 || filtroPrioridade || filtroTemperatura.length > 0 || filtroCorretora || filtroModalidade
                       ? 'Nenhuma operação encontrada para os filtros selecionados.'
                       : 'Nenhuma operação registrada ainda.'}
@@ -3182,6 +3188,9 @@ export default function OperacoesPage() {
                       )}
                       <td style={{ fontSize: 13 }}>
                         {op.taxa ? fmtPercent(op.taxa / 100) : '—'}
+                      </td>
+                      <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
+                        {op.vigencia_anos ? `${op.vigencia_anos}${sufVig(op.periodicidade_vigencia)}` : '—'}
                       </td>
                       <td style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
                         {op.premio_previsto ? fmtMoeda(op.premio_previsto) : '—'}
@@ -3458,7 +3467,10 @@ export default function OperacoesPage() {
                 {/* TMP */}
                 {(() => { const meta = metaMensal?.taxa_media_ponderada_meta ?? 0; const delta = meta > 0 ? emitidosTmpTotal - meta : 0; return (
                   <div style={{ flex: '1 1 170px', background: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,120,200,0.2)' }}>
-                    <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4 }}>📐 Taxa Méd. Pond.</div>
+                    <div style={{ fontSize: 10, letterSpacing: 1, color: 'rgba(180,200,220,0.6)', textTransform: 'uppercase', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>📐 Taxa Méd. Pond.
+                      <button type="button" onClick={() => setRacionalTaxaAberto(v => !v)} title="Como calculamos"
+                        style={{ width: 22, height: 22, lineHeight: '20px', borderRadius: '50%', border: '1.5px solid rgba(120,160,210,0.5)', background: racionalTaxaAberto ? 'rgba(232,184,75,0.2)' : 'rgba(255,255,255,0.08)', color: 'rgba(180,200,220,0.9)', fontSize: 12, fontWeight: 800, cursor: 'pointer', padding: 0, flexShrink: 0 }}>ⓘ</button>
+                    </div>
                     <div style={{ fontSize: 22, fontWeight: 900, color: '#e8b84b' }}>{fmtPercent(emitidosTmpTotal / 100)}</div>
                     {meta > 0 && <div style={{ fontSize: 12, color: delta >= 0 ? '#27a96c' : '#d64545', fontWeight: 700, marginTop: 4 }}>{delta >= 0 ? '▲' : '▼'} {delta >= 0 ? '+' : ''}{fmtPercent(delta / 100)} vs meta {fmtPercent(meta / 100)}</div>}
                     {meta === 0 && <div style={{ fontSize: 11, color: 'rgba(180,200,220,0.4)', marginTop: 4 }}>Meta não definida</div>}
@@ -3481,6 +3493,11 @@ export default function OperacoesPage() {
                     {(metaMensal?.risco_judicial ?? 0) > 0 && <div style={{ fontSize: 11, color: '#e8b84b', marginTop: 6 }}>⚖️ Risco Judicial: {fmtMoeda(metaMensal!.risco_judicial!)}</div>}
                   </div>
                 )})()}
+                {racionalTaxaAberto && (
+                  <div style={{ flex: '1 1 100%' }}>
+                    <RacionalTaxaBox info={TAXA_PONDERADA_INFO} tema="escuro" />
+                  </div>
+                )}
               </div>
               {/* Form Metas */}
               {mostrarConfigurarMetas && (

@@ -12,7 +12,7 @@
 //  números batem com a tela de Operações. Preserva Excel, PDF, Funil/Carteira
 //  e drill-down semanal. Só o layout e o tema mudaram.
 // ============================================================
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, CartesianGrid, LabelList,
 } from 'recharts'
@@ -20,13 +20,15 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtMoeda, fmtMoedaCurta, fmtPercent } from '@/lib/utils'
 import {
   agregarPorCorretora, comPareto, comParticipacao, rankingTomadores, operacoesDoTomador,
-  kpisDeOperacoes, taxaConversao, distribuicaoPorStatus, serieMensalPremioTaxa, taxaMediaPonderada, mesesDisponiveis,
+  kpisDeOperacoes, taxaConversao, distribuicaoPorStatus, serieMensalPremioTaxa, taxaMediaMensal, TAXA_MENSAL_INFO, TAXA_PONDERADA_INFO, mesesDisponiveis,
   rotuloMes, serieMensalAlinhada, deltaUltimoMes, filtrarPorPeriodo, matrizCorretoraMes,
   seriesMiniPorMetrica, desfechoPorCorretora, ehEmitida, mesDeOperacao,
   type OpAgg, type TomAgg, type CorretoraAgg, type DesfechoCorretora,
 } from '@/lib/corretoras/agregacoes'
 import { gerarPdfGeral, gerarPdfCorretora } from '@/lib/corretoras/pdf'
+import { metricasComparativas, htmlComparativoCorretoras, htmlComparativoGraficos, htmlRelatorioPainel, nomeArquivo, LINHAS_COMPARATIVO } from '@/lib/corretoras/comparativo'
 import type { Corretora, StatusFluxo } from '@/types'
+import RacionalTaxaBox from '@/components/RacionalTaxaBox'
 
 // ── Paleta do cockpit (dark) ────────────────────────────────────────────────
 const GOLD = '#e8b84b', BLUE = '#4a90d0', BLUE_BR = '#66aef0', NAVY_BAR = '#3f74b8'
@@ -72,6 +74,29 @@ const STATUS_FORA_DO_FUNIL = ['Emitido', 'Perdido', 'Recusado']
 type MetricaPareto = 'premio' | 'tomadores' | 'operacoes'
 type ExpandKey = 'pareto' | 'desfecho' | 'matriz' | 'status' | 'share'
 
+// Gráficos que podem ser comparados lado a lado (tela + HTML).
+const GRAFICOS_COMP: { key: ExpandKey; label: string }[] = [
+  { key: 'share', label: 'Participação no prêmio' },
+  { key: 'pareto', label: 'Concentração 80/20' },
+  { key: 'desfecho', label: 'Desfecho por corretora' },
+  { key: 'status', label: 'Mix por status' },
+  { key: 'matriz', label: 'Matriz Corretora × Mês' },
+]
+
+// Seções de GRÁFICO do relatório em HTML (KPIs do topo entram sempre; o Ranking
+// é uma seção à parte). O padrão liga o que aparece na tela inicial de Corretoras.
+type RelKey = 'mensal' | 'share' | 'pareto' | 'desfecho' | 'movers' | 'status' | 'matriz'
+const RELATORIO_FIGS: { key: RelKey; label: string; wide?: boolean }[] = [
+  { key: 'mensal', label: 'Resultado Mensal', wide: true },
+  { key: 'share', label: 'Participação no prêmio' },
+  { key: 'pareto', label: 'Concentração 80/20' },
+  { key: 'desfecho', label: 'Desfecho por corretora' },
+  { key: 'movers', label: 'Maiores em prêmio emitido' },
+  { key: 'status', label: 'Mix por status' },
+  { key: 'matriz', label: 'Matriz Corretora × Mês', wide: true },
+]
+const RELATORIO_FIG_PADRAO: RelKey[] = ['mensal', 'share', 'pareto', 'desfecho', 'movers']
+
 // Blocos personalizáveis (catálogo "Monte sua tela"). Mix por status e Matriz
 // começam DESLIGADOS (aparecem só quando o usuário liga).
 type CardKey = 'mensal' | 'grade' | 'share' | 'pareto' | 'desfecho' | 'movers' | 'status' | 'matriz'
@@ -111,14 +136,37 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
   // UI do cockpit.
   const [selecionada, setSelecionada] = useState<string | null>(null)  // dossiê no painel direito
   const [mensalView, setMensalView] = useState<'graf' | 'tab'>('graf')
+  const [mostrarFormula, setMostrarFormula] = useState(false)
+  const [mostrarRacionalPond, setMostrarRacionalPond] = useState(false)
   const [mesesSel, setMesesSel] = useState<Set<string>>(new Set())   // meses clicados no gráfico → consolidam o card à direita
   const [expandido, setExpandido] = useState<ExpandKey | null>(null)
+  const [zoom, setZoom] = useState(1)   // zoom das páginas expandidas (0.6–2.0)
   const [metricaPareto, setMetricaPareto] = useState<MetricaPareto>('premio')
   const [paretoNumeros, setParetoNumeros] = useState(false)
   const [mostrarTodas, setMostrarTodas] = useState(false)
   const [cards, setCards] = useState<Record<CardKey, boolean>>(CARDS_INICIAIS)
   const [mostrarPersonalizar, setMostrarPersonalizar] = useState(false)
   const [preview, setPreview] = useState<{ url: string; filename: string } | null>(null)
+
+  // Comparativo (corretoras/gráficos lado a lado → HTML por e-mail)
+  const [modoComparar, setModoComparar] = useState(false)
+  const [selCompare, setSelCompare] = useState<Set<string>>(new Set())
+  const [comparativoAberto, setComparativoAberto] = useState(false)
+  const [compTab, setCompTab] = useState<'corretoras' | 'graficos'>('corretoras')
+  const [graficosSel, setGraficosSel] = useState<Set<ExpandKey>>(new Set(['pareto', 'desfecho']))
+  const [gerandoHtml, setGerandoHtml] = useState(false)
+  const chartRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
+  // Relatório da tela (KPIs + ranking + gráficos escolhidos → HTML p/ diretoria)
+  const [relatorioAberto, setRelatorioAberto] = useState(false)
+  const [secRanking, setSecRanking] = useState(true)
+  const [relRankTodas, setRelRankTodas] = useState(false)  // Ranking: só com operações (padrão) vs. todas
+  const [figSel, setFigSel] = useState<Set<RelKey>>(new Set(RELATORIO_FIG_PADRAO))
+  const [figOrdem, setFigOrdem] = useState<RelKey[]>(RELATORIO_FIGS.map((f) => f.key))          // ordem dos gráficos no relatório
+  const [figWide, setFigWide] = useState<Record<RelKey, boolean>>(                               // tamanho por gráfico (meia/inteira)
+    () => Object.fromEntries(RELATORIO_FIGS.map((f) => [f.key, !!f.wide])) as Record<RelKey, boolean>)
+  const [gerandoRelatorio, setGerandoRelatorio] = useState(false)
+  const reportRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   useEffect(() => { setMounted(true) }, [])
   useEffect(() => {
@@ -144,7 +192,7 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
 
   useEffect(() => { const u = preview?.url; return () => { if (u) URL.revokeObjectURL(u) } }, [preview?.url])
   useEffect(() => {
-    function esc(e: KeyboardEvent) { if (e.key === 'Escape') { setExpandido(null) } }
+    function esc(e: KeyboardEvent) { if (e.key === 'Escape') { setExpandido(null); setZoom(1); setSelecionada(null); setComparativoAberto(false); setRelatorioAberto(false) } }
     document.addEventListener('keydown', esc)
     return () => document.removeEventListener('keydown', esc)
   }, [])
@@ -237,13 +285,14 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
   const seriesMiniReal = useMemo(() => seriesMiniPorMetrica(opsRealTrend, meses), [opsRealTrend, meses])
 
   // Série do gráfico central: prêmio + taxa média ponderada (canônica) por mês.
-  const serieMensal = useMemo(() => serieMensalPremioTaxa(opsTrend), [opsTrend])
-  // Taxa de REFERÊNCIA do gráfico (tracejado dourado) = taxa ponderada do recorte
-  // ativo (opsBoard) — bate EXATAMENTE com o KPI "Taxa Média Pond." do topo e com
-  // o rótulo "do período". A aba Tabela mostra todos os meses, então seu total usa
-  // opsTrend (coerente com as linhas exibidas).
-  const taxaPeriodoGraf = useMemo(() => taxaMediaPonderada(opsBoard), [opsBoard])
-  const taxaTotalTabela = useMemo(() => taxaMediaPonderada(opsTrend), [opsTrend])
+  // "Resultado Mensal" = resultado DE FATO (operações EMITIDAS), regime de competência.
+  const opsEmitidasTrend = useMemo(() => operacoes.filter((o) => ehEmitida(o.status)), [operacoes])
+  const serieMensal = useMemo(() => serieMensalPremioTaxa(opsEmitidasTrend), [opsEmitidasTrend])
+  // Taxa de referência (tracejado) = taxa MENSAL (sem prazo) das emitidas no período;
+  // a aba Tabela usa o total das emitidas. NÃO é a "taxa total ponderada" (com prazo).
+  const emitidasPeriodo = useMemo(() => filtrarPorPeriodo(opsEmitidasTrend, pIni, pFim), [opsEmitidasTrend, pIni, pFim])
+  const taxaPeriodoGraf = useMemo(() => taxaMediaMensal(emitidasPeriodo), [emitidasPeriodo])
+  const taxaTotalTabela = useMemo(() => taxaMediaMensal(opsEmitidasTrend), [opsEmitidasTrend])
 
   // Mix por status IGNORA o filtro de Status de propósito (senão colapsaria numa
   // fatia só) — mostra o mix completo do período/escopo, como na tela antiga.
@@ -301,32 +350,26 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
     return `até ${rotuloMes(pFim)}`
   }, [pIni, pFim])
 
-  const algumFiltro = !!(filtroStatus || pIni || pFim)
   const limparTudo = () => { setFiltroStatus(null); setMesIni(''); setMesFim('') }
   const corretoraSel = useMemo(() => corretoras.find((c) => c.id === selecionada) ?? null, [corretoras, selecionada])
 
   // ── Card "Consolidado" (painel direito) dirigido pela seleção de meses ──────
   // Clicar nas barras do "Resultado Mensal" seleciona um ou mais meses; o card
-  // consolida (soma) esses meses. SEM seleção = período ativo, batendo com os
-  // KPIs do topo (mesma base opsBoard). "Prêmio emitido" vem da CARTEIRA inteira
-  // (todas as operações) porque o escopo "funil ativo" esconde os emitidos.
+  // consolida (soma) esses meses. As MÉTRICAS PRINCIPAIS do card são as EMITIDAS
+  // do recorte, por mês de EMISSÃO (a MESMA base kpisReal/nTomadoresReal dos KPIs
+  // do topo e do gráfico), então o card fecha com a barra clicada. O "Prêmio
+  // Previsto" é só referência informativa do funil/escopo (pipeline), não emitido.
   const toggleMes = useCallback((mes: string) => {
     setSelecionada(null)   // clicar num mês volta pro consolidado (esconde o dossiê, se aberto)
     setMesesSel((prev) => { const n = new Set(prev); if (n.has(mes)) n.delete(mes); else n.add(mes); return n })
   }, [])
-  // Com meses selecionados, os meses VIRAM o recorte de período (ignora o slicer
-  // pIni/pFim), mantendo escopo+status — assim clicar um mês fora do slicer não
-  // zera o card. Sem seleção, é exatamente opsBoard (bate com os KPIs do topo).
-  const opsCardBase = useMemo(
+  // Prêmio Previsto (informativo): pipeline do funil/escopo no recorte. Com meses
+  // selecionados, os meses viram o recorte (ignoram o slicer pIni/pFim). NÃO é emitido.
+  const opsCardFunil = useMemo(
     () => mesesSel.size > 0 ? operacoesEscopo.filter((o) => passaStatus(o) && mesesSel.has(mesDeOperacao(o))) : opsBoard,
     [operacoesEscopo, passaStatus, mesesSel, opsBoard],
   )
-  const kpisCard = useMemo(() => kpisDeOperacoes(opsCardBase), [opsCardBase])
-  const nTomadoresCard = useMemo(() => new Set(opsCardBase.map((o) => o.tomador_id).filter(Boolean)).size, [opsCardBase])
-  const premioEmitidoCard = useMemo(() => {
-    const base = mesesSel.size > 0 ? operacoes.filter((o) => mesesSel.has(mesDeOperacao(o))) : filtrarPorPeriodo(operacoes, pIni, pFim)
-    return base.reduce((s, o) => ehEmitida(o.status) ? s + (Number(o.premio_previsto) || 0) : s, 0)
-  }, [operacoes, mesesSel, pIni, pFim])
+  const previstoFunilCard = useMemo(() => opsCardFunil.reduce((s, o) => s + (Number(o.premio_previsto) || 0), 0), [opsCardFunil])
   const cardLabel = useMemo(() => {
     if (mesesSel.size === 0) return periodoLabel
     const ord = [...mesesSel].sort()
@@ -371,6 +414,107 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
 
   const selecionar = (id: string) => { setSelecionada(id); setExpandido(null) }
 
+  // ── Comparativo ────────────────────────────────────────────────────────────
+  // Métricas por corretora selecionada (mesma base da ficha: TODAS as operações),
+  // já ordenadas por prêmio previsto desc para a maior aparecer primeiro.
+  const metricasComp = useMemo(
+    () => metricasComparativas([...selCompare], ranking, desfecho).sort((a, b) => b.previsto - a.previsto),
+    [selCompare, ranking, desfecho],
+  )
+  const toggleCompare = (id: string) => setSelCompare((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else if (n.size < 6) n.add(id); return n })
+  const toggleGrafico = (k: ExpandKey) => setGraficosSel((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  const abrirComparar = () => { setModoComparar((v) => !v); setSelCompare(new Set()) }
+
+  function abrirPreviewHtml(html: string, filename: string) {
+    setPreview({ url: URL.createObjectURL(new Blob([html], { type: 'text/html' })), filename })
+  }
+  async function gerarHtmlComparativo() {
+    setGerandoHtml(true)
+    try {
+      if (compTab === 'corretoras') {
+        abrirPreviewHtml(htmlComparativoCorretoras(metricasComp), nomeArquivo('Comparativo_Corretoras'))
+      } else {
+        const { toPng } = await import('html-to-image')
+        const itens: { titulo: string; png: string }[] = []
+        for (const g of GRAFICOS_COMP) {
+          if (!graficosSel.has(g.key)) continue
+          const node = chartRefs.current[g.key]
+          if (!node) continue
+          const png = await toPng(node, { pixelRatio: 2, backgroundColor: '#0d1424', cacheBust: true })
+          itens.push({ titulo: g.label, png })
+        }
+        if (itens.length) abrirPreviewHtml(htmlComparativoGraficos(itens), nomeArquivo('Comparativo_Graficos'))
+      }
+    } catch (err) { console.error('Gerar HTML comparativo:', err) } finally { setGerandoHtml(false) }
+  }
+  // Render compacto de cada gráfico para o comparativo (reusa os componentes do cockpit).
+  const renderGraficoComp = (key: ExpandKey) => {
+    if (key === 'share') return comPremio.length ? <ShareView ranking={comPremio} /> : <div className="ckp-empty">Sem dados.</div>
+    if (key === 'pareto') return paretoData.length ? <ParetoChart data={paretoData} mounted={mounted} vitalFew={vitalFew} metrica={metricaPareto} fmtVal={fmtParetoVal} onSelect={() => {}} numeros={false} /> : <div className="ckp-empty">Sem dados.</div>
+    if (key === 'desfecho') return desfecho.length ? <DesfechoView desfecho={desfecho} totais={desfechoTotais} conv={desfechoConv} onSelect={() => {}} /> : <div className="ckp-empty">Sem dados.</div>
+    if (key === 'status') return porStatus.length ? <StatusDonut dados={porStatus} /> : <div className="ckp-empty">Sem dados.</div>
+    if (key === 'matriz') return matriz.linhas.length ? <MatrizView matriz={matriz} /> : <div className="ckp-empty">Sem dados.</div>
+    return null
+  }
+
+  // ── Relatório em HTML (padrão = tela inicial) ──────────────────────────────
+  // Cada gráfico é renderizado num container OCULTO de largura fixa e capturado
+  // em PNG (mesmo caminho do comparativo). KPIs e Ranking vão como dados/tabela.
+  const toggleFig = (k: RelKey) => setFigSel((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  // Reordenar (▲▼) e dimensionar (meia/inteira) os gráficos do relatório.
+  const moverFig = (k: RelKey, dir: -1 | 1) => setFigOrdem((prev) => {
+    const i = prev.indexOf(k); const j = i + dir
+    if (i < 0 || j < 0 || j >= prev.length) return prev
+    const n = [...prev]; [n[i], n[j]] = [n[j], n[i]]; return n
+  })
+  const renderRelFig = (key: RelKey) => {
+    if (key === 'mensal') return <ResultadoMensalGraf mounted={mounted} serie={serieMensal} temPeriodo={!!(pIni || pFim)} noPeriodo={noPeriodo} taxaPeriodo={taxaPeriodoGraf} mesesSel={mesesSel} onToggleMes={() => {}} />
+    if (key === 'share') return comPremio.length ? <ShareView ranking={comPremio} /> : <div className="ckp-empty">Sem dados.</div>
+    if (key === 'pareto') return paretoData.length ? <ParetoChart data={paretoData} mounted={mounted} vitalFew={vitalFew} metrica={metricaPareto} fmtVal={fmtParetoVal} onSelect={() => {}} numeros={false} /> : <div className="ckp-empty">Sem dados.</div>
+    if (key === 'desfecho') return desfecho.length ? <DesfechoView desfecho={desfecho} totais={desfechoTotais} conv={desfechoConv} onSelect={() => {}} /> : <div className="ckp-empty">Sem dados.</div>
+    if (key === 'movers') return <MoversView desfecho={desfecho} />
+    if (key === 'status') return porStatus.length ? <StatusDonut dados={porStatus} /> : <div className="ckp-empty">Sem dados.</div>
+    if (key === 'matriz') return matriz.linhas.length ? <MatrizView matriz={matriz} /> : <div className="ckp-empty">Sem dados.</div>
+    return null
+  }
+  async function gerarRelatorioHtml() {
+    setGerandoRelatorio(true)
+    try {
+      // folga p/ o recharts (Resultado Mensal/Pareto) medir a largura e pintar
+      // antes da captura — senão o PNG pode sair em branco na 1ª geração.
+      await new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 260)))
+      const { toPng } = await import('html-to-image')
+      const figLabel = new Map(RELATORIO_FIGS.map((f) => [f.key, f.label]))
+      const figuras: { titulo: string; png: string; wide?: boolean }[] = []
+      // Iteramos na ORDEM escolhida pelo usuário; o tamanho (meia/inteira) vem de figWide.
+      for (const key of figOrdem) {
+        if (!figSel.has(key)) continue
+        const node = reportRefs.current[key]
+        if (!node) continue
+        const png = await toPng(node, { pixelRatio: 2, backgroundColor: '#0d1424', cacheBust: true })
+        figuras.push({ titulo: figLabel.get(key) ?? key, png, wide: figWide[key] })
+      }
+      const kpis = [
+        { label: 'Prêmio Realizado', valor: kpiBRL(kpisReal.premioTotal), sub: 'operações emitidas' },
+        { label: 'LMG (exposição)', valor: kpiBRL(kpisReal.lmgTotal), sub: 'teto 80M por operação' },
+        { label: 'Operações', valor: String(kpisReal.nOperacoes), sub: 'emitidas' },
+        { label: 'Tomadores', valor: String(nTomadoresReal), sub: 'com emissão' },
+        { label: 'Taxa Média Pond.', valor: fmtPercent(kpisReal.taxaMediaPond / 100), sub: 'min(LMG,80M) × vigência' },
+      ]
+      // Ranking: por padrão só corretoras COM operações no recorte (evita listão de
+      // zeros); "Todas" traz o book inteiro. Mantém a mesma base da tela p/ os números baterem.
+      const baseRank = relRankTodas ? ranking : ranking.filter((r) => r.nOperacoes > 0)
+      const rankingLinhas = secRanking
+        ? baseRank.map((r) => ({ nome: r.nome, nOperacoes: r.nOperacoes, premio: r.premioTotal, participacao: r.participacaoPct ?? 0, ativa: r.ativa }))
+        : undefined
+      // Legenda = período do card (respeita meses clicados, bate com os KPIs) + escopo.
+      const legenda = `${cardLabel} · escopo ${escopoStatus === 'carteira' ? 'Carteira' : 'Funil'}`
+      const html = htmlRelatorioPainel({ periodoLabel: legenda, kpis, ranking: rankingLinhas, figuras })
+      abrirPreviewHtml(html, nomeArquivo('Painel_Corretoras'))
+      setRelatorioAberto(false)
+    } catch (err) { console.error('Gerar relatório:', err) } finally { setGerandoRelatorio(false) }
+  }
+
   if (carregando) return <div className="ckp"><div style={{ textAlign: 'center', padding: 80, color: TICK }}>Carregando cockpit de corretoras…</div></div>
 
   const totalOps = rankingOrdenado.reduce((s, r) => s + r.nOperacoes, 0)
@@ -391,36 +535,31 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
           <div className="ckp-actions">
             <button className="ckp-btn" onClick={exportarExcel} disabled={exportando || ranking.length === 0}>⬇ Excel</button>
             <button className="ckp-btn" onClick={abrirPdfGeral} disabled={exportando || ranking.length === 0}>📄 PDF Geral</button>
+            <button className="ckp-btn ckp-btn-gold" onClick={() => setRelatorioAberto(true)} disabled={ranking.length === 0} title="Escolher KPIs e gráficos e gerar um HTML (imprimir/PDF) para a diretoria">📊 Relatório</button>
             <button className={`ckp-btn ckp-btn-ghost${mostrarPersonalizar ? ' on' : ''}`} onClick={() => setMostrarPersonalizar((v) => !v)}>⚙ Personalizar</button>
+            <button className={`ckp-btn ckp-btn-ghost${modoComparar ? ' on' : ''}`} onClick={abrirComparar} title="Selecione corretoras na lista para comparar lado a lado">⚖ Comparar</button>
+            {modoComparar && <button className="ckp-btn ckp-btn-gold" disabled={selCompare.size < 2} onClick={() => { setCompTab('corretoras'); setComparativoAberto(true) }}>Ver comparativo ({selCompare.size})</button>}
             <button className="ckp-btn ckp-btn-gold" onClick={() => onNovaCorretora?.()}>+ Nova Corretora</button>
           </div>
         </header>
 
-        {/* ── FILTROS (UF removido) ── */}
-        <div className="ckp-glass" style={{ padding: '12px 16px', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <label className="ckp-field"><span className="ckp-field-lab">Mês de</span>
-            <select className="ckp-select" value={mesIni} onChange={(e) => setMesIni(e.target.value)}>
-              <option value="">Início</option>{meses.map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}
-            </select></label>
-          <label className="ckp-field"><span className="ckp-field-lab">até</span>
-            <select className="ckp-select" value={mesFim} onChange={(e) => setMesFim(e.target.value)}>
-              <option value="">Fim</option>{meses.map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}
-            </select></label>
-          <label className="ckp-field"><span className="ckp-field-lab">Status</span>
-            <select className="ckp-select" value={filtroStatus ?? ''} onChange={(e) => setFiltroStatus(e.target.value || null)}>
-              <option value="">Todos</option>{statusFluxo.map((s) => <option key={s.nome} value={s.nome}>{s.nome}</option>)}
-            </select></label>
-          <label className="ckp-field" title="Funil ativo = mesmo recorte de Operações (exclui Emitido, Perdido e Recusado). Carteira = todas as operações ativas.">
-            <span className="ckp-field-lab">Escopo</span>
-            <select className="ckp-select" value={escopoStatus} onChange={(e) => setEscopoStatus(e.target.value as EscopoStatus)}>
-              <option value="funil">Funil ativo</option><option value="carteira">Carteira completa</option>
-            </select></label>
-          {algumFiltro && <button className="ckp-btn" onClick={limparTudo} style={{ marginLeft: 'auto' }}>Limpar filtros</button>}
-        </div>
+        {/* Filtros de Período e Escopo saíram desta barra para ganhar espaço vertical:
+            Período foi para "Personalizar"; Escopo virou botão no card Dossiê Consolidado. */}
 
-        {/* ── CATÁLOGO (Personalizar) ── */}
+        {/* ── CATÁLOGO (Personalizar): Período + Monte sua tela ── */}
         {mostrarPersonalizar && (
           <div className="ckp-catalog">
+            <span className="ckp-cat-lead">📅 Período</span>
+            <label className="ckp-field"><span className="ckp-field-lab">Mês de</span>
+              <select className="ckp-select" value={mesIni} onChange={(e) => setMesIni(e.target.value)}>
+                <option value="">Início</option>{meses.map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}
+              </select></label>
+            <label className="ckp-field"><span className="ckp-field-lab">até</span>
+              <select className="ckp-select" value={mesFim} onChange={(e) => setMesFim(e.target.value)}>
+                <option value="">Fim</option>{meses.map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}
+              </select></label>
+            {(pIni || pFim) && <button className="ckp-btn" onClick={limparTudo}>Limpar período</button>}
+            <span className="ckp-cat-div" />
             <span className="ckp-cat-lead">✦ Monte sua tela</span>
             {(Object.keys(CARDS_LABEL) as CardKey[]).map((k) => (
               <button key={k} type="button" className={`ckp-sw-item${cards[k] ? ' on' : ''}`} onClick={() => toggleCard(k)}>
@@ -430,12 +569,11 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
           </div>
         )}
 
-        {/* ── CHIPS de filtros ativos ── */}
-        {algumFiltro && (
+        {/* ── CHIP de período ativo (visível mesmo com o Personalizar fechado) ── */}
+        {(pIni || pFim) && (
           <div className="ckp-chips">
-            <span style={{ fontSize: 12, fontWeight: 700, color: TICK }}>Ativos:</span>
-            {filtroStatus && <ChipDark label={filtroStatus} onClear={() => setFiltroStatus(null)} />}
-            {(pIni || pFim) && <ChipDark label={periodoLabel} onClear={() => { setMesIni(''); setMesFim('') }} />}
+            <span style={{ fontSize: 12, fontWeight: 700, color: TICK }}>Período:</span>
+            <ChipDark label={periodoLabel} onClear={() => { setMesIni(''); setMesFim('') }} />
           </div>
         )}
 
@@ -445,8 +583,13 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
           <KpiDark ico="🛡️" label="LMG (exposição)" valor={kpiBRL(kpisReal.lmgTotal)} sub="emitidas · teto 80M/op" spark={seriesMiniReal.lmg} />
           <KpiDark ico="📄" label="Operações" valor={String(kpisReal.nOperacoes)} sub="emitidas" spark={seriesMiniReal.operacoes} />
           <KpiDark ico="🤝" label="Tomadores" valor={String(nTomadoresReal)} sub="com emissão" spark={seriesMiniReal.tomadores} />
-          <KpiDark ico="📈" label="Taxa Média Pond." valor={fmtPercent(kpisReal.taxaMediaPond / 100)} sub="min(LMG,80M)×vig." spark={seriesMiniReal.taxa} />
+          <KpiDark ico="📈" label="Taxa Média Pond." valor={fmtPercent(kpisReal.taxaMediaPond / 100)} sub="min(LMG,80M)×vig." spark={seriesMiniReal.taxa} onInfo={() => setMostrarRacionalPond(v => !v)} infoAtivo={mostrarRacionalPond} />
         </div>
+        {mostrarRacionalPond && (
+          <div style={{ margin: '0 0 4px' }}>
+            <RacionalTaxaBox info={TAXA_PONDERADA_INFO} tema="escuro" />
+          </div>
+        )}
 
         {/* ── MAIN ── */}
         <div className="ckp-main">
@@ -455,18 +598,28 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
             {cards.mensal && (
               <section className="ckp-glass ckp-card">
                 <div className="ckp-card-head">
-                  <div className="ckp-title"><span className="ckp-title-bar" />Resultado Mensal<span className="ckp-sub">prêmio &amp; taxa méd. pond. · {periodoLabel}</span></div>
-                  <div className="ckp-seg">
-                    <button className={mensalView === 'graf' ? 'on' : ''} onClick={() => setMensalView('graf')}>Gráfico</button>
-                    <button className={mensalView === 'tab' ? 'on' : ''} onClick={() => setMensalView('tab')}>Tabela</button>
+                  <div className="ckp-title"><span className="ckp-title-bar" />Resultado Mensal<span className="ckp-sub">prêmio &amp; taxa do mês · emitidas · {periodoLabel}</span></div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button className={`ckp-exp${mostrarFormula ? ' on' : ''}`} title="Como a taxa do mês é calculada" onClick={() => setMostrarFormula((v) => !v)}>ⓘ</button>
+                    <div className="ckp-seg">
+                      <button className={mensalView === 'graf' ? 'on' : ''} onClick={() => setMensalView('graf')}>Gráfico</button>
+                      <button className={mensalView === 'tab' ? 'on' : ''} onClick={() => setMensalView('tab')}>Tabela</button>
+                    </div>
                   </div>
                 </div>
+                {mostrarFormula && (
+                  <div className="ckp-formula-box">
+                    <div className="ckp-formula-tt">Taxa do Mês (competência)</div>
+                    <div>{TAXA_MENSAL_INFO.texto}</div>
+                    <code>{TAXA_MENSAL_INFO.formula}</code>
+                  </div>
+                )}
                 {mensalView === 'graf' ? (
                   <>
                     <ResultadoMensalGraf mounted={mounted} serie={serieMensal} temPeriodo={!!(pIni || pFim)} noPeriodo={noPeriodo}
                       taxaPeriodo={taxaPeriodoGraf} mesesSel={mesesSel} onToggleMes={toggleMes} />
                     <div className="ckp-cap" style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                      <span style={{ flex: 1, minWidth: 220 }}>Barras: <b>prêmio previsto</b> por mês. Linha dourada: <b>taxa média ponderada</b> (eixo dir.), mesma fórmula do Dashboard; o tracejado é a taxa do período ({fmtTaxaPP(taxaPeriodoGraf)}). <b>Clique nas barras</b> para consolidar o(s) mês(es) no card à direita.</span>
+                      <span style={{ flex: 1, minWidth: 220 }}>Barras: <b>prêmio emitido</b> por mês. Linha dourada: <b>taxa do mês</b> (competência, sem prazo · eixo dir.); o tracejado é a taxa do período ({fmtTaxaPP(taxaPeriodoGraf)}). <b>Clique nas barras</b> para consolidar o(s) mês(es) no card à direita.</span>
                       {mesesSel.size > 0 && <button type="button" className="ckp-btn" style={{ padding: '4px 11px', fontSize: 12 }} onClick={() => setMesesSel(new Set())}>✕ limpar {mesesSel.size} mês(es)</button>}
                     </div>
                   </>
@@ -477,7 +630,7 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
             )}
 
             {cards.grade && (
-              <section className="ckp-glass ckp-card">
+              <section className="ckp-glass ckp-card ckp-card-rank">
                 <div className="ckp-card-head">
                   <div className="ckp-title"><span className="ckp-title-bar" style={{ background: BLUE }} />Ranking de Corretoras<span className="ckp-sub">clique → dossiê à direita</span></div>
                   <input className="fam-input" placeholder="Buscar corretora ou CNPJ…" value={busca} onChange={(e) => setBusca(e.target.value)}
@@ -502,9 +655,10 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
                         const spark = serieMensalAlinhada(operacoesEscopo.filter((o) => o.corretora_id === r.id && (!filtroStatus || o.status === filtroStatus)), meses)
                         const sel = selecionada === r.id
                         return (
-                          <tr key={r.id} className={`${idx >= VIS_GRADE ? 'row-extra' : ''}${sel ? ' sel' : ''}`} onClick={() => selecionar(r.id)}>
+                          <tr key={r.id} className={`${idx >= VIS_GRADE ? 'row-extra' : ''}${sel ? ' sel' : ''}${modoComparar && selCompare.has(r.id) ? ' comp-sel' : ''}`} onClick={() => (modoComparar ? toggleCompare(r.id) : selecionar(r.id))}>
                             <td>
                               <div className="ckp-cname">
+                                {modoComparar && <input type="checkbox" className="ckp-comp-chk" checked={selCompare.has(r.id)} readOnly />}
                                 <span className="ckp-cbadge" style={{ background: azulBadge(idx, rankingOrdenado.length) }}>{initials(r.nome)}</span>
                                 <span style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>{r.nome}</span>
                                 {!r.ativa && <span className="ckp-pill off">inativa</span>}
@@ -555,12 +709,8 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
           {/* DIREITA (fixa) */}
           <aside className="ckp-right">
             <div className="ckp-right-inner">
-              {corretoraSel ? (
-                <DossieCorretora corretora={corretoraSel} corretoras={corretoras} tomadores={tomadores} operacoes={operacoes}
-                  statusFluxo={statusFluxo} onVoltar={() => setSelecionada(null)} onEditar={() => onAbrirCorretora?.(corretoraSel.id)}
-                  onPdf={abrirPdfCorretora} exportando={exportando} />
-              ) : (
-                <>
+              {/* A direita mostra SEMPRE o consolidado; a ficha da corretora abre em TELA CHEIA (overlay, ver abaixo). */}
+              <>
                   {/* ── DOSSIÊ FAM — painel futurista (glass + neon). Soma toda a FAM,
                          respeitando o escopo (funil / carteira) e a seleção de meses. ── */}
                   <div className="ckp-fam">
@@ -571,16 +721,19 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
                         <div className="ckp-fam-name">FAM Seguradora</div>
                         <div className="ckp-fam-sub">Dossiê Consolidado</div>
                       </div>
-                      <span className="ckp-fam-scope-pill">{escopoStatus === 'funil' ? 'Funil ativo' : 'Carteira'}</span>
+                      <div className="ckp-seg ckp-fam-scope" title="Escopo dos dados. Funil ativo = mesmo recorte de Operações (exclui Emitido, Perdido e Recusado). Carteira = todas as operações ativas.">
+                        <button type="button" className={escopoStatus === 'funil' ? 'on' : ''} onClick={() => setEscopoStatus('funil')}>Funil</button>
+                        <button type="button" className={escopoStatus === 'carteira' ? 'on' : ''} onClick={() => setEscopoStatus('carteira')}>Carteira</button>
+                      </div>
                     </div>
                     <div className="ckp-fam-period">{cardLabel}</div>
                     <div className="ckp-fam-grid">
-                      <div className="ckp-fam-cell gold"><span className="l">Prêmio Previsto</span><span className="v">{kpiBRL(kpisCard.premioTotal)}</span></div>
-                      <div className="ckp-fam-cell green"><span className="l">Prêmio Emitido</span><span className="v">{kpiBRL(premioEmitidoCard)}</span></div>
-                      <div className="ckp-fam-cell"><span className="l">LMG · exposição</span><span className="v">{kpiBRL(kpisCard.lmgTotal)}</span></div>
-                      <div className="ckp-fam-cell"><span className="l">Operações</span><span className="v">{kpisCard.nOperacoes}</span></div>
-                      <div className="ckp-fam-cell"><span className="l">Tomadores</span><span className="v">{nTomadoresCard}</span></div>
-                      <div className="ckp-fam-cell"><span className="l">Taxa Méd. Pond.</span><span className="v">{fmtPercent(kpisCard.taxaMediaPond / 100)}</span></div>
+                      <div className="ckp-fam-cell green"><span className="l">Prêmio Emitido</span><span className="v">{kpiBRL(kpisReal.premioTotal)}</span></div>
+                      <div className="ckp-fam-cell" title="Pipeline do escopo selecionado (Funil/Carteira). Não é resultado emitido."><span className="l">Prêmio Previsto · funil</span><span className="v">{kpiBRL(previstoFunilCard)}</span></div>
+                      <div className="ckp-fam-cell"><span className="l">LMG · exposição</span><span className="v">{kpiBRL(kpisReal.lmgTotal)}</span></div>
+                      <div className="ckp-fam-cell"><span className="l">Operações</span><span className="v">{kpisReal.nOperacoes}</span></div>
+                      <div className="ckp-fam-cell"><span className="l">Tomadores</span><span className="v">{nTomadoresReal}</span></div>
+                      <div className="ckp-fam-cell"><span className="l">Taxa Méd. Pond.</span><span className="v">{fmtPercent(kpisReal.taxaMediaPond / 100)}</span></div>
                     </div>
                     {mesesSel.size > 0 && <button type="button" className="ckp-fam-clear" onClick={() => setMesesSel(new Set())}>← ver todos os períodos</button>}
                   </div>
@@ -609,13 +762,7 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
                   {cards.movers && (
                     <div className="ckp-glass ckp-panel">
                       <div className="ckp-panel-title">Maiores em prêmio emitido<span className="ckp-tag">carteira</span></div>
-                      {desfecho.filter((d) => d.emitidas.premio > 0).length === 0 ? <div className="ckp-empty">Nenhuma emissão no período.</div> : (
-                        <div>{desfecho.filter((d) => d.emitidas.premio > 0).slice(0, 5).map((d, i) => (
-                          <button key={d.id} type="button" className="ckp-mover" style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', color: 'inherit' }} onClick={() => selecionar(d.id)}>
-                            <span className="ckp-mv-rank">{i + 1}</span><span className="ckp-mv-name" style={{ textAlign: 'left' }}>{d.nome}</span><span className="ckp-mv-val" style={{ color: GOOD }}>{kpiBRL(d.emitidas.premio)}</span>
-                          </button>
-                        ))}</div>
-                      )}
+                      <MoversView desfecho={desfecho} onSelect={selecionar} />
                     </div>
                   )}
 
@@ -633,21 +780,188 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
                     </div>
                   )}
                 </>
-              )}
             </div>
           </aside>
         </div>
       </div>
 
+      {/* ── FICHA DA CORRETORA (tela cheia) ── */}
+      {corretoraSel && (
+        <div className="ckp-ficha-ov" onClick={() => setSelecionada(null)}>
+          <div className="ckp-ficha-box" onClick={(e) => e.stopPropagation()}>
+            <div className="ckp-ficha-body">
+              <DossieCorretora full corretora={corretoraSel} corretoras={corretoras} tomadores={tomadores} operacoes={operacoes}
+                statusFluxo={statusFluxo} onVoltar={() => setSelecionada(null)} onEditar={() => onAbrirCorretora?.(corretoraSel.id)}
+                onPdf={abrirPdfCorretora} exportando={exportando} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── COMPARATIVO (corretoras / gráficos lado a lado → HTML) ── */}
+      {comparativoAberto && (
+        <div className="ckp-ficha-ov" onClick={() => setComparativoAberto(false)}>
+          <div className="ckp-ficha-box" onClick={(e) => e.stopPropagation()}>
+            <div className="ckp-comp-head">
+              <div className="ckp-seg">
+                <button className={compTab === 'corretoras' ? 'on' : ''} onClick={() => setCompTab('corretoras')}>Corretoras</button>
+                <button className={compTab === 'graficos' ? 'on' : ''} onClick={() => setCompTab('graficos')}>Gráficos</button>
+              </div>
+              <div style={{ flex: 1 }} />
+              <button className="ckp-btn ckp-btn-gold" disabled={gerandoHtml || (compTab === 'corretoras' ? metricasComp.length < 1 : graficosSel.size < 1)} onClick={gerarHtmlComparativo}>{gerandoHtml ? 'Gerando…' : '⬇ Gerar HTML'}</button>
+              <button className="ckp-modal-x" onClick={() => setComparativoAberto(false)}>✕</button>
+            </div>
+            <div className="ckp-ficha-body">
+              {compTab === 'corretoras' ? (
+                metricasComp.length < 2 ? (
+                  <div className="ckp-empty">Selecione ao menos 2 corretoras na lista (botão “⚖ Comparar”, marque as caixinhas).</div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="ckp-comp-tbl">
+                      <thead><tr><th className="lab">Métrica</th>{metricasComp.map((m) => <th key={m.id}>{m.nome}</th>)}</tr></thead>
+                      <tbody>
+                        {LINHAS_COMPARATIVO.map((lin) => {
+                          const vals = metricasComp.map((m) => lin.valor(m))
+                          const max = Math.max(0, ...vals) || 1
+                          return (
+                            <tr key={lin.label}>
+                              <td className="lab">{lin.label}</td>
+                              {metricasComp.map((m, i) => {
+                                const v = vals[i]; const best = v === max && v > 0 && metricasComp.length > 1
+                                return (
+                                  <td key={m.id} className={best ? 'best' : ''}>
+                                    <div className="ckp-comp-cell">
+                                      <span className="v">{lin.fmt(v)}</span>
+                                      {lin.bar && <span className="ckp-comp-bar"><i style={{ width: `${(v / max) * 100}%` }} /></span>}
+                                    </div>
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              ) : (
+                <>
+                  <div className="ckp-comp-pick">
+                    {GRAFICOS_COMP.map((g) => (
+                      <button key={g.key} type="button" className={`ckp-sw-item${graficosSel.has(g.key) ? ' on' : ''}`} onClick={() => toggleGrafico(g.key)}>
+                        <span className="ckp-sw" />{g.label}
+                      </button>
+                    ))}
+                  </div>
+                  {graficosSel.size === 0 ? (
+                    <div className="ckp-empty">Escolha um ou mais gráficos acima.</div>
+                  ) : (
+                    <div className="ckp-comp-figs">
+                      {GRAFICOS_COMP.filter((g) => graficosSel.has(g.key)).map((g) => (
+                        <div key={g.key} className="ckp-comp-fig">
+                          <div className="ckp-comp-fig-tt">{g.label}</div>
+                          <div ref={(el) => { chartRefs.current[g.key] = el }}>{renderGraficoComp(g.key)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── RELATÓRIO EM HTML (seleção → preview/baixar/imprimir) ── */}
+      {relatorioAberto && (
+        <div className="ckp-ficha-ov" onClick={() => setRelatorioAberto(false)}>
+          <div className="ckp-ficha-box" style={{ height: 'auto', maxHeight: '92vh' }} onClick={(e) => e.stopPropagation()}>
+            <div className="ckp-comp-head">
+              <div className="ckp-title" style={{ fontSize: 16 }}><span className="ckp-title-bar" />Gerar relatório em HTML</div>
+              <div style={{ flex: 1 }} />
+              <button className="ckp-btn ckp-btn-gold" disabled={gerandoRelatorio} onClick={gerarRelatorioHtml}>{gerandoRelatorio ? 'Gerando…' : '⬇ Gerar HTML'}</button>
+              <button className="ckp-modal-x" onClick={() => setRelatorioAberto(false)}>✕</button>
+            </div>
+            <div className="ckp-ficha-body">
+              <div className="ckp-cap" style={{ marginTop: 0, marginBottom: 14 }}>
+                Escolha o que entra no relatório para a diretoria. Os <b>KPIs do topo</b> e o período entram sempre. O padrão já vem com a <b>tela inicial</b> de Corretoras; ao gerar, abre a pré-visualização com <b>Baixar</b> e <b>Imprimir</b> (PDF).
+              </div>
+              {/* Ranking: liga/desliga + escopo da lista (só com operações vs. todas). */}
+              <div className="ckp-rel-row" style={{ marginBottom: 6 }}>
+                <button type="button" className={`ckp-sw-item${secRanking ? ' on' : ''}`} onClick={() => setSecRanking((v) => !v)}>
+                  <span className="ckp-sw" />Ranking de Corretoras
+                </button>
+                {secRanking && (
+                  <div className="ckp-seg" style={{ marginLeft: 'auto' }} title="Por padrão o Ranking traz só as corretoras com operações no recorte; 'Todas' inclui as sem operação.">
+                    <button className={!relRankTodas ? 'on' : ''} onClick={() => setRelRankTodas(false)}>Só com operações</button>
+                    <button className={relRankTodas ? 'on' : ''} onClick={() => setRelRankTodas(true)}>Todas</button>
+                  </div>
+                )}
+              </div>
+
+              {/* Gráficos: ligar/desligar + reordenar (▲▼) + dimensionar (meia/inteira). */}
+              <div className="ckp-cap" style={{ margin: '14px 0 8px' }}>Gráficos: ligue/desligue, use <b>▲▼</b> para reordenar e escolha o <b>tamanho</b> (meia largura ou largura inteira). A ordem e o tamanho valem no relatório gerado.</div>
+              <div className="ckp-rel-figs">
+                {figOrdem.map((key, idx) => {
+                  const f = RELATORIO_FIGS.find((x) => x.key === key)
+                  if (!f) return null
+                  const on = figSel.has(key)
+                  return (
+                    <div key={key} className={`ckp-rel-fig${on ? ' on' : ''}`}>
+                      <div className="ckp-rel-moves">
+                        <button type="button" className="ckp-rel-move" disabled={idx === 0} onClick={() => moverFig(key, -1)} title="Subir" aria-label="Subir">▲</button>
+                        <button type="button" className="ckp-rel-move" disabled={idx === figOrdem.length - 1} onClick={() => moverFig(key, 1)} title="Descer" aria-label="Descer">▼</button>
+                      </div>
+                      <button type="button" className={`ckp-sw-item${on ? ' on' : ''}`} style={{ flex: 1, minWidth: 0 }} onClick={() => toggleFig(key)}>
+                        <span className="ckp-sw" /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.label}</span>
+                      </button>
+                      <div className={`ckp-seg${on ? '' : ' ckp-seg-off'}`} title="Tamanho do gráfico no relatório">
+                        <button className={!figWide[key] ? 'on' : ''} disabled={!on} onClick={() => setFigWide((p) => ({ ...p, [key]: false }))}>Meia</button>
+                        <button className={figWide[key] ? 'on' : ''} disabled={!on} onClick={() => setFigWide((p) => ({ ...p, [key]: true }))}>Inteira</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+                <button type="button" className="ckp-btn" onClick={() => { setSecRanking(true); setFigSel(new Set(RELATORIO_FIGS.map((f) => f.key))) }}>Marcar todos</button>
+                <button type="button" className="ckp-btn" onClick={() => {
+                  setSecRanking(true); setRelRankTodas(false); setFigSel(new Set(RELATORIO_FIG_PADRAO))
+                  setFigOrdem(RELATORIO_FIGS.map((f) => f.key))
+                  setFigWide(Object.fromEntries(RELATORIO_FIGS.map((f) => [f.key, !!f.wide])) as Record<RelKey, boolean>)
+                }}>Restaurar padrão (tela inicial)</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Container OCULTO: monta os gráficos em largura fixa só para a captura em PNG. */}
+      {relatorioAberto && (
+        <div aria-hidden style={{ position: 'fixed', left: -20000, top: 0, width: 980, zIndex: -1, pointerEvents: 'none' }}>
+          {RELATORIO_FIGS.map((f) => (
+            <div key={f.key} ref={(el) => { reportRefs.current[f.key] = el }} style={{ width: 980, background: '#0d1424', padding: 16, marginBottom: 24, borderRadius: 12 }}>
+              {renderRelFig(f.key)}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ── MODAL EXPANDIR ── */}
       {expandido && (
-        <div className="ckp-modal-ov" onClick={() => setExpandido(null)}>
+        <div className="ckp-modal-ov" onClick={() => { setExpandido(null); setZoom(1) }}>
           <div className="ckp-modal-box ckp-glass" onClick={(e) => e.stopPropagation()}>
             <div className="ckp-modal-h">
               <div className="ckp-title" style={{ fontSize: 17 }}><span className="ckp-title-bar" />{EXPAND_TITULO[expandido]}</div>
-              <button className="ckp-modal-x" onClick={() => setExpandido(null)}>✕</button>
+              <div className="ckp-zoom" title="Zoom da página">
+                <button className="ckp-zoom-b" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.15).toFixed(2)))} disabled={zoom <= 0.6} title="Diminuir">−</button>
+                <button className="ckp-zoom-pct" onClick={() => setZoom(1)} title="Voltar para 100%">{Math.round(zoom * 100)}%</button>
+                <button className="ckp-zoom-b" onClick={() => setZoom((z) => Math.min(2, +(z + 0.15).toFixed(2)))} disabled={zoom >= 2} title="Aumentar">+</button>
+              </div>
+              <button className="ckp-modal-x" onClick={() => { setExpandido(null); setZoom(1) }}>✕</button>
             </div>
             <div className="ckp-modal-body">
+              <div className="ckp-zoomable" style={{ ['--zoom']: String(zoom) } as CSSProperties}>
               {expandido === 'share' && <ShareView ranking={comPremio} big />}
               {expandido === 'pareto' && (
                 paretoData.length === 0 ? <div className="ckp-empty">Sem dados no escopo.</div> : (
@@ -668,6 +982,7 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
               {expandido === 'desfecho' && <DesfechoView desfecho={desfecho} totais={desfechoTotais} conv={desfechoConv} onSelect={selecionar} big />}
               {expandido === 'status' && <StatusDonut dados={porStatus} big />}
               {expandido === 'matriz' && <MatrizView matriz={matriz} big />}
+              </div>
             </div>
           </div>
         </div>
@@ -686,11 +1001,14 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <a href={preview.url} download={preview.filename} className="btn-primary" style={{ textDecoration: 'none' }}>⬇ Baixar PDF</a>
+                {preview.filename.toLowerCase().endsWith('.html') && (
+                  <button className="btn-secondary" style={{ background: 'transparent', color: '#fff', borderColor: '#3a5a86' }} onClick={() => { const fr = document.getElementById('ckp-report-frame') as HTMLIFrameElement | null; fr?.contentWindow?.focus(); fr?.contentWindow?.print() }}>🖨 Imprimir</button>
+                )}
+                <a href={preview.url} download={preview.filename} className="btn-primary" style={{ textDecoration: 'none' }}>⬇ Baixar arquivo</a>
                 <button className="btn-secondary" style={{ background: 'transparent', color: '#fff', borderColor: '#3a5a86' }} onClick={() => setPreview(null)}>✕ Fechar</button>
               </div>
             </div>
-            <iframe src={preview.url} title="Pré-visualização do PDF" style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }} />
+            <iframe id="ckp-report-frame" src={preview.url} title="Pré-visualização do relatório" style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }} />
           </div>
         </div>
       )}
@@ -709,8 +1027,8 @@ function ChipDark({ label, onClear }: { label: string; onClear: () => void }) {
   return <span className="ckp-chip">{label}<button onClick={onClear} aria-label="Remover filtro">✕</button></span>
 }
 
-function KpiDark({ ico, label, valor, sub, delta, spark, wide = false }: {
-  ico: string; label: string; valor: string; sub: string; delta?: number | null; spark?: number[]; wide?: boolean
+function KpiDark({ ico, label, valor, sub, delta, spark, wide = false, onInfo, infoAtivo }: {
+  ico: string; label: string; valor: string; sub: string; delta?: number | null; spark?: number[]; wide?: boolean; onInfo?: () => void; infoAtivo?: boolean
 }) {
   const has = delta != null && isFinite(delta)
   const pos = (delta ?? 0) >= 0
@@ -718,7 +1036,10 @@ function KpiDark({ ico, label, valor, sub, delta, spark, wide = false }: {
     <div className={`ckp-kpi ckp-glass${wide ? ' wide' : ''}`}>
       <div className="ckp-k-top">
         <div className="ckp-k-ico">{ico}</div>
-        {spark && spark.length > 1 && <Sparkline valores={spark} cor={wide ? GOLD : BLUE_BR} largura={90} altura={26} />}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {spark && spark.length > 1 && <Sparkline valores={spark} cor={wide ? GOLD : BLUE_BR} largura={90} altura={26} />}
+          {onInfo && <button type="button" onClick={onInfo} title="Como calculamos" style={{ width: 22, height: 22, lineHeight: '20px', borderRadius: '50%', border: '1.5px solid rgba(120,160,210,0.5)', background: infoAtivo ? 'rgba(232,184,75,0.2)' : 'rgba(255,255,255,0.06)', color: '#a0c0e8', fontSize: 12, fontWeight: 800, cursor: 'pointer', padding: 0, flexShrink: 0 }}>ⓘ</button>}
+        </div>
       </div>
       <div className="ckp-k-label">{label}</div>
       <div className="ckp-k-val">{valor}</div>
@@ -752,7 +1073,7 @@ function TooltipMensal({ active, payload, label }: { active?: boolean; payload?:
     <div style={{ ...tooltipDark, padding: '8px 12px' }}>
       <div style={{ fontWeight: 800, marginBottom: 4 }}>{label}</div>
       <div style={{ color: BLUE_BR, fontWeight: 700 }}>{fmtMoeda(p.premio)}</div>
-      <div style={{ color: GOLD, fontWeight: 700 }}>{fmtTaxaPP(p.taxa ?? 0)} <span style={{ color: TICK, fontWeight: 500 }}>taxa méd. pond.</span></div>
+      <div style={{ color: GOLD, fontWeight: 700 }}>{fmtTaxaPP(p.taxa ?? 0)} <span style={{ color: TICK, fontWeight: 500 }}>taxa méd. mensal</span></div>
       <div style={{ color: TICK }}>{p.qtd} operação(ões)</div>
     </div>
   )
@@ -770,6 +1091,12 @@ function ResultadoMensalGraf({ mounted, serie, temPeriodo, noPeriodo, taxaPeriod
     <ResponsiveContainer width="100%" height={252}>
       <ComposedChart data={serie} margin={{ left: 4, right: 14, top: 16, bottom: 8 }}
         onClick={(state) => { const idx = Number((state as { activeTooltipIndex?: number | string })?.activeTooltipIndex); if (Number.isInteger(idx) && idx >= 0 && idx < serie.length) onToggleMes(serie[idx].mes) }}>
+        <defs>
+          {/* Sombra sutil sob as barras — dá profundidade no cockpit escuro */}
+          <filter id="ckpBarShadow" x="-30%" y="-15%" width="160%" height="140%">
+            <feDropShadow dx="0" dy="3" stdDeviation="3" floodColor="#000000" floodOpacity="0.5" />
+          </filter>
+        </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.06)" vertical={false} />
         <XAxis dataKey="label" tick={{ fontSize: 11, fill: TICK }} />
         <YAxis yAxisId="l" tickFormatter={(v) => eixoBRL(Number(v))} tick={{ fontSize: 11, fill: TICK }} width={62} />
@@ -779,11 +1106,11 @@ function ResultadoMensalGraf({ mounted, serie, temPeriodo, noPeriodo, taxaPeriod
           {serie.map((p) => {
             const realce = anySel ? mesesSel.has(p.mes) : (temPeriodo && noPeriodo(p.mes))
             const apagar = anySel ? !mesesSel.has(p.mes) : (temPeriodo && !noPeriodo(p.mes))
-            return <Cell key={p.mes} fill={realce ? GOLD : NAVY_BAR} fillOpacity={apagar ? 0.35 : 1} />
+            return <Cell key={p.mes} fill={realce ? GOLD : NAVY_BAR} fillOpacity={apagar ? 0.35 : 1} filter="url(#ckpBarShadow)" />
           })}
         </Bar>
         {taxaPeriodo > 0 && <ReferenceLine yAxisId="r" y={taxaPeriodo} stroke={GOLD} strokeDasharray="5 4" strokeWidth={1.2} strokeOpacity={0.55} />}
-        <Line yAxisId="r" type="monotone" dataKey="taxa" name="Taxa Méd. Pond." stroke={GOLD} strokeWidth={2.4}
+        <Line yAxisId="r" type="monotone" dataKey="taxa" name="Taxa Méd. Mensal" stroke={GOLD} strokeWidth={2.4}
           dot={{ r: 2.6, fill: GOLD, stroke: '#0a1020', strokeWidth: 1 }} isAnimationActive={false} />
       </ComposedChart>
     </ResponsiveContainer>
@@ -879,24 +1206,28 @@ function ParetoChart({ data, mounted, vitalFew, metrica, fmtVal, onSelect, numer
 }) {
   if (!mounted) return <div className="ckp-empty">Carregando…</div>
   const fmtNum = (v: number) => metrica === 'premio' ? eixoBRL(Number(v)) : String(Math.round(Number(v)))
-  return (
-    <ResponsiveContainer width="100%" height={big ? 440 : 270}>
-      <ComposedChart data={data} margin={{ left: 2, right: 6, top: numeros ? 20 : 12, bottom: big ? 70 : 8 }}
+  const chart = (
+    <ResponsiveContainer width="100%" height={big ? '100%' : 270}>
+      <ComposedChart data={data} margin={{ left: 2, right: 6, top: numeros ? 26 : 12, bottom: big ? 88 : 8 }}
         onClick={(state) => { const p = (state as unknown as { activePayload?: { payload: { id: string } }[] })?.activePayload?.[0]?.payload; if (p?.id) onSelect?.(p.id) }}>
-        {big && <XAxis dataKey="nome" angle={-30} textAnchor="end" interval={0} height={78} tick={{ fontSize: 11, fill: TICK }} />}
+        {big && <XAxis dataKey="nome" angle={-30} textAnchor="end" interval={0} height={96} tick={{ fontSize: 12.5, fill: TICK }} />}
         {!big && <XAxis dataKey="nome" tick={false} height={4} />}
-        <YAxis yAxisId="l" tickFormatter={(v) => fmtNum(Number(v))} tick={{ fontSize: 10.5, fill: TICK }} width={54} />
-        <YAxis yAxisId="r" orientation="right" domain={[0, 1]} tickFormatter={(v) => Math.round(Number(v) * 100) + '%'} tick={{ fontSize: 10.5, fill: TICK }} width={38} />
+        <YAxis yAxisId="l" tickFormatter={(v) => fmtNum(Number(v))} tick={{ fontSize: big ? 13 : 10.5, fill: TICK }} width={big ? 68 : 54} />
+        <YAxis yAxisId="r" orientation="right" domain={[0, 1]} tickFormatter={(v) => Math.round(Number(v) * 100) + '%'} tick={{ fontSize: big ? 13 : 10.5, fill: TICK }} width={big ? 48 : 38} />
         <Tooltip cursor={{ fill: 'rgba(74,144,208,.06)' }} contentStyle={tooltipDark} formatter={(v, n) => n === 'Acumulado' ? [fmtPercent(Number(v)), 'Acumulado'] : [fmtVal(Number(v)), 'Valor']} />
-        <ReferenceLine yAxisId="r" y={0.8} stroke={GOLD} strokeDasharray="5 4" strokeWidth={1.5} label={{ value: '80%', position: 'right', fill: GOLD, fontSize: 11 }} />
+        <ReferenceLine yAxisId="r" y={0.8} stroke={GOLD} strokeDasharray="5 4" strokeWidth={1.5} label={{ value: '80%', position: 'right', fill: GOLD, fontSize: big ? 13 : 11 }} />
         <Bar yAxisId="l" dataKey="valor" name="Valor" radius={[4, 4, 0, 0]} isAnimationActive={false} cursor="pointer">
           {data.map((x, i) => <Cell key={x.id} fill={i < vitalFew ? NAVY_BAR : '#33445e'} />)}
-          {numeros && <LabelList dataKey="valor" position="top" fontSize={big ? 10 : 8} fill="#c9d6ec" formatter={(v) => fmtNum(Number(v))} />}
+          {numeros && <LabelList dataKey="valor" position="top" fontSize={big ? 12 : 8} fill="#c9d6ec" formatter={(v) => fmtNum(Number(v))} />}
         </Bar>
-        <Line yAxisId="r" type="monotone" dataKey="acumPct" name="Acumulado" stroke={GOLD} strokeWidth={2.4} dot={{ r: 2.6, fill: GOLD }} isAnimationActive={false} />
+        <Line yAxisId="r" type="monotone" dataKey="acumPct" name="Acumulado" stroke={GOLD} strokeWidth={big ? 3 : 2.4} dot={{ r: big ? 3.4 : 2.6, fill: GOLD }} isAnimationActive={false} />
       </ComposedChart>
     </ResponsiveContainer>
   )
+  // No modal (big) o gráfico PREENCHE a altura disponível via um wrapper com altura
+  // explícita em vh (calc), então o height='100%' do ResponsiveContainer resolve
+  // (não colapsa como acontecia dentro de flex sem altura); compacto mantém 270.
+  return big ? <div style={{ width: '100%', height: 'calc(90vh - 190px)', minHeight: 380 }}>{chart}</div> : chart
 }
 
 const DESF_CATS: { key: 'emitidas' | 'andamento' | 'perdidas' | 'recusadas'; label: string; cor: string }[] = [
@@ -931,6 +1262,19 @@ function DesfechoView({ desfecho, totais, conv, onSelect, big = false }: {
       </div>
       {big && <div className="ckp-cap" style={{ fontSize: 11.5 }}>Considera a <b>carteira inteira</b> (emitidas, perdidas e recusadas). <b>Aproveitamento</b> = emitidas ÷ decididas. Clique numa linha para abrir a corretora.</div>}
     </>
+  )
+}
+
+// "Maiores em prêmio emitido" — reusado no painel direito e no relatório em HTML.
+function MoversView({ desfecho, onSelect }: { desfecho: DesfechoCorretora[]; onSelect?: (id: string) => void }) {
+  const lista = desfecho.filter((d) => d.emitidas.premio > 0).slice(0, 5)
+  if (lista.length === 0) return <div className="ckp-empty">Nenhuma emissão no período.</div>
+  return (
+    <div>{lista.map((d, i) => (
+      <button key={d.id} type="button" className="ckp-mover" style={{ width: '100%', background: 'none', border: 'none', cursor: onSelect ? 'pointer' : 'default', font: 'inherit', color: 'inherit' }} onClick={() => onSelect?.(d.id)}>
+        <span className="ckp-mv-rank">{i + 1}</span><span className="ckp-mv-name" style={{ textAlign: 'left' }}>{d.nome}</span><span className="ckp-mv-val" style={{ color: GOOD }}>{kpiBRL(d.emitidas.premio)}</span>
+      </button>
+    ))}</div>
   )
 }
 
@@ -991,10 +1335,10 @@ function posicaoDe<T extends { id: string }>(lista: T[], id: string, val: (x: T)
   const i = ord.findIndex((x) => x.id === id)
   return i >= 0 ? i + 1 : null
 }
-function DossieCorretora({ corretora, corretoras, tomadores, operacoes, statusFluxo, onVoltar, onEditar, onPdf, exportando }: {
+function DossieCorretora({ corretora, corretoras, tomadores, operacoes, statusFluxo, onVoltar, onEditar, onPdf, exportando, full = false }: {
   corretora: Corretora; corretoras: Corretora[]; tomadores: TomAgg[]; operacoes: OpAgg[]
   statusFluxo: Pick<StatusFluxo, 'nome' | 'cor'>[]; onVoltar: () => void; onEditar: () => void
-  onPdf: (payload: Parameters<typeof gerarPdfCorretora>[0]) => void; exportando: boolean
+  onPdf: (payload: Parameters<typeof gerarPdfCorretora>[0]) => void; exportando: boolean; full?: boolean
 }) {
   const [abertas, setAbertas] = useState<Set<string>>(new Set())
   const rankGlobal = useMemo<CorretoraAgg[]>(
@@ -1026,9 +1370,9 @@ function DossieCorretora({ corretora, corretoras, tomadores, operacoes, statusFl
   const toggle = (id: string) => setAbertas((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n })
 
   return (
-    <div className="ckp-dossie">
+    <div className={`ckp-dossie${full ? ' ckp-dossie-full' : ''}`}>
       <div className="ckp-hero">
-        <div className="ckp-hero-top"><span className="ckp-hero-tag">Dossiê da corretora</span><button className="ckp-back" onClick={onVoltar}>← consolidado</button></div>
+        <div className="ckp-hero-top"><span className="ckp-hero-tag">Dossiê da corretora</span><button className="ckp-back" onClick={onVoltar}>✕ fechar</button></div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
           <div className="ckp-dossie-badge">{initials(nome)}</div>
           <div style={{ minWidth: 0 }}>
@@ -1038,7 +1382,7 @@ function DossieCorretora({ corretora, corretoras, tomadores, operacoes, statusFl
         </div>
       </div>
 
-      <div className="ckp-glass ckp-panel">
+      <div className="ckp-glass ckp-panel ckp-d-kpis">
         <div className="ckp-mini-kpis">
           <div className="ckp-mini-k"><div className="ckp-mk-l">Prêmio Previsto</div><div className="ckp-mk-v" style={{ color: GOLD }}>{kpiBRL(kpis.premioTotal)}</div></div>
           <div className="ckp-mini-k"><div className="ckp-mk-l">Prêmio Emitido</div><div className="ckp-mk-v" style={{ color: GOOD }}>{kpiBRL(premioEmit)}</div></div>
@@ -1049,7 +1393,7 @@ function DossieCorretora({ corretora, corretoras, tomadores, operacoes, statusFl
         </div>
       </div>
 
-      <div className="ckp-glass ckp-panel">
+      <div className="ckp-glass ckp-panel ckp-d-pos">
         <div className="ckp-panel-title">Posição no ranking<span className="ckp-tag">entre {total}</span></div>
         <div className="ckp-pos">
           <PosItem label="Prêmio previsto" pos={posPremio} />
@@ -1059,7 +1403,7 @@ function DossieCorretora({ corretora, corretoras, tomadores, operacoes, statusFl
         </div>
       </div>
 
-      <div className="ckp-glass ckp-panel">
+      <div className="ckp-glass ckp-panel ckp-d-cadeia">
         <div className="ckp-panel-title">Cadeia · Tomador → Operação<span className="ckp-tag">{fmtPercent(conv)} emitidas</span></div>
         <div className="ckp-funnel" style={{ marginBottom: 14 }}>
           <div className="ckp-fn-row"><div className="ckp-fn-bar" style={{ width: '100%', background: 'linear-gradient(90deg,#5a9cd8,#4a90d0)' }}>{kpis.nOperacoes} operações</div><span className="ckp-fn-meta">{tomsCor.length} tomadores</span></div>
