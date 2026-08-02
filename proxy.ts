@@ -8,7 +8,13 @@ import { NextResponse, type NextRequest } from 'next/server'
 // no celular dele, sem conta no CRM. A autenticação é o token de 256 bits na
 // URL + confirmação dos 4 últimos dígitos do celular cadastrado — validados
 // server-side em lib/comite/convites.ts, nunca por sessão.
-const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto']
+//
+// '/api/axi' é a integração do AxiMobius: chamada máquina-a-máquina, sem
+// navegador e sem sessão Supabase. Autentica por `Authorization: Bearer` com
+// comparação em tempo constante em lib/axi/core.ts. Estar nesta lista significa
+// "não exige cookie de login", NÃO significa "aberta": sem o token correto toda
+// rota /api/axi/* responde 401/403. Todas são somente GET.
+const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi']
 
 export async function proxy(request: NextRequest) {
   // MODO SANDBOX: não há sessão Supabase, então o gate de login abaixo
