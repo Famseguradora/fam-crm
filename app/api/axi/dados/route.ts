@@ -11,7 +11,7 @@
 // ============================================================================
 import {
   autorizar, clienteLeitura, acharTabela, TABELAS,
-  lerLimite, lerDesde, erroJson, CABECALHOS,
+  lerLimite, lerDesde, erroJson, CABECALHOS, enriquecerLinhas,
 } from '@/lib/axi/core'
 
 export const runtime = 'nodejs'
@@ -76,10 +76,15 @@ export async function GET(request: Request) {
     return erroJson(`Falha ao ler ${tabela.nome}: ${error.message}`, 500)
   }
 
-  const linhas = data ?? []
+  const linhas = (data ?? []) as unknown as Record<string, unknown>[]
   const total = count ?? 0
   const proximo = cursor + linhas.length
   const acabou = proximo >= total
+
+  // Resolve as FKs desta página (corretora_id → corretora_razao_social, e afins).
+  // Sem isso o consumidor recebe UUID puro e não tem como distinguir "não tem
+  // corretora" de "tem, mas eu não sei o nome dela".
+  const campos_resolvidos = await enriquecerLinhas(supabase, tabela.nome, linhas)
 
   return Response.json(
     {
@@ -95,8 +100,11 @@ export async function GET(request: Request) {
       // Carimbo para a próxima sincronização. Vem da última linha desta página,
       // então só é seguro guardar quando `proximo_cursor` for null.
       marca_dagua: tabela.colunaDelta && linhas.length > 0
-        ? (linhas[linhas.length - 1] as Record<string, unknown>)[tabela.colunaDelta] ?? null
+        ? linhas[linhas.length - 1][tabela.colunaDelta] ?? null
         : null,
+      // Campos que NÃO existem na tabela e foram resolvidos a partir das FKs.
+      // Vazio significa que esta tabela não tem FK para resolver, não que falhou.
+      campos_resolvidos,
       dados: linhas,
     },
     { headers: CABECALHOS },

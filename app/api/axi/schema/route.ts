@@ -6,7 +6,7 @@
 //  contagem de linhas e as regras de negócio que não estão no schema (o teto
 //  de R$ 80 Mi, a unidade da vigência) mas sem as quais os números saem errados.
 // ============================================================================
-import { autorizar, clienteLeitura, TABELAS, VIEWS, erroJson, CABECALHOS } from '@/lib/axi/core'
+import { autorizar, clienteLeitura, TABELAS, VIEWS, ENRIQUECIMENTO, erroJson, CABECALHOS } from '@/lib/axi/core'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -45,9 +45,37 @@ export async function GET(request: Request) {
           : (colunas as { tabela: string; coluna: string; tipo: string }[] | null)
               ?.filter((c) => c.tabela === t.nome)
               .map((c) => ({ nome: c.coluna, tipo: c.tipo })) ?? null,
+        // Campos que /dados acrescenta e que NÃO aparecem em `colunas` acima,
+        // porque não existem na tabela: são o nome por trás de cada FK.
+        campos_resolvidos: (ENRIQUECIMENTO[t.nome] ?? []).flatMap((r) =>
+          Object.values(r.campos).map((campo) => ({ campo, a_partir_de: `${r.fk} → ${r.origem}` })),
+        ),
       })),
 
-      views_analiticas: VIEWS,
+      resolucao_de_chaves: {
+        texto:
+          'GET /api/axi/dados resolve as chaves estrangeiras antes de responder. Um tomador vem com ' +
+          'corretora_id (UUID) E TAMBÉM com corretora_razao_social. NÃO conclua "sem corretora" a partir ' +
+          'da ausência de um campo de nome no seu lado: use corretora_id IS NULL, que é o único critério ' +
+          'correto. Em 02/08/2026 os 448 tomadores e as 200 operações do CRM tinham corretora preenchida.',
+        campos_sempre_presentes:
+          'Os campos resolvidos são sempre escritos, inclusive como null quando a FK é nula. ' +
+          'Campo ausente na resposta significa defeito, não dado vazio.',
+        se_for_juntar_por_conta_propria:
+          'Ao sincronizar corretoras, produtos ou status_fluxo_*, faça CARGA COMPLETA (sem "desde"). ' +
+          'São tabelas pequenas e quase estáticas: só 11 das 93 corretoras mudaram nos últimos 30 dias. ' +
+          'Sincronizá-las por delta deixa a sua cópia local quase vazia e o seu join falha para quase ' +
+          'todo tomador, o que parece "faltando dado no CRM" e não é.',
+      },
+
+      views_analiticas: {
+        aviso:
+          'Estas views existem no schema `axi` do Postgres, mas NÃO são alcançáveis por esta API: ' +
+          '/api/axi/dados só serve as tabelas listadas em `tabelas`. Elas só valem por SQL direto com ' +
+          'a role aximobius_ro. O que elas resolveriam de mais útil (o nome por trás das FKs) o /dados ' +
+          'já entrega, com os MESMOS nomes de campo.',
+        lista: VIEWS,
+      },
 
       // O que o schema sozinho não conta, e sem o que a análise sai errada.
       regras_de_negocio: {

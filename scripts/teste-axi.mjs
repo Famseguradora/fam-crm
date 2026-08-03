@@ -89,7 +89,35 @@ try {
     r.dados.forEach((x) => vistos.add(x.id))
     cursor = r.proximo_cursor; voltas++
   }
-  ok(vistos.size === 447, `varredura paginada de tomadores pega os 447 (pegou ${vistos.size})`)
+  // Confere contra o que o /schema declara, e não contra um número fixo: tomador
+  // novo cadastrado no CRM quebrava este teste sem nada estar errado.
+  const totTom = sch.tabelas.find((t) => t.nome === 'tomadores')?.linhas
+  ok(vistos.size === totTom, `varredura paginada de tomadores pega os ${totTom} (pegou ${vistos.size})`)
+
+  // ── Resolução de FK ────────────────────────────────────────────────────────
+  // O AxiMobius reportou "um monte de tomadores sem corretora" lendo a tabela crua,
+  // onde só existe corretora_id (UUID). Todos tinham corretora. Estes testes travam
+  // a regressão: o nome tem que vir junto, e tem que vir SEMPRE, mesmo que null.
+  console.log('\n=== 3c. Resolucao de chaves estrangeiras ===')
+  const tomRes = await (await get('/api/axi/dados?tabela=tomadores&limite=100')).json()
+  ok(tomRes.campos_resolvidos?.includes('corretora_razao_social'), 'tomadores declara corretora_razao_social em campos_resolvidos')
+  ok(tomRes.dados.every((t) => 'corretora_razao_social' in t), 'todo tomador traz a chave corretora_razao_social')
+  const comId = tomRes.dados.filter((t) => t.corretora_id)
+  ok(comId.length > 0 && comId.every((t) => !!t.corretora_razao_social), `tomador com corretora_id vem com o nome (${comId.length} conferidos)`)
+
+  const opRes = await (await get('/api/axi/dados?tabela=operacoes&limite=100')).json()
+  for (const campo of ['corretora_razao_social', 'tomador_razao_social', 'produto_nome']) {
+    ok(opRes.dados.every((o) => campo in o), `toda operacao traz a chave ${campo}`)
+  }
+  const opComTom = opRes.dados.filter((o) => o.tomador_id)
+  ok(opComTom.every((o) => !!o.tomador_razao_social), 'operacao com tomador_id vem com a razao social do tomador')
+
+  // A tabela crua continua crua: enriquecer não pode ter apagado a FK original.
+  ok(tomRes.dados.every((t) => 'corretora_id' in t), 'enriquecimento preserva a FK original')
+
+  // corretoras nao tem FK para resolver: a lista vem vazia, e isso nao e falha.
+  const corRes = await (await get('/api/axi/dados?tabela=corretoras&limite=5')).json()
+  ok(Array.isArray(corRes.campos_resolvidos) && corRes.campos_resolvidos.length === 0, 'tabela sem FK devolve campos_resolvidos vazio')
 
   // Cada tabela da whitelist tem um `ordenarPor` proprio; uma so pode quebrar
   // sozinha. Exercita TODAS contra o que o /schema declara.

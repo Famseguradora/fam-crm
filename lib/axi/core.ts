@@ -133,17 +133,146 @@ export const TABELAS: TabelaExposta[] = [
     descricao: 'TRILHA TEMPORAL COMPLETA, gravada por trigger no banco. Uma linha por campo alterado. É a base de toda análise de variação, funil e tempo em etapa.' },
 ]
 
+/**
+ * As views vivem no schema `axi`, e NÃO são alcançáveis por esta API: `/dados` só
+ * serve a whitelist acima (tabelas de `public`), e o `service_role` não tem USAGE em
+ * `axi`. Só a role `aximobius_ro` as enxerga, por SQL direto, e ela ainda está NOLOGIN.
+ *
+ * Isto aqui é documentação honesta do que existe no banco, não um cardápio de pedidos.
+ * O que a view resolveria de mais útil (o NOME por trás de cada FK) o `/dados` agora
+ * entrega sozinho, via ENRIQUECIMENTO abaixo.
+ */
 export const VIEWS = [
-  { nome: 'vw_operacoes', descricao: 'Operações com tomador, corretora e produto já resolvidos. Evita 4 joins.' },
-  { nome: 'vw_status_transicoes', descricao: 'Cada mudança de status com de/para e dias de permanência. dias_no_status NULL = ainda em curso.' },
-  { nome: 'vw_tomadores', descricao: 'Tomadores com corretora e contagem de operações/sócios.' },
-  { nome: 'vw_corretoras', descricao: 'Corretoras com contagem de tomadores e operações.' },
-  { nome: 'vw_linha_do_tempo', descricao: 'Todo evento do CRM em ordem cronológica, com flags afeta_valor e e_mudanca_de_status.' },
+  { nome: 'axi.vw_operacoes', descricao: 'Operações com tomador, corretora e produto já resolvidos.' },
+  { nome: 'axi.vw_status_transicoes', descricao: 'Cada mudança de status com de/para e dias de permanência. dias_no_status NULL = ainda em curso.' },
+  { nome: 'axi.vw_tomadores', descricao: 'Tomadores com corretora e contagem de operações/sócios.' },
+  { nome: 'axi.vw_corretoras', descricao: 'Corretoras com contagem de tomadores e operações.' },
+  { nome: 'axi.vw_linha_do_tempo', descricao: 'Todo evento do CRM em ordem cronológica, com flags afeta_valor e e_mudanca_de_status.' },
 ]
 
 export function acharTabela(nome: string | null): TabelaExposta | null {
   if (!nome) return null
   return TABELAS.find((t) => t.nome === nome) ?? null
+}
+
+// ── Enriquecimento: o nome por trás de cada chave estrangeira ────────────────
+
+/**
+ * `select('*')` numa tabela crua devolve `corretora_id` como um UUID solto e mais
+ * nada. As telas do CRM não sofrem disso porque pedem `corretora:corretoras(...)`
+ * no próprio select, e recebem o nome junto.
+ *
+ * Essa assimetria já custou caro: o AxiMobius leu `tomadores`, procurou a corretora,
+ * achou só UUID e reportou "um monte de tomadores sem corretora". Eram 448 de 448,
+ * e todos TINHAM corretora no banco. Um UUID que ninguém resolve é indistinguível
+ * de um campo vazio, e o falso positivo vira decisão errada do outro lado.
+ *
+ * Por isso o `/dados` resolve as FKs antes de responder. Os nomes dos campos são
+ * IDÊNTICOS aos das views em `axi` (corretora_razao_social, tomador_cnpj, ...): no
+ * dia em que as views forem expostas, os dois caminhos devolvem a mesma coisa e
+ * nada do outro lado precisa mudar.
+ */
+interface RegraEnriquecimento {
+  /** Coluna FK na tabela servida. */
+  fk: string
+  /** Tabela de onde o nome vem. */
+  origem: string
+  /** coluna da origem → nome do campo acrescentado na resposta. */
+  campos: Record<string, string>
+}
+
+export const ENRIQUECIMENTO: Record<string, RegraEnriquecimento[]> = {
+  tomadores: [
+    { fk: 'corretora_id', origem: 'corretoras', campos: {
+      razao_social: 'corretora_razao_social',
+      nome_fantasia: 'corretora_nome_fantasia',
+      status: 'corretora_status',
+    } },
+  ],
+  operacoes: [
+    { fk: 'tomador_id', origem: 'tomadores', campos: {
+      razao_social: 'tomador_razao_social',
+      nome_fantasia: 'tomador_nome_fantasia',
+      cnpj: 'tomador_cnpj',
+      porte: 'tomador_porte',
+      status: 'tomador_status',
+      limite_aprovado: 'tomador_limite_aprovado',
+    } },
+    { fk: 'corretora_id', origem: 'corretoras', campos: {
+      razao_social: 'corretora_razao_social',
+      nome_fantasia: 'corretora_nome_fantasia',
+      cnpj: 'corretora_cnpj',
+      status: 'corretora_status',
+    } },
+    { fk: 'produto_id', origem: 'produtos', campos: {
+      nome: 'produto_nome',
+      codigo: 'produto_codigo',
+    } },
+  ],
+  socios: [
+    { fk: 'tomador_id', origem: 'tomadores', campos: {
+      razao_social: 'tomador_razao_social',
+      cnpj: 'tomador_cnpj',
+    } },
+  ],
+}
+
+/** `.in()` vai na querystring; lote grande demais estoura o limite de URL do PostgREST. */
+const LOTE_IN = 200
+
+/**
+ * Acrescenta os campos de nome às linhas, no lugar. Devolve a lista de campos
+ * acrescentados, para a resposta poder declarar o que fez.
+ *
+ * Os campos são sempre escritos, inclusive como `null` quando a FK é nula ou não
+ * casa com ninguém. Chave ausente e chave nula significam coisas diferentes para
+ * quem consome, e "ausente" é exatamente a ambiguidade que causou o problema.
+ */
+export async function enriquecerLinhas(
+  supabase: SupabaseClient,
+  tabela: string,
+  linhas: Record<string, unknown>[],
+): Promise<string[]> {
+  const regras = ENRIQUECIMENTO[tabela]
+  if (!regras || linhas.length === 0) return []
+
+  const acrescentados: string[] = []
+
+  for (const regra of regras) {
+    const alvos = Object.values(regra.campos)
+    acrescentados.push(...alvos)
+
+    const ids = [...new Set(
+      linhas.map((l) => l[regra.fk]).filter((v): v is string => typeof v === 'string' && v.length > 0),
+    )]
+
+    const mapa = new Map<string, Record<string, unknown>>()
+    for (let i = 0; i < ids.length; i += LOTE_IN) {
+      const fatia = ids.slice(i, i + LOTE_IN)
+      const colunas = ['id', ...Object.keys(regra.campos)].join(',')
+      const { data, error } = await supabase.from(regra.origem).select(colunas).in('id', fatia)
+      if (error) {
+        // Falhar a requisição inteira seria pior que entregar o dado cru: o consumidor
+        // perderia também as linhas. Mas o campo fica `null` e o log registra o motivo,
+        // para o silêncio não passar por sucesso.
+        console.error(`[axi] enriquecimento ${tabela}.${regra.fk} → ${regra.origem} falhou:`, error.message)
+        break
+      }
+      for (const linha of (data ?? []) as unknown as Record<string, unknown>[]) {
+        mapa.set(String(linha.id), linha)
+      }
+    }
+
+    for (const linha of linhas) {
+      const chave = linha[regra.fk]
+      const origem = typeof chave === 'string' ? mapa.get(chave) : undefined
+      for (const [de, para] of Object.entries(regra.campos)) {
+        linha[para] = origem ? (origem[de] ?? null) : null
+      }
+    }
+  }
+
+  return acrescentados
 }
 
 // ── Utilidades de resposta ──────────────────────────────────────────────────
