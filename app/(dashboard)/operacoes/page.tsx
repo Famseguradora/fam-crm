@@ -531,6 +531,12 @@ export default function OperacoesPage() {
       setMsgTomador({ tipo: 'erro', texto: 'Razão Social é obrigatória.' })
       return
     }
+    // Corretora obrigatória também no cadastro rápido: a operação espelha o vínculo
+    // do tomador, então tomador sem corretora nasce operação sem corretora.
+    if (!formTomador.corretora_id) {
+      setMsgTomador({ tipo: 'erro', texto: 'Corretora é obrigatória.' })
+      return
+    }
     setEnviandoTomador(true)
     setMsgTomador(null)
     const supabase = createClient()
@@ -3046,9 +3052,9 @@ export default function OperacoesPage() {
                       </select>
                     </div>
                     <div className="form-field full">
-                      <label className="form-label">Corretora</label>
+                      <label className="form-label">Corretora *</label>
                       <select className="fam-input" value={formTomador.corretora_id}
-                        onChange={(e) => setFormTomador((f) => ({ ...f, corretora_id: e.target.value }))}>
+                        onChange={(e) => setFormTomador((f) => ({ ...f, corretora_id: e.target.value }))} required>
                         <option value="">— Selecione a corretora —</option>
                         {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
                       </select>

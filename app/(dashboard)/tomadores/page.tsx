@@ -87,6 +87,7 @@ export default function TomadoresPage() {
   const [filtroEstado, setFiltroEstado] = useState('')
   const [filtroCorretora, setFiltroCorretora] = useState('')
   const [erroCnpj, setErroCnpj] = useState('')
+  const [erroCorretora, setErroCorretora] = useState('')
   const [exportando, setExportando] = useState(false)
   const [sortField, setSortField] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -171,6 +172,7 @@ export default function TomadoresPage() {
     setForm(FORM_TOM_INICIAL)
     setMensagem(null)
     setErroCnpj('')
+    setErroCorretora('')
     setMostrarForm(true)
   }
 
@@ -202,6 +204,7 @@ export default function TomadoresPage() {
     })
     setMensagem(null)
     setErroCnpj('')
+    setErroCorretora('')
     setMostrarForm(true)
   }
 
@@ -211,6 +214,7 @@ export default function TomadoresPage() {
     setForm(FORM_TOM_INICIAL)
     setMensagem(null)
     setErroCnpj('')
+    setErroCorretora('')
   }
 
   async function excluirTomador() {
@@ -251,6 +255,13 @@ export default function TomadoresPage() {
     const cnpjDigits = form.cnpj.replace(/\D/g, '')
     if (cnpjDigits && !validarCNPJ(cnpjDigits)) {
       setErroCnpj('CNPJ inválido.')
+      return
+    }
+    // Corretora é obrigatória: o vínculo Tomador→Corretora é a fonte única que as
+    // operações espelham. Tomador sem corretora vira operação sem corretora, e some
+    // dos relatórios de Inteligência de Corretoras.
+    if (!form.corretora_id) {
+      setErroCorretora('Selecione a corretora do tomador.')
       return
     }
     setEnviando(true)
@@ -544,8 +555,19 @@ export default function TomadoresPage() {
         continue
       }
 
+      // Mesma regra do cadastro manual: não entra tomador sem corretora.
       const corretoraNome = col(row, 'corretora_nome')
       const corretora_id = corretoraNome ? (mapaCorretoras.get(_normalizarImport(corretoraNome)) ?? null) : null
+      if (!corretora_id) {
+        erros.push({
+          linha,
+          razao_social,
+          motivo: corretoraNome
+            ? `Corretora "${corretoraNome}" não encontrada no cadastro`
+            : 'Corretora não informada (coluna corretora_nome)',
+        })
+        continue
+      }
       const porteRaw = col(row, 'porte')
       const porte = portesValidos.includes(porteRaw) ? porteRaw : null
       const limiteRaw = col(row, 'limite_aprovado').replace(/R\$\s*/g, '').replace(/\./g, '').replace(',', '.').trim()
@@ -812,11 +834,13 @@ export default function TomadoresPage() {
                       </select>
                     </div>
                     <div className="form-field">
-                      <label className="form-label">Corretora</label>
-                      <select className="fam-input" value={form.corretora_id} onChange={(e) => setForm({ ...form, corretora_id: e.target.value })}>
+                      <label className="form-label">Corretora *</label>
+                      <select className={`fam-input${erroCorretora ? ' invalid' : ''}`} value={form.corretora_id}
+                        onChange={(e) => { setErroCorretora(''); setForm({ ...form, corretora_id: e.target.value }) }} required>
                         <option value="">— Selecione —</option>
                         {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
                       </select>
+                      {erroCorretora && <span className="field-error">{erroCorretora}</span>}
                     </div>
                     <div className="form-field">
                       <label className="form-label">Limite Aprovado (R$)</label>
