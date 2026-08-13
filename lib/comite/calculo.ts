@@ -34,23 +34,38 @@ export function sufVig(p: string | null | undefined): string {
 // Unidade da vigência já com singular/plural certo ("1 ano", "28 meses",
 // "1 dia"). Para valores ≠ 1 devolve exatamente o rótulo antigo (em minúsculas),
 // então não muda nada dos casos comuns — só corrige o singular.
+//
+// 'Data' significa que o usuário informou a data FINAL da vigência, e o que o
+// banco guarda em `vigencia_anos` é o número de DIAS (conferido: em todas as 24
+// operações com essa periodicidade, vigencia_anos == vigencia_dias). Antes,
+// o fallback devolvia o próprio rótulo e a tela mostrava "1983 data".
 function unidadeVig(periodicidade: string | null | undefined, valor: number): string {
   const p = periodicidade ?? 'Anos'
   const uno = valor === 1
   if (p === 'Anos') return uno ? 'ano' : 'anos'
   if (p === 'Meses') return uno ? 'mês' : 'meses'
-  if (p === 'Dias') return uno ? 'dia' : 'dias'
+  if (p === 'Dias' || p === 'Data') return uno ? 'dia' : 'dias'
   // Periodicidade fora do padrão: mantém o rótulo original em minúsculas.
   return p.toLowerCase()
 }
 
+// Número da vigência em pt-BR, sem casas decimais inúteis: 2 → "2",
+// 0.3 → "0,3". Antes saía "0.3 anos", com ponto, num relatório em português.
+// useGrouping:false de propósito — com separador de milhar, "1729 dias" viraria
+// "1.729 dias" e mudaria o texto que a cédula e o WhatsApp já mostram hoje.
+function numeroVig(valor: number): string {
+  return valor.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2, useGrouping: false })
+}
+
 // Vigência por extenso, como aparece na aba "Dados" do Comitê.
 // ATENÇÃO: aqui `vigencia_anos` tem precedência — regra DIFERENTE de anosVig().
-// FONTE ÚNICA: usada pela aba "Dados" (OperacaoDados.tsx), pela cédula pública
-// e pelo convite do WhatsApp — todos precisam mostrar o mesmo texto.
+// FONTE ÚNICA: usada pela aba "Dados" (OperacaoDados.tsx), pela cédula pública,
+// pelo convite do WhatsApp e pelo relatório gerencial de "KPIs por Mês" — todos
+// precisam mostrar o mesmo texto.
 export function vigenciaTxt(op: VigenciaLike): string {
   if (op.vigencia_anos != null) {
-    return `${op.vigencia_anos} ${unidadeVig(op.periodicidade_vigencia, op.vigencia_anos)}`
+    const v = Number(op.vigencia_anos)
+    return `${numeroVig(v)} ${unidadeVig(op.periodicidade_vigencia, v)}`
   }
   if (op.vigencia_dias != null) return `${op.vigencia_dias} ${op.vigencia_dias === 1 ? 'dia' : 'dias'}`
   return '—'

@@ -463,6 +463,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
                 </div>
               )}
               <SidebarBtn href="/relatorios/contabil" icon="📑" label="Contábil" />
+              <SidebarBtn href="/apresentacao" icon="🎬" label="Apresentação" />
             </div>
           )}
 
