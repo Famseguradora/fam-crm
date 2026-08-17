@@ -29,9 +29,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // Busca dados do usuário para exibir perfil e nome
   const { data: usuarioDb } = await supabase
     .from('usuarios')
-    .select('nome, perfil, proprietario, pode_publicar_avisos')
+    .select('nome, perfil, proprietario, pode_publicar_avisos, primeiro_acesso')
     .eq('auth_id', user.id)
     .single()
+
+  // Primeiro acesso: a senha ainda é a temporária que o admin entregou. Manda
+  // criar a definitiva ANTES de abrir o sistema (a tela /alterar-senha marca
+  // primeiro_acesso = false ao concluir, então não vira laço).
+  if (usuarioDb?.primeiro_acesso) redirect('/alterar-senha')
 
   // Carrega configuração global de data de início dos cálculos
   const { data: config } = await supabase

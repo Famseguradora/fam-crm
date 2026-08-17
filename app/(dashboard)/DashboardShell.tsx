@@ -62,6 +62,11 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
   const router = useRouter()
   const supabase = createClient()
   const isAdmin = perfilUsuario === 'admin'
+  // Perfil "leitura" (investidor): enxerga TODAS as telas de consulta, inclusive
+  // Corretoras, Produtos, Contábil e Apresentação. Não há informação que ele não
+  // possa ver; o que ele não pode é editar, e isso já é travado no banco.
+  const somenteLeitura = perfilUsuario === 'leitura'
+  const veTelasGerenciais = isAdmin || somenteLeitura
   const hoje = fmtDataExtenso()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [isMobile, setIsMobile] = useState(false)
@@ -98,7 +103,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
     window.location.reload()
   }
 
-  const tabsVisiveis = TABS.filter((t) => !t.adminOnly || isAdmin)
+  const tabsVisiveis = TABS.filter((t) => !t.adminOnly || veTelasGerenciais)
 
   const sidebarW = sidebarOpen ? 220 : 52
 
@@ -451,7 +456,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
           </div>
 
           {/* Relatórios (gerencial / contábil) */}
-          {(isAdmin || proprietario) && (
+          {(isAdmin || proprietario || somenteLeitura) && (
             <div style={{ paddingTop: 8 }}>
               {sidebarOpen && (
                 <div style={{
@@ -561,7 +566,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
                 (esta só para admin, igual ao desktop). Demais telas de
                 admin/cadastro (Produtos, Sistema, Usuários…) seguem só no desktop. */}
             <div style={{ paddingTop: 8 }}>
-              {TABS.filter((t) => MOBILE_NAV_HREFS.includes(t.href) && (!t.adminOnly || isAdmin)).map((tab) => {
+              {TABS.filter((t) => MOBILE_NAV_HREFS.includes(t.href) && (!t.adminOnly || veTelasGerenciais)).map((tab) => {
                 const isActive = tab.href === '/' ? pathname === '/' : pathname.startsWith(tab.href)
                 return (
                   <button
