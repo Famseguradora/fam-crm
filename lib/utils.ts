@@ -149,7 +149,16 @@ export function badgeClassTomador(status: string): string {
 
 // Retorna classe de badge para perfil de usuário
 export function badgeClassPerfil(perfil: string): string {
-  return perfil === 'admin' ? 'badge-blue' : 'badge-gray'
+  if (perfil === 'admin') return 'badge-blue'
+  if (perfil === 'leitura') return 'badge-orange'
+  return 'badge-gray'
+}
+
+// Rótulo do perfil como o usuário lê na tela
+export function labelPerfil(perfil: string): string {
+  if (perfil === 'admin') return 'ADMIN'
+  if (perfil === 'leitura') return 'SÓ LEITURA'
+  return 'USUÁRIO'
 }
 
 // Retorna classe de badge para status de usuário

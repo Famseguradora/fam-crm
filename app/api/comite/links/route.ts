@@ -148,6 +148,12 @@ export async function PATCH(request: NextRequest) {
     const { data: { user } } = await sessao.auth.getUser()
     if (!user) return NextResponse.json({ erro: 'Não autenticado.' }, { status: 401 })
 
+    // Perfil "leitura" não mexe em convite (a rota grava com a service key).
+    const { data: quemPede } = await sessao.from('usuarios').select('perfil').eq('auth_id', user.id).maybeSingle()
+    if (quemPede?.perfil === 'leitura') {
+      return NextResponse.json({ erro: 'Acesso somente leitura.' }, { status: 403 })
+    }
+
     const { conviteId, acao } = await request.json()
     if (!conviteId || !['marcar_enviado', 'revogar'].includes(acao)) {
       return NextResponse.json({ erro: 'Requisição inválida.' }, { status: 400 })

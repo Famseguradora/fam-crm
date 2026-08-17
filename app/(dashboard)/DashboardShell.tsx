@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fmtDataExtenso } from '@/lib/utils'
 import { DateRangeProvider } from '@/lib/context/date-range-context'
+import { PermissoesProvider } from '@/lib/context/permissoes-context'
 import InstallPrompt from './InstallPrompt'
 import NewsTicker from './NewsTicker'
 import MarketTicker from './MarketTicker'
@@ -258,7 +259,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
               color: '#e8b84b', fontSize: 12, fontWeight: 700,
               textTransform: 'uppercase', letterSpacing: '1px',
             }}>
-              {isAdmin ? 'Admin.' : 'Usuário'}
+              {isAdmin ? 'Admin.' : perfilUsuario === 'leitura' ? '👁 Só leitura' : 'Usuário'}
             </div>
             <button
               onClick={handleLogout}
@@ -502,7 +503,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
             {CONFIG_ITEMS.filter(item =>
               (!item.proprietarioOnly || proprietario) &&
               (!item.emailOnly || item.emailOnly === emailUsuario) &&
-              (!item.avisosOnly || podePublicarAvisos || proprietario)
+              (!item.avisosOnly || ((podePublicarAvisos || proprietario) && perfilUsuario !== 'leitura'))
             ).map((item) => (
               <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} disabled={item.disabled} />
             ))}
@@ -522,9 +523,11 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
         {/* Corretoras usa o cockpit em tela cheia (full-bleed): sem o padding da
             área de conteúdo, o painel ocupa todo o espaço, sem a moldura clara. */}
         <div style={{ flex: 1, padding: pathname === '/corretoras' ? 0 : (isMobile ? '16px 12px' : '28px 32px'), minWidth: 0 }}>
-          <DateRangeProvider initialDate={dataInicio}>
-            {children}
-          </DateRangeProvider>
+          <PermissoesProvider perfil={perfilUsuario} proprietario={proprietario} podePublicarAvisos={podePublicarAvisos}>
+            <DateRangeProvider initialDate={dataInicio}>
+              {children}
+            </DateRangeProvider>
+          </PermissoesProvider>
         </div>
       </div>
 

@@ -17,6 +17,7 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, CartesianGrid, LabelList,
 } from 'recharts'
 import { createClient } from '@/lib/supabase/client'
+import { usePermissoes } from '@/lib/context/permissoes-context'
 import { fmtMoeda, fmtMoedaCurta, fmtPercent } from '@/lib/utils'
 import {
   agregarPorCorretora, comPareto, comParticipacao, rankingTomadores, operacoesDoTomador,
@@ -114,6 +115,7 @@ interface Props {
 }
 
 export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: Props) {
+  const { somenteLeitura } = usePermissoes()
   const [mounted, setMounted] = useState(false)
   const [carregando, setCarregando] = useState(true)
   const [exportando, setExportando] = useState(false)
@@ -539,7 +541,7 @@ export default function PainelGerencial({ onAbrirCorretora, onNovaCorretora }: P
             <button className={`ckp-btn ckp-btn-ghost${mostrarPersonalizar ? ' on' : ''}`} onClick={() => setMostrarPersonalizar((v) => !v)}>⚙ Personalizar</button>
             <button className={`ckp-btn ckp-btn-ghost${modoComparar ? ' on' : ''}`} onClick={abrirComparar} title="Selecione corretoras na lista para comparar lado a lado">⚖ Comparar</button>
             {modoComparar && <button className="ckp-btn ckp-btn-gold" disabled={selCompare.size < 2} onClick={() => { setCompTab('corretoras'); setComparativoAberto(true) }}>Ver comparativo ({selCompare.size})</button>}
-            <button className="ckp-btn ckp-btn-gold" onClick={() => onNovaCorretora?.()}>+ Nova Corretora</button>
+            {!somenteLeitura && <button className="ckp-btn ckp-btn-gold" onClick={() => onNovaCorretora?.()}>+ Nova Corretora</button>}
           </div>
         </header>
 

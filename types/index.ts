@@ -1,4 +1,4 @@
-export type Perfil = 'admin' | 'usuario'
+export type Perfil = 'admin' | 'usuario' | 'leitura'
 export type StatusUsuario = 'ativo' | 'inativo'
 export type Temperatura = 'Quente' | 'Morno' | 'Frio'
 export type Porte = 'Small' | 'Middle' | 'Corporate' | 'Large'

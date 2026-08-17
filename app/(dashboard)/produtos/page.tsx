@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { fmtData } from '@/lib/utils'
+import { usePermissoes } from '@/lib/context/permissoes-context'
 import type { Produto, Modalidade } from '@/types'
 
 // ─── Form ────────────────────────────────────────────────────────────────────
@@ -30,6 +31,7 @@ const FORM_INICIAL: FormModalidade = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProdutosPage() {
+  const { somenteLeitura } = usePermissoes()
   const [produtos, setProdutos] = useState<Produto[]>([])
   const [modalidades, setModalidades] = useState<Modalidade[]>([])
   const [carregando, setCarregando] = useState(true)
@@ -274,7 +276,7 @@ export default function ProdutosPage() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn-export" onClick={exportarExcel} disabled={exportando || filtradas.length === 0}>⬇ Excel</button>
           <button className="btn-export" onClick={exportarPDF} disabled={exportando || filtradas.length === 0}>⬇ PDF</button>
-          <button className="btn-primary" onClick={() => abrirNova()}>+ Nova Modalidade</button>
+          {!somenteLeitura && <button className="btn-primary" onClick={() => abrirNova()}>+ Nova Modalidade</button>}
         </div>
       </div>
 
@@ -303,6 +305,7 @@ export default function ProdutosPage() {
       </div>
 
       {/* Botões de atalho por setor */}
+      {!somenteLeitura && (
       <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
         <button
           onClick={() => setorPublico && abrirNova(setorPublico.id)}
@@ -341,6 +344,7 @@ export default function ProdutosPage() {
           </div>
         </button>
       </div>
+      )}
 
       {/* Filtros */}
       <div className="filter-row">
@@ -439,6 +443,7 @@ export default function ProdutosPage() {
                   </td>
                   <td style={{ fontSize: 13, color: '#6080a0' }}>{fmtData(m.created_at)}</td>
                   <td>
+                    {!somenteLeitura && (
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button
                         onClick={() => abrirEditar(m)}
@@ -453,6 +458,7 @@ export default function ProdutosPage() {
                         {m.status === 'ativo' ? 'Desativar' : 'Ativar'}
                       </button>
                     </div>
+                    )}
                   </td>
                 </tr>
               )

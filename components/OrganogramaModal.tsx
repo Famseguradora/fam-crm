@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { createClient } from '@/lib/supabase/client'
+import { usePermissoes } from '@/lib/context/permissoes-context'
 import type { Socio, SocioNode as SocioNodeType, Tomador } from '@/types'
 import { maskCPF, maskCNPJ, titleCase } from '@/lib/utils'
 import {
@@ -30,6 +31,7 @@ interface SocioForm {
 }
 
 export default function OrganogramaModal({ tomador, usuarioInfo, onClose }: Props) {
+  const { somenteLeitura } = usePermissoes()
   const [socios, setSocios] = useState<Socio[]>([])
   const [carregando, setCarregando] = useState(true)
   const [aba, setAba] = useState<'visual' | 'tabela'>('visual')
@@ -339,8 +341,8 @@ export default function OrganogramaModal({ tomador, usuarioInfo, onClose }: Prop
               style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13, background: aba === 'tabela' ? '#1e4080' : 'transparent', color: aba === 'tabela' ? '#fff' : '#3a5a85' }}>📋 Tabela</button>
           </div>
 
-          <button type="button" className="btn-primary" onClick={() => abrirAddSocio(null)} style={{ fontSize: 13 }}>＋ Adicionar sócio</button>
-          <button type="button" className="btn-secondary" onClick={abrirAddDiretor} style={{ fontSize: 13 }}>👔 Adicionar diretor</button>
+          {!somenteLeitura && <button type="button" className="btn-primary" onClick={() => abrirAddSocio(null)} style={{ fontSize: 13 }}>＋ Adicionar sócio</button>}
+          {!somenteLeitura && <button type="button" className="btn-secondary" onClick={abrirAddDiretor} style={{ fontSize: 13 }}>👔 Adicionar diretor</button>}
 
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" className="btn-export" disabled={exportando} onClick={exportarPdfVisual}>📄 PDF Organograma</button>
@@ -366,11 +368,12 @@ export default function OrganogramaModal({ tomador, usuarioInfo, onClose }: Prop
                 tomadorDoc={tomador.cnpj}
                 arvore={arvore}
                 diretores={diretores}
-                onAddSocio={abrirAddSocio}
-                onEditSocio={abrirEdit}
-                onDeleteSocio={setConfirmDelete}
-                onEditDiretor={abrirEdit}
-                onDeleteDiretor={setConfirmDelete}
+                readOnly={somenteLeitura}
+                onAddSocio={somenteLeitura ? undefined : abrirAddSocio}
+                onEditSocio={somenteLeitura ? undefined : abrirEdit}
+                onDeleteSocio={somenteLeitura ? undefined : setConfirmDelete}
+                onEditDiretor={somenteLeitura ? undefined : abrirEdit}
+                onDeleteDiretor={somenteLeitura ? undefined : setConfirmDelete}
               />
               {totalSocios === 0 && diretores.length === 0 && (
                 <p style={{ color: '#6080a0', fontSize: 13, marginTop: 14 }} data-html2canvas-ignore="true">
@@ -401,9 +404,13 @@ export default function OrganogramaModal({ tomador, usuarioInfo, onClose }: Prop
                     <td style={{ textAlign: 'center' }}>{node.tipo_pessoa ?? '—'}</td>
                     <td style={{ textAlign: 'right' }}>{node.percentual != null ? `${Number(node.percentual).toLocaleString('pt-BR')}%` : '—'}</td>
                     <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                      <button type="button" className="org-act org-act-add" title="Adicionar sócio deste" onClick={() => abrirAddSocio(node.id)}>＋</button>
-                      <button type="button" className="org-act org-act-edit" title="Editar" onClick={() => abrirEdit(node)}>✏️</button>
-                      <button type="button" className="org-act org-act-del" title="Excluir" onClick={() => setConfirmDelete(node)}>✕</button>
+                      {!somenteLeitura && (
+                        <>
+                          <button type="button" className="org-act org-act-add" title="Adicionar sócio deste" onClick={() => abrirAddSocio(node.id)}>＋</button>
+                          <button type="button" className="org-act org-act-edit" title="Editar" onClick={() => abrirEdit(node)}>✏️</button>
+                          <button type="button" className="org-act org-act-del" title="Excluir" onClick={() => setConfirmDelete(node)}>✕</button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -419,8 +426,12 @@ export default function OrganogramaModal({ tomador, usuarioInfo, onClose }: Prop
                     <td style={{ textAlign: 'center' }}>{d.tipo_pessoa ?? '—'}</td>
                     <td style={{ textAlign: 'right' }}>—</td>
                     <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                      <button type="button" className="org-act org-act-edit" title="Editar" onClick={() => abrirEdit(d)}>✏️</button>
-                      <button type="button" className="org-act org-act-del" title="Excluir" onClick={() => setConfirmDelete(d)}>✕</button>
+                      {!somenteLeitura && (
+                        <>
+                          <button type="button" className="org-act org-act-edit" title="Editar" onClick={() => abrirEdit(d)}>✏️</button>
+                          <button type="button" className="org-act org-act-del" title="Excluir" onClick={() => setConfirmDelete(d)}>✕</button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}

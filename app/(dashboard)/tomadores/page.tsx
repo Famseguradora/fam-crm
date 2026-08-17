@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
 import { useDateRange } from '@/lib/context/date-range-context'
+import { usePermissoes } from '@/lib/context/permissoes-context'
 import AnexosSection from '@/components/AnexosSection'
 import OrganogramaModal from '@/components/OrganogramaModal'
 
@@ -69,6 +70,7 @@ const CORES_RAPIDAS = [
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function TomadoresPage() {
+  const { somenteLeitura } = usePermissoes()
   const { dataInicio, isFiltered } = useDateRange()
   const [aba, setAba] = useState<'tomadores' | 'status'>('tomadores')
 
@@ -668,13 +670,15 @@ export default function TomadoresPage() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={importarCSV} />
             <button className="btn-export" onClick={exportarExcel} disabled={exportando || tomadoresFiltrados.length === 0}>⬇ Excel</button>
-            <button className="btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={importando}>
-              {importando ? 'Importando...' : '⬆ Importar Planilha'}
-            </button>
-            <button className="btn-primary" onClick={abrirNovo}>+ Novo Tomador</button>
+            {!somenteLeitura && (
+              <button className="btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={importando}>
+                {importando ? 'Importando...' : '⬆ Importar Planilha'}
+              </button>
+            )}
+            {!somenteLeitura && <button className="btn-primary" onClick={abrirNovo}>+ Novo Tomador</button>}
           </div>
         ) : (
-          <button className="btn-primary" onClick={abrirNovoStatus}>+ Novo Status</button>
+          !somenteLeitura && <button className="btn-primary" onClick={abrirNovoStatus}>+ Novo Status</button>
         )}
       </div>
 
@@ -953,7 +957,7 @@ export default function TomadoresPage() {
                   </div>
 
                   <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                    {editando && isProprietario && (
+                    {editando && isProprietario && !somenteLeitura && (
                       <button type="button" onClick={() => setConfirmExcluirTomador(editando)}
                         style={{ marginRight: 'auto', background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 16px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
                         🗑 Excluir Tomador
@@ -964,10 +968,19 @@ export default function TomadoresPage() {
                         🏛️ Organograma Societário
                       </button>
                     )}
-                    <button type="button" className="btn-secondary" onClick={fecharForm}>Cancelar</button>
-                    <button type="submit" className="btn-primary" disabled={enviando}>
-                      {enviando ? 'Salvando...' : editando ? 'Salvar Alterações' : 'Cadastrar Tomador'}
-                    </button>
+                    {somenteLeitura ? (
+                      <>
+                        <span style={{ alignSelf: 'center', fontSize: 12, color: '#a05010' }}>👁 Acesso somente leitura</span>
+                        <button type="button" className="btn-secondary" onClick={fecharForm}>Fechar</button>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" className="btn-secondary" onClick={fecharForm}>Cancelar</button>
+                        <button type="submit" className="btn-primary" disabled={enviando}>
+                          {enviando ? 'Salvando...' : editando ? 'Salvar Alterações' : 'Cadastrar Tomador'}
+                        </button>
+                      </>
+                    )}
                   </div>
                 </form>
 
@@ -1255,6 +1268,7 @@ export default function TomadoresPage() {
                       </span>
                     </td>
                     <td>
+                      {!somenteLeitura && (
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button onClick={() => abrirEditarStatus(s)}
                           style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
@@ -1267,6 +1281,7 @@ export default function TomadoresPage() {
                           </button>
                         )}
                       </div>
+                      )}
                     </td>
                   </tr>
                 ))}

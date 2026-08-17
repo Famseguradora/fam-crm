@@ -18,6 +18,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ erro: 'Não autenticado.' }, { status: 401 })
     }
 
+    // Perfil "leitura" não dispara convite de votação.
+    const { data: quemPede } = await supabase.from('usuarios').select('perfil').eq('auth_id', user.id).maybeSingle()
+    if (quemPede?.perfil === 'leitura') {
+      return NextResponse.json({ erro: 'Acesso somente leitura.' }, { status: 403 })
+    }
+
     const { operacaoId } = await request.json()
     if (!operacaoId) {
       return NextResponse.json({ erro: 'operacaoId é obrigatório.' }, { status: 400 })

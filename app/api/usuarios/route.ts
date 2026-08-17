@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/lib/supabase/server'
 
 export async function POST(request: NextRequest) {
   try {
+    // Só administrador logado pode criar usuário (a rota usa a service key,
+    // que passa por cima da RLS — por isso a checagem tem que ser aqui).
+    const supabaseServer = await createServerClient()
+    const { data: { user } } = await supabaseServer.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ erro: 'Não autenticado.' }, { status: 401 })
+    }
+
     const body = await request.json()
     const { nome, email, senha, telefone, cargo, perfil, status } = body
 
@@ -12,12 +21,24 @@ export async function POST(request: NextRequest) {
     if (senha.length < 8) {
       return NextResponse.json({ erro: 'A senha deve ter no mínimo 8 caracteres.' }, { status: 400 })
     }
+    if (!['admin', 'usuario', 'leitura'].includes(perfil)) {
+      return NextResponse.json({ erro: 'Perfil inválido.' }, { status: 400 })
+    }
 
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
+
+    const { data: solicitante } = await supabaseAdmin
+      .from('usuarios')
+      .select('perfil')
+      .eq('auth_id', user.id)
+      .single()
+    if (solicitante?.perfil !== 'admin') {
+      return NextResponse.json({ erro: 'Apenas administradores podem criar usuários.' }, { status: 403 })
+    }
 
     // Cria o usuário no Auth com senha temporária — sem envio de e-mail
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({

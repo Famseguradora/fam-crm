@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskTelefone, maskCEP, titleCase, validarCNPJ } from '@/lib/utils'
 import type { Corretora } from '@/types'
+import { usePermissoes } from '@/lib/context/permissoes-context'
 import AnexosSection from '@/components/AnexosSection'
 import PainelGerencial from '@/components/corretoras/PainelGerencial'
 
@@ -46,6 +47,7 @@ const ESTADOS_BR = [
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function CorretorasPage() {
+  const { somenteLeitura } = usePermissoes()
   const [corretoras, setCorretoras] = useState<Corretora[]>([])
   const [mostrarForm, setMostrarForm] = useState(false)
   const [editando, setEditando] = useState<Corretora | null>(null)
@@ -373,7 +375,12 @@ export default function CorretorasPage() {
                   </fieldset>
 
                   <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                    {editando ? (
+                    {somenteLeitura ? (
+                      <>
+                        <span style={{ marginRight: 'auto', alignSelf: 'center', fontSize: 12, color: '#a05010' }}>👁 Acesso somente leitura</span>
+                        <button type="button" className="btn-secondary" onClick={fecharForm}>Fechar</button>
+                      </>
+                    ) : editando ? (
                       <>
                         {/* Botões SEPARADOS: Editar só desbloqueia; Salvar só salva (fica travado até Editar). */}
                         <button type="button" className="btn-secondary" onClick={fecharForm}>Fechar</button>

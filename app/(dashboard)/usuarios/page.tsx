@@ -4,8 +4,8 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { maskTelefone, badgeClassPerfil, badgeClassStatus, fmtData, titleCase } from '@/lib/utils'
-import type { Usuario } from '@/types'
+import { maskTelefone, badgeClassPerfil, badgeClassStatus, fmtData, titleCase, labelPerfil } from '@/lib/utils'
+import type { Usuario, Perfil } from '@/types'
 
 interface FormData {
   nome: string
@@ -13,7 +13,7 @@ interface FormData {
   senha: string
   telefone: string
   cargo: string
-  perfil: 'admin' | 'usuario'
+  perfil: Perfil
   status: 'ativo' | 'inativo'
   comite: boolean
 }
@@ -284,12 +284,18 @@ export default function UsuariosPage() {
                   <select
                     className="fam-input"
                     value={form.perfil}
-                    onChange={(e) => setForm({ ...form, perfil: e.target.value as 'admin' | 'usuario' })}
+                    onChange={(e) => setForm({ ...form, perfil: e.target.value as Perfil })}
                     required
                   >
                     <option value="usuario">Usuário</option>
                     <option value="admin">Administrador</option>
+                    <option value="leitura">Somente leitura</option>
                   </select>
+                  {form.perfil === 'leitura' && (
+                    <span style={{ fontSize: 11, color: '#a05010' }}>
+                      Enxerga tudo, mas não cria, não edita e não exclui nada. O próprio banco recusa qualquer gravação.
+                    </span>
+                  )}
                 </div>
 
                 <div className="form-field">
@@ -423,7 +429,7 @@ export default function UsuariosPage() {
                   <td style={{ fontSize: 13, color: '#6080a0' }}>{u.cargo || '—'}</td>
                   <td>
                     <span className={`badge ${badgeClassPerfil(u.perfil)}`}>
-                      {u.perfil === 'admin' ? 'ADMIN' : 'USUÁRIO'}
+                      {labelPerfil(u.perfil)}
                     </span>
                   </td>
                   <td>

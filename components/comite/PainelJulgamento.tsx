@@ -52,6 +52,9 @@ interface Props {
   // Quem assina uma razão/contrarazão (usuário logado). null = ninguém compõe.
   autorComentario: { nome: string; cargo: string | null } | null
   onComentar: (texto: string) => Promise<void> | void
+  // Perfil "leitura": acompanha a deliberação, mas não age (não vota, não
+  // retoma a vista, não dispara convite nem abre a cédula por link).
+  somenteLeitura?: boolean
 }
 
 // Paleta ESCURA premium (sala de comitê). Acentos seguem a marca FAM.
@@ -135,6 +138,7 @@ export default function PainelJulgamento({
   podeEditarParecer,
   autorComentario,
   onComentar,
+  somenteLeitura,
 }: Props) {
   const [votandoId, setVotandoId] = useState<string | null>(null)
   const [retratandoId, setRetratandoId] = useState<string | null>(null)
@@ -297,7 +301,7 @@ export default function PainelJulgamento({
               {op.comite_vista_justificativa && <> Motivo: “{op.comite_vista_justificativa}”</>}
             </div>
           </div>
-          <button onClick={onRetomarVista} style={{ cursor: 'pointer', background: T.dourado, color: '#1a2a3a', border: 'none', borderRadius: 8, padding: '8px 16px', fontWeight: 800, fontSize: 13 }}>▶ Retomar</button>
+          {!somenteLeitura && <button onClick={onRetomarVista} style={{ cursor: 'pointer', background: T.dourado, color: '#1a2a3a', border: 'none', borderRadius: 8, padding: '8px 16px', fontWeight: 800, fontSize: 13 }}>▶ Retomar</button>}
         </div>
       )}
 
@@ -509,10 +513,12 @@ export default function PainelJulgamento({
       )}
 
       {/* WhatsApp — Simulador (demonstração) + envio real do convite. */}
+      {!somenteLeitura && (
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
         <button onClick={onAbrirWhatsapp} style={{ cursor: 'pointer', background: 'rgba(37,211,102,0.10)', color: '#fff', border: '1px solid rgba(37,211,102,0.5)', borderRadius: 10, padding: '10px 18px', fontWeight: 700, fontSize: 13, boxShadow: '0 0 16px rgba(37,211,102,0.18)' }}>💬 Abrir Simulador WhatsApp</button>
         <button onClick={onEnviarConvite} style={{ cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#fff', border: `1px solid ${T.borda}`, borderRadius: 10, padding: '10px 18px', fontWeight: 700, fontSize: 13 }}>📲 Enviar convite</button>
       </div>
+      )}
 
       {/* ── RAZÕES E CONTRARRAZÕES DA BANCADA ──
           O Parecer (acima) é só da Subscrição. AQUI todo membro registra a
@@ -587,7 +593,7 @@ export default function PainelJulgamento({
 
       {/* Cédula por link: o caminho em uso enquanto a API oficial do WhatsApp
           não permite votar dentro do próprio chat. */}
-      {!op.comite_encerrado && !emVista && <LinksCedula operacaoId={op.id} />}
+      {!op.comite_encerrado && !emVista && !somenteLeitura && <LinksCedula operacaoId={op.id} />}
 
       {/* ── MODAL: Histórico da Deliberação ── */}
       {historicoAberto && (() => {

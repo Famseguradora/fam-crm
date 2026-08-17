@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { usePermissoes } from '@/lib/context/permissoes-context'
 import { CATEGORIA_META, CATEGORIAS_ORDENADAS, sugerirCategoria } from '@/lib/anexos/categorias'
 import type { Anexo, CategoriaAnexo } from '@/types'
 
@@ -55,6 +56,7 @@ interface Props {
 }
 
 export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: Props) {
+  const { somenteLeitura } = usePermissoes()
   const [anexos, setAnexos] = useState<Anexo[]>([])
   const [carregando, setCarregando] = useState(true)
   const [enviando, setEnviando] = useState(false)
@@ -218,7 +220,7 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
 
       {/* Tipo do documento — define o que o Comitê mostra na cédula de voto.
           Não aparece em Corretora: essas categorias são do dossiê do tomador. */}
-      {entidadeTipo !== 'corretora' && (
+      {entidadeTipo !== 'corretora' && !somenteLeitura && (
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
         <span style={{ fontSize: 11, color: '#6080a0', fontWeight: 600, marginRight: 2 }}>
           Tipo:
@@ -249,6 +251,7 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
       )}
 
       {/* Área de upload */}
+      {!somenteLeitura && (
       <div
         onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
         onDragLeave={() => setDrag(false)}
@@ -287,6 +290,7 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
           </>
         )}
       </div>
+      )}
 
       {erro && (
         <div className="alert-error" style={{ marginBottom: 12, fontSize: 13 }}>
@@ -320,6 +324,7 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
                   <select
                     value={a.categoria ?? 'outro'}
                     onChange={(e) => trocarCategoria(a, e.target.value as CategoriaAnexo)}
+                    disabled={somenteLeitura}
                     title="Tipo do documento"
                     style={{
                       fontSize: 10.5, fontWeight: 700, padding: '1px 4px', borderRadius: 999,
@@ -342,6 +347,7 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
               >
                 ↗ Abrir
               </button>
+              {!somenteLeitura && (
               <button
                 onClick={() => setConfirmExcluir(a)}
                 title="Excluir"
@@ -349,6 +355,7 @@ export default function AnexosSection({ entidadeTipo, entidadeId, tomadorId }: P
               >
                 ✕
               </button>
+              )}
             </div>
           ))}
         </div>

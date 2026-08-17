@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { usePermissoes } from '@/lib/context/permissoes-context'
 import { maskCNPJ, maskMoeda, fmtMoeda, fmtMoedaCurta, fmtData, fmtPercent, titleCase } from '@/lib/utils'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario, Usuario, ComiteVoto, ComiteVotoHistorico, VotoComite, Anexo } from '@/types'
 import AnexosSection from '@/components/AnexosSection'
@@ -171,6 +172,7 @@ function decomporVig(dias: number, dataEntradaISO: string | null): { anos: numbe
 
 export default function OperacoesPage() {
   const router = useRouter()
+  const { somenteLeitura } = usePermissoes()
   const [aba, setAba] = useState<'operacoes' | 'status' | 'comite'>('operacoes')
 
   // ── Operações ──
@@ -2188,16 +2190,20 @@ export default function OperacoesPage() {
             {aba === 'operacoes' && (
               <>
                 <button className="btn-export" onClick={exportarExcel} disabled={exportando || operacoesFiltradas.length === 0} style={{ fontSize: 13 }}>⬇ Excel</button>
-                <button className="btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={importando} style={{ fontSize: 13 }}>
-                  {importando ? 'Importando...' : '⬆ Importar Planilha'}
-                </button>
+                {!somenteLeitura && (
+                  <button className="btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={importando} style={{ fontSize: 13 }}>
+                    {importando ? 'Importando...' : '⬆ Importar Planilha'}
+                  </button>
+                )}
                 <button className="btn-primary" onClick={() => exportarPDF()} disabled={exportando || operacoesFiltradas.length === 0} style={{ fontSize: 13, border: '1.5px solid transparent' }}>
                   📄 Exportar PDF
                 </button>
-                <button className="btn-primary" onClick={abrirNovo} style={{ fontSize: 13, border: '1.5px solid transparent' }}>+ Nova Operação</button>
+                {!somenteLeitura && (
+                  <button className="btn-primary" onClick={abrirNovo} style={{ fontSize: 13, border: '1.5px solid transparent' }}>+ Nova Operação</button>
+                )}
               </>
             )}
-            {aba === 'status' && (
+            {aba === 'status' && !somenteLeitura && (
               <button className="btn-primary" onClick={abrirNovoStatus}>+ Novo Status</button>
             )}
           </div>
@@ -2925,16 +2931,25 @@ export default function OperacoesPage() {
                   </div>
 
                   <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                    {editando && (
-                      <button type="button" onClick={() => setConfirmExcluirOp(editando)}
-                        style={{ marginRight: 'auto', background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 16px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
-                        🗑 Excluir Operação
-                      </button>
+                    {somenteLeitura ? (
+                      <>
+                        <span style={{ marginRight: 'auto', alignSelf: 'center', fontSize: 12, color: '#a05010' }}>👁 Acesso somente leitura</span>
+                        <button type="button" className="btn-secondary" onClick={fecharForm}>Fechar</button>
+                      </>
+                    ) : (
+                      <>
+                        {editando && (
+                          <button type="button" onClick={() => setConfirmExcluirOp(editando)}
+                            style={{ marginRight: 'auto', background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 16px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
+                            🗑 Excluir Operação
+                          </button>
+                        )}
+                        <button type="button" className="btn-secondary" onClick={fecharForm}>Cancelar</button>
+                        <button type="submit" className="btn-primary" disabled={enviando || (opFinalizada && form.status === editando?.status)}>
+                          {enviando ? 'Salvando...' : editando ? 'Salvar Alterações' : 'Cadastrar Operação'}
+                        </button>
+                      </>
                     )}
-                    <button type="button" className="btn-secondary" onClick={fecharForm}>Cancelar</button>
-                    <button type="submit" className="btn-primary" disabled={enviando || (opFinalizada && form.status === editando?.status)}>
-                      {enviando ? 'Salvando...' : editando ? 'Salvar Alterações' : 'Cadastrar Operação'}
-                    </button>
                   </div>
                 </form>
 
@@ -3422,7 +3437,7 @@ export default function OperacoesPage() {
                     ))}
                   </div>
                 </div>
-                <button onClick={() => {
+                {!somenteLeitura && <button onClick={() => {
                   const opening = !mostrarConfigurarMetas
                   if (opening) {
                     const fmt = (n: number | null | undefined) => n != null ? maskMoeda(String(Math.round(n * 100))) : ''
@@ -3441,7 +3456,7 @@ export default function OperacoesPage() {
                 }}
                   style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(56,120,200,0.5)', background: 'rgba(56,120,200,0.15)', color: 'rgba(180,200,220,0.9)', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
                   ⚙ {mostrarConfigurarMetas ? 'Fechar' : 'Configurar Metas'}
-                </button>
+                </button>}
               </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 {/* Meta Mês */}
@@ -3931,10 +3946,11 @@ export default function OperacoesPage() {
                                   onAbrirWhatsapp={() => setWhatsappSimOpId(op.id)}
                                   comentarios={comentariosComite[op.id] ?? []}
                                   onEnviarConvite={() => enviarConvitesComite(op)}
-                                  usuarioAtualId={usuarioAtual?.id ?? null}
-                                  votacaoLivre={votacaoLivre}
-                                  podeEditarParecer={ehSubscritorAtual || votacaoLivre}
-                                  autorComentario={autorComentario}
+                                  usuarioAtualId={somenteLeitura ? null : (usuarioAtual?.id ?? null)}
+                                  votacaoLivre={votacaoLivre && !somenteLeitura}
+                                  podeEditarParecer={(ehSubscritorAtual || votacaoLivre) && !somenteLeitura}
+                                  autorComentario={somenteLeitura ? null : autorComentario}
+                                  somenteLeitura={somenteLeitura}
                                   onComentar={(texto) => comentarComite(op, texto)}
                                 />
                               )}
@@ -3943,7 +3959,7 @@ export default function OperacoesPage() {
                                 Aqui resta só "Devolver" — bloqueado se já houver voto. */}
                             <div style={{ borderTop: '1.5px solid #e0ecff', padding: '12px 22px', background: '#f8fafc', display: 'flex', gap: 9, flexWrap: 'wrap', alignItems: 'center' }}>
                               <span style={{ fontSize: 11, fontWeight: 700, color: '#6080a0', textTransform: 'uppercase' as const, letterSpacing: 0.8, marginRight: 4 }}>Fluxo:</span>
-                              <button onClick={() => tentarDevolver(op)} title="Volta a operação para Em Análise (bloqueado se já houver voto proferido)" style={{ padding: '7px 16px', borderRadius: 8, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>↩ Devolver para Análise</button>
+                              {!somenteLeitura && <button onClick={() => tentarDevolver(op)} title="Volta a operação para Em Análise (bloqueado se já houver voto proferido)" style={{ padding: '7px 16px', borderRadius: 8, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>↩ Devolver para Análise</button>}
                               <span style={{ fontSize: 12, color: '#9ab0c8' }}>A decisão final é definida pela votação na aba ⚖️ Deliberação.</span>
                             </div>
                           </div>
@@ -4161,6 +4177,7 @@ export default function OperacoesPage() {
                       </span>
                     </td>
                     <td>
+                      {!somenteLeitura && (
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button onClick={() => abrirEditarStatus(s)}
                           style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #c5d5e8', background: 'white', color: '#1e4080', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif" }}>
@@ -4173,6 +4190,7 @@ export default function OperacoesPage() {
                           </button>
                         )}
                       </div>
+                      )}
                     </td>
                   </tr>
                 ))}
