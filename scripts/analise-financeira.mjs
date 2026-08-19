@@ -23,7 +23,7 @@ import { analisarOperacoes, fmtBR } from '../lib/financeiro/analise.mjs'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = join(__dirname, '..')
 
-const DEFAULT_DEST = 'C:\\Users\\MarcoDragoneFAMSEGUR\\FAM Seguradora\\FAM SEGURADORA - Documentos\\Infraestrutura\\Analise Financeira - FAM CRM'
+const DEFAULT_DEST = 'C:\\Users\\MarcoDragoneFAMSEGUR\\FAM Seguradora\\FAM SEGURADORA - Documents\\Infraestrutura\\Analise Financeira - FAM CRM'
 const PREFIX = 'fam-analise-financeira-'
 const KEEP = 30
 const PAGE = 1000

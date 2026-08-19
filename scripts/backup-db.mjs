@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = join(__dirname, '..')
 
-const DEFAULT_DEST = 'C:\\Users\\MarcoDragoneFAMSEGUR\\FAM Seguradora\\FAM SEGURADORA - Documentos\\Infraestrutura\\Backup - Dashboard FAM'
+const DEFAULT_DEST = 'C:\\Users\\MarcoDragoneFAMSEGUR\\FAM Seguradora\\FAM SEGURADORA - Documents\\Infraestrutura\\Backup - Dashboard FAM'
 const PREFIX = 'fam-crm-backup-'
 const KEEP = 3
 const PAGE = 1000

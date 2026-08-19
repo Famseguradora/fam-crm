@@ -23,7 +23,7 @@ Sem impacto de performance: faz apenas leitura e o banco do CRM é pequeno.
   arquivo gzipado e datado: `fam-crm-backup-AAAA-MM-DD.json.gz`.
 - **Schema/DDL:** já versionado no repositório (`supabase-schema.sql` +
   `supabase-whatsapp.sql`). Backup = dados; estrutura = repo. Juntos = restauração completa.
-- **Destino:** `...\FAM SEGURADORA - Documentos\Infraestrutura\Backup - Dashboard FAM`
+- **Destino:** `...\FAM SEGURADORA - Documents\Infraestrutura\Backup - Dashboard FAM`
   (sincroniza pro SharePoint/nuvem → cópia offsite automática).
 - **Rotação:** mantém só os 3 `.json.gz` mais recentes.
 - **Log:** `backup.log` na pasta de destino registra cada execução.
@@ -51,13 +51,13 @@ node scripts\backup-db.mjs
 # Rodar pela tarefa agendada / ver status / ver log
 Start-ScheduledTask -TaskName "FAM CRM - Backup DB"
 Get-ScheduledTaskInfo -TaskName "FAM CRM - Backup DB"
-Get-Content "C:\Users\MarcoDragoneFAMSEGUR\FAM Seguradora\FAM SEGURADORA - Documentos\Infraestrutura\Backup - Dashboard FAM\backup.log" -Tail 15
+Get-Content "C:\Users\MarcoDragoneFAMSEGUR\FAM Seguradora\FAM SEGURADORA - Documents\Infraestrutura\Backup - Dashboard FAM\backup.log" -Tail 15
 ```
 
 ## (Opcional) Incluir os anexos do bucket `fam-anexos`
 O backup cobre o banco; os arquivos enviados ficam no Storage. Para incluí-los:
 ```powershell
-$dest = "C:\Users\MarcoDragoneFAMSEGUR\FAM Seguradora\FAM SEGURADORA - Documentos\Infraestrutura\Backup - Dashboard FAM"
+$dest = "C:\Users\MarcoDragoneFAMSEGUR\FAM Seguradora\FAM SEGURADORA - Documents\Infraestrutura\Backup - Dashboard FAM"
 $env:SUPABASE_URL = "https://[ref].supabase.co"
 $env:SUPABASE_SERVICE_ROLE_KEY = "<service_role key de Settings -> API>"
 node scripts\backup-storage.mjs "$dest\fam-crm-anexos-$(Get-Date -f yyyy-MM-dd)"

@@ -25,7 +25,7 @@
 
 [CmdletBinding()]
 param(
-  [string]$DestDir = 'C:\Users\MarcoDragoneFAMSEGUR\FAM Seguradora\FAM SEGURADORA - Documentos\Infraestrutura\Analise Financeira - FAM CRM',
+  [string]$DestDir = 'C:\Users\MarcoDragoneFAMSEGUR\FAM Seguradora\FAM SEGURADORA - Documents\Infraestrutura\Analise Financeira - FAM CRM',
   [string]$StartAt = '07:30',
   [switch]$TestNow
 )
@@ -57,9 +57,21 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
   -LogonType Interactive -RunLevel Limited
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
-  -Settings $settings -Principal $principal `
-  -Description 'Agente de Analise Financeira do FAM CRM (Node/Supabase). Roda 1x/dia e gera relatorio de furos e erros.' -Force | Out-Null
+try {
+  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+    -Settings $settings -Principal $principal `
+    -Description 'Agente de Analise Financeira do FAM CRM (Node/Supabase). Roda 1x/dia e gera relatorio de furos e erros.' `
+    -Force -ErrorAction Stop | Out-Null
+} catch {
+  throw "Falha ao registrar '$taskName': $($_.Exception.Message)"
+}
+
+# Register-ScheduledTask e um cmdlet CIM e nem sempre honra o
+# $ErrorActionPreference. So confiamos no que o agendador confirma de volta.
+if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
+  throw "Register-ScheduledTask nao acusou erro, mas '$taskName' nao existe no agendador."
+}
+
 Write-Host "Tarefa criada: '$taskName' (diaria as $StartAt; roda ao ligar se perdido)" -ForegroundColor Green
 Write-Host "  Comando: `"$node`" $argument" -ForegroundColor DarkGray
 
