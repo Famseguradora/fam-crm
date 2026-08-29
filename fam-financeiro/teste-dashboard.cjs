@@ -225,6 +225,13 @@ const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   ok('natureza sem movimento se apaga pelo menu', (await p.$$('#comp-corpo tr.linha-nat:has-text("Aluguel da sede")')).length === 0);
 
   // ═══ simulador ═══
+  /* Ele deixou de existir na Principal: gerar um mês de mentira dentro da
+     verdade da casa era exatamente o que as abas vieram impedir. Agora ele só
+     abre DENTRO de uma simulação · e o teste tem que dizer isso. */
+  ok('na Principal o Simulador não aparece', !(await p.$eval('#btn-sim', e => !!e.getClientRects().length)));
+  await p.evaluate(() => novaSimulacao());
+  await p.waitForTimeout(450);
+  ok('dentro de uma simulação ele aparece', await p.$eval('#btn-sim', e => !!e.getClientRects().length));
   await p.click('button:has-text("🧪 Simulador")');
   await p.waitForTimeout(300);
   await p.click('button.preset:has-text("Subir 20% na folha")');
@@ -241,11 +248,23 @@ const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   const folhaSet = await p.$eval('#comp-corpo tr:has-text("Remuneração Time FAM")', txt);
   ok('setembro com folha em 117.600,00', /117\.600,00/.test(folhaSet), folhaSet.slice(0, 110));
 
-  // ═══ persistência ═══
+  // ═══ persistência · e a Principal intacta ═══
   await p.reload();
   await p.waitForTimeout(400);
+  /* o F5 devolve sempre a Principal · e ela não pode ter o mês de mentira.
+     Era exatamente isto que o botão solto quebrava: setembro simulado nascia
+     dentro da verdade da casa. */
+  const optsP = await p.evaluate(() => mesesOrdenados());
+  ok('o F5 volta para a Principal, e ela segue SEM o mês simulado', optsP.join(',') === '2026-07,2026-08', optsP.join(','));
+  await p.evaluate(() => abrirAba((RAIZ.cenarios || [])[0].id));
+  await p.waitForTimeout(350);
   const opts = await p.evaluate(() => mesesOrdenados());
-  ok('recarregar mantém os meses', opts.join(',') === '2026-07,2026-08,2026-09', opts.join(','));
+  ok('e a simulação guardou o mês dela', opts.join(',') === '2026-07,2026-08,2026-09', opts.join(','));
+  /* e recolhe o rascunho: a seção das abas, mais adiante, parte de uma aba só.
+     Teste que suja o estado de quem vem depois não é teste, é armadilha. */
+  await p.evaluate(() => (RAIZ.cenarios || []).slice().forEach(c => excluirAba(c.id)));
+  await p.waitForTimeout(400);
+  ok('a simulação de teste foi recolhida', (await p.$$('.aba')).length === 1);
 
   // ═══ mobile ═══
   await p.setViewportSize({ width: 390, height: 844 });
@@ -367,6 +386,11 @@ const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   await p.click('button:has-text("Importar 12")');
   await p.waitForTimeout(600);
   ok('agosto virou mês real depois do extrato', (await p.$eval('#c-b', e => e.value)) === '2026-08', await p.$eval('#c-b', e => e.value));
+  /* "real" tem que ser no dado, nao so na tela: antes do extrato agosto era um
+     mês simulado, e o cabeçalho do PDF avisa isso por escrito. */
+  ok('e o mês perdeu de fato a marca de simulado',
+    await p.evaluate(() => DB.meses['2026-08'].simulado === false),
+    String(await p.evaluate(() => DB.meses['2026-08'].simulado)));
   ok('os 11 do extrato mais o 1 digitado à mão', (await qtdMes('2026-08')) === 12, String(await qtdMes('2026-08')));
   ok('o lançamento à mão entrou com o que foi digitado', await p.evaluate(() =>
     DB.meses['2026-08'].lancamentos.some(l => l.contraparte === 'CARTORIO DO CENTRO' && l.valor === -250 && l.origem === 'manual')));

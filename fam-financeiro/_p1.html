@@ -631,13 +631,24 @@ body.arrastando-calc .hp-placa{cursor:grabbing}
 .hp-regs .btn-mini:first-of-type{margin-left:auto}
 .hp-regs .btn-mini:hover{background:#3c3c42}
 
-@media(max-width:500px){
+/* A HP encolhida.
+   Isto respondia so a `max-width:500px` · e a HP, no telefone, so aparece
+   DEITADO, quando a tela tem 750px ou mais. Ou seja: ela nunca encolhia no
+   aparelho, justo onde ha menos espaco. As legendas das teclas voltavam ao
+   tamanho de computador e enchiam o pe da tela.
+   Agora vale tambem para qualquer aparelho de dedo, gire ele ou nao. */
+@media(max-width:500px), (pointer:coarse) and (max-width:1024px){
   .hp-janela{width:97vw;padding:6px}
   .hp-teclado{column-gap:3px}
   .hp-tecla{font-size:9.5px;padding:5px 0 2px}
   .hp-tecla .lg,.hp-lf{font-size:5.5px}
   .hp-x{font-size:18px}
   .hp-marca{font-size:9px;letter-spacing:3px}
+}
+/* deitado a tela tem ~340px de ALTURA: a HP inteira nao cabe, e o que ela
+   cobre e a tabela que a pessoa veio ler. Rola dentro dela mesma. */
+@media (pointer:coarse) and (max-width:1024px) and (orientation:landscape){
+  .hp-janela{width:min(97vw,520px);max-height:92vh;overflow:auto}
 }
 @media print{.hp-janela{display:none!important}}
 
@@ -715,24 +726,14 @@ body.arrastando-calc .hp-placa{cursor:grabbing}
    600px num notebook comum, e a tela inteira virava celular · o modal abria de
    ponta a ponta e os campos empilhavam um por linha. Tela baixa e apertada na
    vertical, nao estreita na horizontal. */
+/* Aqui SO fica o que depende mesmo da largura: quantas colunas cabem e se o
+   modal precisa ocupar a tela de ponta a ponta. Letra, respiro e cabecalho
+   mudaram de bloco · veja o porque logo abaixo. */
 @media(max-width:768px){
-  body{font-size:14px}
-  /* fundo fixo engasga em navegador de celular: aqui ele rola junto */
-  body{background-attachment:scroll}
-  .topo{padding:10px 12px} .topo h1{font-size:17px}
-  .logo{width:36px;height:36px;border-radius:9px;font-size:19px}
-  .topo .sub{font-size:10px;letter-spacing:1.6px}
-  .ctx{display:none}
-  .wrap{padding:14px 12px 60px}
-  .fam-table{font-size:13px} .fam-table thead th{padding:9px 10px} .fam-table tbody td{padding:8px 10px}
-  .card-panel{padding:16px} .section-title{font-size:14px}
-  .section-title .acoes{width:100%;margin-left:0}
-  .section-title .acoes button{flex:1 1 auto;justify-content:center}
   .form-grid{grid-template-columns:1fr} .form-field.full{grid-column:1}
   .modal-overlay{align-items:flex-end;padding:0}
   .modal-box{max-width:100%;border-radius:14px 14px 0 0;max-height:94vh;padding:18px}
   .filter-row{padding:12px 14px;gap:10px} .filter-group{flex:1 1 150px}
-
 }
 
 /* O que realmente depende de tela baixa: o modal nao pode passar da janela.
@@ -778,11 +779,38 @@ body.arrastando-calc .hp-placa{cursor:grabbing}
      e a unica coisa de olhar ali, ja existe na barra de cima. */
   footer{display:none!important}
 
+  /* ── A ASSINATURA TAMBEM ──
+     Ela mora FORA do <footer>, entao esconder o rodape nao a alcancava: sobrava
+     um risco de 300px e duas linhas de texto no pe da tela · num telefone isso
+     e uma tela inteira de nada. Fica no computador, e continua saindo no PDF
+     (quem imprime e o .credito-papel, que e outro elemento). */
+  .credito{display:none!important}
+
+  /* sem rodape e sem assinatura, a ultima linha da tabela encostava no Robo,
+     que flutua por cima. Este respiro e o que a pessoa rola para ler a ultima. */
+  .wrap,body.no-crm .wrap{padding:14px 12px 58px}
+
   /* a celula deixa de parecer editavel: sem cursor de digitar, sem contorno */
   td[data-edit],td.vazia{cursor:default!important}
   td[data-edit]:hover{outline:none!important}
   td.vazia:hover{background:none!important;box-shadow:none!important}
   td.vazia:hover::after{content:none!important}
+
+  /* ── A LETRA DE TELEFONE NAO PODE DEPENDER DA LARGURA ──
+     Isto morava em `max-width:768px`, e um telefone DEITADO tem 844px: bastava
+     virar o aparelho para o cabecalho, os cartoes e o pe da pagina voltarem ao
+     tamanho de computador. Quem esta com o telefone na mao continua com o
+     telefone na mao depois de girar · entao a regra e o PONTEIRO, nao a largura.
+     Larguras seguem no bloco de cima, e la e so o que depende mesmo dela. */
+  body{background-attachment:scroll}  /* fundo fixo engasga em navegador de celular */
+  .topo{padding:10px 12px} .topo h1{font-size:17px}
+  .logo{width:36px;height:36px;border-radius:9px;font-size:19px}
+  .topo .sub{font-size:10px;letter-spacing:1.6px}
+  .ctx{display:none}
+  .fam-table thead th{padding:9px 10px} .fam-table tbody td{padding:8px 10px}
+  .card-panel{padding:16px} .section-title{font-size:14px}
+  .section-title .acoes{width:100%;margin-left:0}
+  .section-title .acoes button{flex:1 1 auto;justify-content:center}
 
   /* letra menor: cabe mais lancamento na tela, que e o que se veio fazer */
   body{font-size:13px}

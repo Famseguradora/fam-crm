@@ -86,13 +86,62 @@ const ok = (t, c, extra) => {
       pdf: [...document.querySelectorAll('.acoes-tela button')]
         .some(e => e.getClientRects().length && /PDF/.test(e.textContent || '')),
       rodape: !!document.querySelector('footer')?.getClientRects().length,
+      /* a assinatura mora FORA do <footer> · esconder o rodape nao a alcancava,
+         e era ela o "escrito la embaixo" que continuava grande no telefone */
+      assinatura: !!document.querySelector('.credito')?.getClientRects().length,
+      /* e ela continua existindo no PAPEL: quem sai no PDF e outro elemento */
+      assinaturaNoPdf: !!document.querySelector('.credito-papel'),
+      respiro: Math.round(parseFloat(getComputedStyle(document.querySelector('.wrap')).paddingBottom)),
     }));
     ok(deitado ? 'DEITADO: a HP aparece' : 'EM PE: a HP some (cobriria meia tela)',
       ferramentas.hp === deitado, 'hp visivel = ' + ferramentas.hp);
     ok('os lembretes somem', !ferramentas.lembretes);
     ok('o Robo Caixa FICA · e o basico que o Marco pediu', ferramentas.robo);
     ok('o PDF fica, que e visualizacao', ferramentas.pdf);
+    /* ── O MESMO TAMANHO DE PE E DEITADO ──
+       Estes valores moravam num @media de LARGURA, e telefone deitado tem 844px:
+       girar o aparelho devolvia o tamanho de computador no cabecalho, nos cartoes
+       e no pe da pagina. Os quatro aparelhos tem que dar o MESMO numero aqui. */
+    const px = (sel, prop) => p.evaluate(([s, k]) => {
+      const e = document.querySelector(s);
+      return e ? parseFloat(getComputedStyle(e)[k]) : null;
+    }, [sel, prop]);
+    const tipo = {
+      corpo: await px('body', 'fontSize'),
+      tabela: await px('.comp-quadro .fam-table', 'fontSize'),
+      selo: await px('.badge', 'fontSize'),
+      topo: await px('.topo h1', 'fontSize'),
+    };
+    ok('letra de telefone · a MESMA de pe e deitado',
+      tipo.corpo === 13 && tipo.tabela === 12 && tipo.selo === 10 && (tipo.topo === null || tipo.topo === 17),
+      JSON.stringify(tipo));
+
+    /* A HP encolhida vivia num @media de 500px, e ela so aparece DEITADO, com
+       750px ou mais · nunca encolhia no aparelho. Era esta a letra grande que
+       voltava no pe da tela ao girar o telefone. */
+    if (deitado) {
+      await p.evaluate(() => alternarCalc());
+      await p.waitForTimeout(350);
+      const hp = await p.evaluate(() => {
+        const j = document.querySelector('.hp-janela'), t = document.querySelector('.hp-tecla');
+        return {
+          tecla: t ? parseFloat(getComputedStyle(t).fontSize) : null,
+          legenda: parseFloat(getComputedStyle(document.querySelector('.hp-tecla .lg')).fontSize),
+          altura: Math.round(j.getBoundingClientRect().height),
+          vp: document.documentElement.clientHeight,
+        };
+      });
+      ok('a HP abre encolhida, como no celular estreito', hp.tecla === 9.5 && hp.legenda === 5.5, JSON.stringify(hp));
+      ok('e ela cabe na altura da tela deitada', hp.altura <= hp.vp, hp.altura + ' de ' + hp.vp + 'px');
+      await p.evaluate(() => alternarCalc());
+      await p.waitForTimeout(200);
+    }
+
     ok('o rodape de faxina some', !ferramentas.rodape);
+    ok('a assinatura do rodape some', !ferramentas.assinatura);
+    ok('mas ela continua no PDF', ferramentas.assinaturaNoPdf);
+    ok('sobra respiro para o Robo nao cobrir a ultima linha (>=46px)',
+      ferramentas.respiro >= 46, ferramentas.respiro + 'px');
 
     // dois toques numa celula nao podem abrir campo: esconder botao nao basta
     const abriuCampo = await p.evaluate(() => {
