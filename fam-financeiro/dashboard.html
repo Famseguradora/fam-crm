@@ -732,6 +732,23 @@ body.arrastando-calc .hp-placa{cursor:grabbing}
   .modal-overlay{align-items:flex-end;padding:0}
   .modal-box{max-width:100%;border-radius:14px 14px 0 0;max-height:94vh;padding:18px}
   .filter-row{padding:12px 14px;gap:10px} .filter-group{flex:1 1 150px}
+
+  /* ── DEDO, NAO MOUSE ──
+     No desktop estes botoes tem 24px de altura e a mira e o cursor. No celular
+     a mira e a ponta do dedo, e 24px vira erro de toque · 40px e o minimo que
+     se acerta sem olhar. */
+  .btn-clear,.btn-mini,.preset,.btn-secondary,.btn-primary,
+  .chip-mes,.fin-chip,#btn-calc{min-height:40px}
+  .btn-mini{padding:8px 12px;font-size:13px}
+  .preset{padding:9px 15px;font-size:13px}
+  .chip-mes,.fin-chip{padding:9px 14px;font-size:13px}
+
+  /* ── 16px OU O IPHONE DA ZOOM SOZINHO ──
+     Campo com fonte menor que 16px faz o Safari do iOS aproximar a tela ao
+     focar, e a pagina "pula" na cara de quem ia digitar. Nao e preferencia:
+     e a regra do aparelho. */
+  .fam-input,input,select,textarea{font-size:16px}
+  .fam-input{padding:10px 12px}
 }
 
 /* O que realmente depende de tela baixa: o modal nao pode passar da janela.

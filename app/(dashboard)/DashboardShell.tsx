@@ -582,7 +582,14 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
                 (esta só para admin, igual ao desktop). Demais telas de
                 admin/cadastro (Produtos, Sistema, Usuários…) seguem só no desktop. */}
             <div style={{ paddingTop: 8 }}>
-              {TABS.filter((t) => MOBILE_NAV_HREFS.includes(t.href) && (!t.adminOnly || veTelasGerenciais)).map((tab) => {
+              {[
+                ...TABS.filter((t) => MOBILE_NAV_HREFS.includes(t.href) && (!t.adminOnly || veTelasGerenciais)),
+                /* Financeiro no celular pela MESMA regra do desktop: a lista de
+                   `financeiro_acesso`, não o perfil. Quem não está nela não vê o
+                   item em lugar nenhum · duas telas com dois critérios seria a
+                   porta dos fundos que este projeto inteiro existe para não ter. */
+                ...(veFinanceiro ? [{ label: '💰 Financeiro', href: '/financeiro' }] : []),
+              ].map((tab) => {
                 const isActive = tab.href === '/' ? pathname === '/' : pathname.startsWith(tab.href)
                 return (
                   <button
