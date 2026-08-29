@@ -733,38 +733,6 @@ body.arrastando-calc .hp-placa{cursor:grabbing}
   .modal-box{max-width:100%;border-radius:14px 14px 0 0;max-height:94vh;padding:18px}
   .filter-row{padding:12px 14px;gap:10px} .filter-group{flex:1 1 150px}
 
-  /* ── DEDO, NAO MOUSE ──
-     No desktop estes botoes tem 24px de altura e a mira e o cursor. No celular
-     a mira e a ponta do dedo, e 24px vira erro de toque · 40px e o minimo que
-     se acerta sem olhar. */
-  .btn-clear,.btn-mini,.preset,.btn-secondary,.btn-primary,
-  .chip-mes,.fin-chip,#btn-calc{min-height:40px}
-  .btn-mini{padding:8px 12px;font-size:13px}
-  .preset{padding:9px 15px;font-size:13px}
-  .chip-mes,.fin-chip{padding:9px 14px;font-size:13px}
-
-  /* ── NO CELULAR, SO SE OLHA ──
-     Lancar dinheiro com o polegar, num extrato de 93 linhas, e como o erro
-     entra. O telefone serve para CONFERIR: abrir a conta, ver a contraparte,
-     olhar a diferenca do mes, perguntar ao Robo. Editar e no computador.
-
-     Some tudo que escreve · a mesma marca data-escreve que ja governa o acesso
-     de leitura, entao a lista e uma so e nao ha como esquecer um botao novo.
-     A HP e os lembretes tambem saem: a calculadora tem 470px e nao cabe, e o
-     telefone ja tem a dele. */
-  [data-escreve],#btn-calc,#btn-rev,.hp-janela{display:none!important}
-  /* a celula deixa de parecer editavel: sem cursor de digitar, sem contorno */
-  td[data-edit],td.vazia{cursor:default!important}
-  td[data-edit]:hover{outline:none!important}
-  td.vazia:hover{background:none!important;box-shadow:none!important}
-  td.vazia:hover::after{content:none!important}
-
-  /* ── 16px OU O IPHONE DA ZOOM SOZINHO ──
-     Campo com fonte menor que 16px faz o Safari do iOS aproximar a tela ao
-     focar, e a pagina "pula" na cara de quem ia digitar. Nao e preferencia:
-     e a regra do aparelho. */
-  .fam-input,input,select,textarea{font-size:16px}
-  .fam-input{padding:10px 12px}
 }
 
 /* O que realmente depende de tela baixa: o modal nao pode passar da janela.
@@ -772,6 +740,74 @@ body.arrastando-calc .hp-placa{cursor:grabbing}
 @media(max-height:600px){
   .modal-box{max-height:94vh;padding:18px}
   .modal-overlay{padding:10px}
+}
+
+/* ══════════════ APARELHO DE TOQUE · SO SE OLHA ══════════════
+   Chaveado por PONTEIRO, nao por largura, e a diferenca importa: um celular
+   DEITADO tem 844px e escaparia de qualquer max-width:768px · os botoes de
+   lancamento voltariam justo quando a pessoa gira o aparelho para ler melhor.
+   `pointer:coarse` quer dizer "a mira aqui e um dedo", e isso nao muda ao
+   girar.
+
+   Lancar dinheiro com o polegar, num extrato de 93 linhas, e como o erro entra.
+   O telefone serve para CONFERIR: abrir a conta, ver a contraparte, olhar a
+   diferenca do mes, perguntar ao Robo. Editar e no computador. */
+@media (pointer:coarse) and (max-width:1024px){
+  /* ── DEDO, NAO MOUSE ──
+     No desktop estes botoes tem 24px de altura e a mira e o cursor. Aqui a mira e a ponta
+     do dedo, e 24px vira erro de toque · 40px e o minimo que
+     se acerta sem olhar.
+     Vale DEITADO tambem: o dedo nao afina quando o aparelho gira. */
+  .btn-clear,.btn-mini,.preset,.btn-secondary,.btn-primary,
+  .chip-mes,.fin-chip{min-height:40px}
+  .btn-mini{padding:8px 12px;font-size:13px}
+  .preset{padding:9px 15px;font-size:13px}
+  .chip-mes,.fin-chip{padding:9px 14px;font-size:13px}
+
+  /* ── 16px OU O IPHONE DA ZOOM SOZINHO ──
+     Campo com fonte menor que 16px faz o Safari do iOS aproximar a tela ao
+     focar, e a pagina "pula" na cara de quem ia digitar. Nao e preferencia:
+     e a regra do aparelho · e ela nao some ao girar. */
+  .fam-input,input,select,textarea{font-size:16px}
+  .fam-input{padding:10px 12px}
+
+  /* a mesma marca que governa o acesso de leitura · lista unica, nada escapa */
+  [data-escreve],#btn-rev{display:none!important}
+
+  /* o rodape e faxina de desktop: copia de seguranca, trilha, zerar. O PDF, que
+     e a unica coisa de olhar ali, ja existe na barra de cima. */
+  footer{display:none!important}
+
+  /* a celula deixa de parecer editavel: sem cursor de digitar, sem contorno */
+  td[data-edit],td.vazia{cursor:default!important}
+  td[data-edit]:hover{outline:none!important}
+  td.vazia:hover{background:none!important;box-shadow:none!important}
+  td.vazia:hover::after{content:none!important}
+
+  /* letra menor: cabe mais lancamento na tela, que e o que se veio fazer */
+  body{font-size:13px}
+  .fam-table,.comp-quadro .fam-table{font-size:12px}
+  .comp-quadro .fam-table tbody td{padding:6px 9px}
+  .comp-quadro .fam-table thead th{padding:7px 9px}
+  .cc-linha{font-size:12px}
+  .badge{font-size:10px;padding:2px 7px}
+  .badge.var{min-width:62px}
+
+  /* Robo e HP menores: eles ficam POR CIMA da tabela, e no telefone cada
+     milimetro coberto e uma linha que a pessoa deixa de ler. */
+  /* Menores que no desktop, mas NAO menores que o dedo: 36px e o piso. Pedir
+     "diminua" e legitimo; deixar um botao que erra o toque nao e diminuir, e
+     estragar. Encolhe a letra e o respiro, mantem a altura que se acerta. */
+  .flutua{padding:7px 12px;font-size:12px;right:10px;min-height:36px}
+  #btn-fin{bottom:10px}
+  #btn-calc{bottom:56px;padding:6px 11px}
+  #btn-calc b{font-size:12px}
+}
+
+/* A HP so existe com o aparelho DEITADO. Em pe ela cobriria metade da tela ·
+   e de pe ninguem senta para calcular, so confere. */
+@media (pointer:coarse) and (max-width:1024px) and (orientation:portrait){
+  #btn-calc,.hp-janela{display:none!important}
 }
 @media(max-width:560px){ .badge.var{min-width:74px} }
 </style>
@@ -3349,12 +3385,15 @@ let _editando = false;
 /* No celular o sistema e so de leitura · lancar dinheiro com o polegar num
    extrato de 93 linhas e como o erro entra. Esconder os botoes no CSS nao
    bastaria: dois toques numa celula ainda abririam o campo. */
-const soVisualizacao = () => window.matchMedia('(max-width:768px)').matches;
+/* Casa com a regra do CSS: PONTEIRO, nao largura · celular deitado tem 844px
+   e escaparia de um max-width:768px, destravando a edicao so por girar. */
+const soVisualizacao = () =>
+  window.matchMedia('(pointer:coarse) and (max-width:1024px)').matches;
 
 function editarCelula(td){
   if (!td || _editando) return;
   if (soVisualizacao()) {
-    flash('No celular o Financeiro e so para conferir. Para lancar, abra no computador.');
+    flash('No celular o Financeiro é só para conferir. Para lançar, abra no computador.');
     return;
   }
   /* Acesso de leitura: o campo nem chega a abrir. Sem isto, a pessoa digitaria

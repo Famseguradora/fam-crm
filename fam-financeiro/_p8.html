@@ -173,12 +173,15 @@ let _editando = false;
 /* No celular o sistema e so de leitura · lancar dinheiro com o polegar num
    extrato de 93 linhas e como o erro entra. Esconder os botoes no CSS nao
    bastaria: dois toques numa celula ainda abririam o campo. */
-const soVisualizacao = () => window.matchMedia('(max-width:768px)').matches;
+/* Casa com a regra do CSS: PONTEIRO, nao largura · celular deitado tem 844px
+   e escaparia de um max-width:768px, destravando a edicao so por girar. */
+const soVisualizacao = () =>
+  window.matchMedia('(pointer:coarse) and (max-width:1024px)').matches;
 
 function editarCelula(td){
   if (!td || _editando) return;
   if (soVisualizacao()) {
-    flash('No celular o Financeiro e so para conferir. Para lancar, abra no computador.');
+    flash('No celular o Financeiro é só para conferir. Para lançar, abra no computador.');
     return;
   }
   /* Acesso de leitura: o campo nem chega a abrir. Sem isto, a pessoa digitaria

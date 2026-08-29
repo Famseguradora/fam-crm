@@ -20,7 +20,11 @@ const ok = (t, c, extra) => {
 (async () => {
   const b = await chromium.launch({ channel: 'msedge' });
 
-  for (const nome of ['iPhone 12', 'Pixel 7']) {
+  /* Em pe E deitado. O deitado nao e capricho: um iPhone 12 na horizontal tem
+     844px de largura e escapa de qualquer max-width:768px · foi por isso que a
+     regra passou a ser por PONTEIRO. Sem este caso no teste, girar o aparelho
+     traria de volta os botoes de lancamento sem ninguem perceber. */
+  for (const nome of ['iPhone 12', 'Pixel 7', 'iPhone 12 landscape', 'Pixel 7 landscape']) {
     const d = devices[nome];
     if (!d) { console.log('  (aparelho ' + nome + ' nao existe nesta versao do Playwright)'); continue; }
     console.log('\n=== ' + nome + ' · ' + d.viewport.width + 'x' + d.viewport.height + ' ===');
@@ -37,6 +41,14 @@ const ok = (t, c, extra) => {
     await p.evaluate(() => localStorage.clear());
     await p.reload();
     await p.waitForTimeout(1500);
+
+    const deitado = d.viewport.width > d.viewport.height;
+    const modo = await p.evaluate(() => ({
+      toque: matchMedia('(pointer:coarse) and (max-width:1024px)').matches,
+      soVis: typeof soVisualizacao === 'function' ? soVisualizacao() : null,
+    }));
+    ok('o sistema se reconhece como aparelho de toque', modo.toque);
+    ok('e a trava do CODIGO concorda com a do CSS', modo.soVis === true, String(modo.soVis));
 
     const lateral = await p.evaluate(() =>
       Math.round(document.documentElement.scrollWidth - document.documentElement.clientWidth));
@@ -73,11 +85,14 @@ const ok = (t, c, extra) => {
       robo: !!document.getElementById('btn-fin')?.getClientRects().length,
       pdf: [...document.querySelectorAll('.acoes-tela button')]
         .some(e => e.getClientRects().length && /PDF/.test(e.textContent || '')),
+      rodape: !!document.querySelector('footer')?.getClientRects().length,
     }));
-    ok('a HP some (nao cabe, e o telefone ja tem a dele)', !ferramentas.hp);
+    ok(deitado ? 'DEITADO: a HP aparece' : 'EM PE: a HP some (cobriria meia tela)',
+      ferramentas.hp === deitado, 'hp visivel = ' + ferramentas.hp);
     ok('os lembretes somem', !ferramentas.lembretes);
     ok('o Robo Caixa FICA · e o basico que o Marco pediu', ferramentas.robo);
     ok('o PDF fica, que e visualizacao', ferramentas.pdf);
+    ok('o rodape de faxina some', !ferramentas.rodape);
 
     // dois toques numa celula nao podem abrir campo: esconder botao nao basta
     const abriuCampo = await p.evaluate(() => {
@@ -108,8 +123,14 @@ const ok = (t, c, extra) => {
       };
     });
     ok('o modal cabe na largura do aparelho', !!modal && modal.cabe, modal ? modal.largura + ' de ' + modal.vp + 'px' : 'sem modal');
-    ok('e empilha os campos numa coluna (aqui isso e o certo)',
-      !!modal && !/ \d/.test(modal.colunas.trim()), modal ? modal.colunas : '');
+    /* Quem decide a coluna e a LARGURA, nao a orientacao · um iPhone deitado
+       tem 750px e um Pixel deitado tem 863px, e so o segundo comporta duas.
+       Escrevi isto errado uma vez (assertando por orientacao) e o teste acusou:
+       a regra e a largura, e o teste tem que dizer a mesma coisa que o CSS. */
+    const cabemDuas = d.viewport.width >= 768;
+    ok(cabemDuas ? 'duas colunas (largura >= 768)' : 'campos empilhados (largura < 768)',
+      !!modal && (/ \d/.test(modal.colunas.trim()) === cabemDuas),
+      d.viewport.width + 'px -> ' + (modal ? modal.colunas : ''));
     ok('campo com fonte >=16px (senao o iPhone da zoom sozinho)',
       !!modal && modal.menorFonte >= 16, modal ? modal.menorFonte + 'px' : '');
 
