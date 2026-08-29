@@ -137,6 +137,19 @@ const ok = (t, c, extra) => {
       await p.waitForTimeout(200);
     }
 
+    /* ── NENHUM MURO DE TEXTO ──
+       O paragrafo de instrucoes do pe tomava a tela inteira com o aparelho
+       deitado, e falava de botao direito, dois cliques e Ctrl+Z · coisas que
+       nao existem no telefone. Esta asserção e larga de proposito: pega este
+       e pega o proximo que alguem escrever. */
+    const muros = await p.evaluate(() =>
+      [...document.querySelectorAll('p,.dica-tela')]
+        .filter(e => e.getClientRects().length)
+        .map(e => (e.textContent || '').trim())
+        .filter(t => t.length > 120)
+        .map(t => t.slice(0, 50) + '...'));
+    ok('nenhum paragrafo de instrucao no pe da tela', muros.length === 0, muros.join(' | '));
+
     ok('o rodape de faxina some', !ferramentas.rodape);
     ok('a assinatura do rodape some', !ferramentas.assinatura);
     ok('mas ela continua no PDF', ferramentas.assinaturaNoPdf);
