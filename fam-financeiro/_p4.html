@@ -1,0 +1,669 @@
+
+<script>
+/* ═══════════════ MODAIS · base ═══════════════
+   A janela só fecha por um clique que COMEÇOU e TERMINOU no fundo escuro, ou
+   pelo Esc. Quem estava arrastando o mouse para selecionar um número lá dentro
+   e soltou o botão fora da janela estava lendo, não mandando fechar · antes
+   isso jogava fora o que a pessoa estava fazendo, sem ela ter pedido. */
+function abrirModal(html, largo){
+  document.getElementById('modais').innerHTML =
+    `<div class="modal-overlay"><div class="modal-box${largo?' largo':''}">${html}</div></div>`;
+  const fundo = document.querySelector('#modais .modal-overlay');
+  let comecouNoFundo = false;
+  fundo.addEventListener('mousedown', e => { comecouNoFundo = (e.target === fundo); });
+  fundo.addEventListener('click', e => { if (comecouNoFundo && e.target === fundo) fecharModal(); });
+  document.body.style.overflow = 'hidden';
+}
+function fecharModal(){ document.getElementById('modais').innerHTML = ''; document.body.style.overflow = ''; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharModal(); });
+
+/* ═══════════════ CRUD DE LANÇAMENTO ═══════════════ */
+let lancEditando = null;
+/* "inserir acima/abaixo" guarda em que ponto do mês o lançamento entra. Entre
+   lançamentos do mesmo dia é a ordem da lista que decide quem vem primeiro. */
+let lancInserirEm = null;
+
+function naturezasConhecidas(){
+  const s = new Set();
+  for (const mk of Object.keys(DB.meses)) for (const l of DB.meses[mk].lancamentos) s.add(l.natureza);
+  for (const n of (DB.naturezas || [])) s.add(n.nome);   // conta aberta antes de ter movimento
+  return [...s].sort((a,b) => a.localeCompare(b,'pt-BR'));
+}
+
+/* ═══════════════ MÊS NOVO ═══════════════
+   Até aqui o mês só nascia por importação de extrato ou por simulação. O CFO
+   precisa abrir o período antes de ter qualquer papel na mão · o saldo inicial
+   já vem do saldo apurado do mês anterior, que é a única resposta certa. */
+function mesSeguinte(mk){
+  const [a, m] = mk.split('-').map(Number);
+  const d = m === 12 ? { a: a + 1, m: 1 } : { a, m: m + 1 };
+  return d.a + '-' + String(d.m).padStart(2, '0');
+}
+
+function abrirNovoMes(){
+  const ms = mesesOrdenados();
+  const sugerido = ms.length ? mesSeguinte(ms[ms.length - 1]) : '2026-07';
+  const opcoes = ms.map(mk => `<option value="${mk}">${rotuloMes(mk)} (${DB.meses[mk].lancamentos.length} lançamentos)</option>`).join('');
+  abrirModal(`
+    <div class="modal-header">
+      <div class="modal-title">📅 Novo mês / período<small>${simulando() ? 'entra só nesta simulação · a Principal não é tocada' : 'entra na aba Principal'}</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button>
+    </div>
+    <div id="erro-mes"></div>
+    <div class="form-grid" style="margin-top:12px">
+      <div class="form-field">
+        <label class="form-label">Mês</label>
+        <input type="month" id="m-mes" class="fam-input" value="${sugerido}">
+      </div>
+      <div class="form-field">
+        <label class="form-label">Saldo inicial</label>
+        <input id="m-saldo" class="fam-input" inputmode="decimal" data-dinheiro="neg" placeholder="R$ 0,00">
+      </div>
+      <div class="form-field full">
+        <label class="form-label">Como ele começa</label>
+        <select id="m-como" class="fam-input" onchange="mudouComoMes()">
+          <option value="vazio">Vazio · eu lanço tudo à mão ou importo o extrato</option>
+          ${ms.length ? '<option value="copia">Cópia de outro mês · começo com os mesmos lançamentos</option>' : ''}
+        </select>
+      </div>
+      <div class="form-field full" id="m-de-linha" style="display:none">
+        <label class="form-label">Copiar os lançamentos de</label>
+        <select id="m-de" class="fam-input">${opcoes}</select>
+      </div>
+    </div>
+    <div class="aviso" style="margin-top:14px">
+      O saldo inicial já vem preenchido com o <b>saldo final apurado do mês anterior</b>, que é o que fecha a conta.
+      Mês copiado nasce com os mesmos lançamentos, para o CFO ajustar só o que muda.
+    </div>
+    <div class="modal-rodape">
+      <button class="btn-clear" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" onclick="salvarNovoMes()">Criar mês</button>
+    </div>`);
+  ajustarSaldoSugerido();
+  document.getElementById('m-mes').addEventListener('change', ajustarSaldoSugerido);
+}
+
+function mudouComoMes(){
+  const copia = document.getElementById('m-como').value === 'copia';
+  document.getElementById('m-de-linha').style.display = copia ? '' : 'none';
+}
+
+/* o saldo inicial do mês novo é o saldo apurado do mês que vier antes dele */
+function ajustarSaldoSugerido(){
+  const mk = document.getElementById('m-mes').value;
+  const anterior = mesesOrdenados().filter(x => x < mk).pop();
+  const v = anterior ? apurar(anterior).saldoApurado : 0;
+  const campo = document.getElementById('m-saldo');
+  campo.value = valorEditavel(Number(v.toFixed(2)));
+}
+
+function salvarNovoMes(){
+  const mk = document.getElementById('m-mes').value;
+  const erro = m => { document.getElementById('erro-mes').innerHTML = '<div class="alert-error">' + m + '</div>'; };
+  if (!/^\d{4}-\d{2}$/.test(mk)) return erro('Escolha o mês.');
+  if (DB.meses[mk]) return erro(rotuloMes(mk) + ' já existe nesta aba. Escolha outro mês.');
+  const saldo = lerValor(document.getElementById('m-saldo').value);
+  if (!isFinite(saldo)) return erro('O saldo inicial precisa ser um número.');
+
+  const copiar = document.getElementById('m-como').value === 'copia';
+  const de = copiar ? document.getElementById('m-de').value : null;
+  const dias = new Date(Number(mk.slice(0,4)), Number(mk.slice(5,7)), 0).getDate();
+
+  DB.meses[mk] = {
+    rotulo: rotuloMes(mk),
+    saldoInicial: Number(saldo.toFixed(2)),
+    saldoFinalBancario: 0,
+    simulado: false,
+    lancamentos: !copiar ? [] : DB.meses[de].lancamentos.map(l => ({
+      ...l,
+      id: novoId(),
+      /* a data anda para o mês novo mantendo o dia · dia 31 em mês de 30 cai no
+         último dia, senão o lançamento nasceria fora do próprio mês */
+      data: mk + '-' + String(Math.min(Number(l.data.slice(8,10)), dias)).padStart(2, '0'),
+      fitid: undefined, origem: 'copia de ' + rotuloMes(de),
+    })),
+  };
+  garantirMesNaTela([mk]);
+  compB = mk;
+  compA = mesesNaTela().filter(x => x < mk).pop() || mk;
+  parFixado = true;
+  auditar('inclusao', 'Mês criado', { onde: rotuloMes(mk),
+    de: copiar ? 'cópia de ' + rotuloMes(de) : 'em branco',
+    para: DB.meses[mk].lancamentos.length + ' lançamento(s) · saldo inicial ' + fmt(DB.meses[mk].saldoInicial) });
+  mesAtual = mk;
+  gravar(); fecharModal(); recolherTudo();
+  flash(rotuloMes(mk) + ' criado' + (copiar ? ' com ' + DB.meses[mk].lancamentos.length + ' lançamentos copiados de ' + rotuloMes(de) : ' vazio') + '.');
+}
+
+/* ═══════════════ NATUREZA / CONTA CRIADA À MÃO ═══════════════
+   A tabela nasce dos lançamentos. Só que o Aldeir precisa abrir a conta antes
+   de ela ter movimento · essas ficam guardadas aqui e aparecem zeradas. */
+function abrirNovaNatureza(){
+  abrirModal(`
+    <div class="modal-header">
+      <div class="modal-title">＋ Nova natureza / conta<small>ela aparece na tabela e na lista de lançamento, mesmo antes do primeiro movimento</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button>
+    </div>
+    <div id="erro-nat"></div>
+    <div class="form-grid" style="margin-top:12px">
+      <div class="form-field full">
+        <label class="form-label">Natureza / conta</label>
+        <input id="n-nome" class="fam-input" placeholder="como ela vai aparecer na tabela">
+      </div>
+      <div class="form-field full">
+        <label class="form-label">Entra em qual bloco</label>
+        <select id="n-tipo" class="fam-input">
+          <option value="saida">Saídas</option>
+          <option value="entrada">Entradas</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-rodape">
+      <button class="btn-clear" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" onclick="salvarNatureza()">Criar natureza</button>
+    </div>`);
+  setTimeout(() => document.getElementById('n-nome').focus(), 40);
+}
+
+function salvarNatureza(){
+  const nome = document.getElementById('n-nome').value.trim();
+  const tipo = document.getElementById('n-tipo').value;
+  const erro = m => { document.getElementById('erro-nat').innerHTML = '<div class="alert-error">' + m + '</div>'; };
+  if (!nome) return erro('Escreva o nome da natureza.');
+  if (naturezasConhecidas().some(n => normalizar(n) === normalizar(nome)))
+    return erro('Já existe uma natureza chamada "' + esc(nome) + '".');
+  DB.naturezas = DB.naturezas || [];
+  DB.naturezas.push({ nome, tipo });
+  auditar('inclusao', 'Natureza criada', { onde: nome, para: tipo === 'saida' ? 'bloco de Saídas' : 'bloco de Entradas' });
+  gravar(); fecharModal(); render();
+  flash('Natureza "' + nome + '" criada. Já está na tabela e na lista de lançamento.');
+}
+
+/* só sai a que nunca teve movimento · conta com lançamento se esvazia pelo menu dela */
+function excluirNaturezaVazia(nat){
+  if (!confirm('Excluir a natureza "' + nat + '"?\nEla não tem nenhum lançamento nos dois períodos.')) return;
+  DB.naturezas = (DB.naturezas || []).filter(n => n.nome !== nat);
+  auditar('exclusao', 'Natureza excluída', { onde: nat, de: 'natureza sem movimento', para: 'fora do plano de contas' });
+  abertasComp.delete(nat);
+  gravar(); render();
+  flash('Natureza "' + nat + '" excluída.');
+}
+
+function abrirLancamento(id, natPre, dataPre, posicao){
+  const m = DB.meses[mesAtual];
+  const l = id ? m.lancamentos.find(x => x.id === id) : null;
+  lancEditando = id || null;
+  lancInserirEm = (id || posicao == null) ? null : posicao;
+  const hoje = dataPre || (mesAtual + '-01');
+  const dl = naturezasConhecidas().map(n => `<option value="${esc(n)}">`).join('');
+  abrirModal(`
+    <div class="modal-header">
+      <div class="modal-title">${l ? 'Editar lançamento' : 'Novo lançamento'}<small>${rotuloMes(mesAtual)}${DB.meses[mesAtual].simulado?' · mês simulado':''}</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button>
+    </div>
+    <div id="erro-lanc"></div>
+    <div class="form-grid" style="margin-top:12px">
+      <div class="form-field">
+        <label class="form-label">Data</label>
+        <input type="date" id="f-data" class="fam-input" value="${l ? l.data : hoje}" min="${mesAtual}-01" max="${mesAtual}-31">
+      </div>
+      <div class="form-field">
+        <label class="form-label">Tipo</label>
+        <select id="f-tipo" class="fam-input">
+          <option value="s"${l && l.valor < 0 ? ' selected' : ''}>Saída (-)</option>
+          <option value="e"${l && l.valor >= 0 ? ' selected' : ''}>Entrada (+)</option>
+        </select>
+      </div>
+      <div class="form-field full">
+        <label class="form-label">Natureza / conta</label>
+        <input id="f-nat" class="fam-input" list="dl-nat" placeholder="escolha uma existente ou digite uma nova" value="${l ? esc(l.natureza) : (natPre ? esc(natPre) : '')}">
+        <datalist id="dl-nat">${dl}</datalist>
+      </div>
+      <div class="form-field">
+        <label class="form-label">Contraparte</label>
+        <input id="f-cp" class="fam-input" placeholder="quem pagou ou recebeu" value="${l ? esc(l.contraparte) : ''}">
+      </div>
+      <div class="form-field">
+        <label class="form-label">Valor (R$)</label>
+        <input id="f-valor" class="fam-input" inputmode="decimal" data-dinheiro placeholder="R$ 0,00" value="${l ? valorEditavel(Math.abs(l.valor)) : ''}">
+      </div>
+      <div class="form-field full">
+        <label class="form-label">Descritivo</label>
+        <input id="f-desc" class="fam-input" placeholder="o que é esse lançamento" value="${l ? esc(l.descritivo) : ''}">
+      </div>
+      <div class="form-field full">
+        <label class="form-label">Observação</label>
+        <input id="f-obs" class="fam-input" value="${l ? esc(l.obs || '') : ''}">
+      </div>
+    </div>
+    <div class="modal-rodape">
+      ${l ? `<button class="btn-danger esq" onclick="excluirLancamento('${l.id}')">Excluir</button>` : ''}
+      <button class="btn-clear" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" onclick="salvarLancamento()">${l ? 'Salvar alterações' : 'Incluir lançamento'}</button>
+    </div>`);
+  setTimeout(() => document.getElementById(l ? 'f-valor' : 'f-nat').focus(), 40);
+}
+
+function lerValor(txt){
+  let t = String(txt || '').trim().replace(/R\$/gi,'').replace(/\s/g,'');
+  if (!t) return NaN;
+  if (t.includes(',')) t = t.replace(/\./g,'').replace(',','.');   // 1.234,56
+  return Number(t);
+}
+
+function salvarLancamento(){
+  const data = document.getElementById('f-data').value;
+  const nat  = document.getElementById('f-nat').value.trim();
+  const cp   = document.getElementById('f-cp').value.trim();
+  const desc = document.getElementById('f-desc').value.trim();
+  const obs  = document.getElementById('f-obs').value.trim();
+  const tipo = document.getElementById('f-tipo').value;
+  const bruto = lerValor(document.getElementById('f-valor').value);
+
+  const erros = [];
+  if (!data) erros.push('informe a data');
+  else if (data.slice(0,7) !== mesAtual) erros.push('a data precisa estar dentro de ' + rotuloMes(mesAtual));
+  if (!nat) erros.push('informe a natureza');
+  if (!cp) erros.push('informe a contraparte');
+  if (!isFinite(bruto) || bruto === 0) erros.push('informe um valor diferente de zero');
+  if (erros.length) {
+    document.getElementById('erro-lanc').innerHTML = '<div class="alert-error">Falta ajustar: ' + erros.join(' · ') + '</div>';
+    return;
+  }
+  const valor = Number((tipo === 's' ? -Math.abs(bruto) : Math.abs(bruto)).toFixed(2));
+  const m = DB.meses[mesAtual];
+  if (lancEditando) {
+    const l = m.lancamentos.find(x => x.id === lancEditando);
+    /* a trilha guarda o que mudou, campo a campo · "editou o lançamento" sem
+       dizer o quê não serve para conferir coisa nenhuma */
+    const campos = { data, natureza: nat, contraparte: cp, descritivo: desc, valor, obs };
+    const mudou = Object.keys(campos).filter(k => String(l[k] == null ? '' : l[k]) !== String(campos[k]));
+    if (mudou.length) auditar('alteracao', 'Lançamento editado', {
+      onde: rotuloCurto(mesAtual) + ' · ' + l.natureza + ' · ' + l.contraparte,
+      de: mudou.map(k => k + ': ' + (k === 'valor' ? fmt(l[k]) : (l[k] || '(vazio)'))).join(' · '),
+      para: mudou.map(k => k + ': ' + (k === 'valor' ? fmt(campos[k]) : (campos[k] || '(vazio)'))).join(' · ') });
+    Object.assign(l, campos);
+  } else {
+    const novo = { id: novoId(), data, natureza: nat, contraparte: cp, descritivo: desc, valor, obs };
+    if (lancInserirEm != null) m.lancamentos.splice(lancInserirEm, 0, novo); else m.lancamentos.push(novo);
+    lancInserirEm = null;
+    auditar('inclusao', 'Lançamento incluído', {
+      onde: rotuloCurto(mesAtual) + ' · ' + nat + ' · ' + cp,
+      para: fmtData(data) + ' · ' + fmt(valor) + (desc ? ' · ' + desc : '') });
+  }
+  abertasComp.add(nat);
+  gravar(); fecharModal(); render();
+}
+
+function excluirLancamento(id){
+  const m = DB.meses[mesAtual];
+  const l = m.lancamentos.find(x => x.id === id);
+  if (!l) return;
+  if (!confirm('Excluir o lançamento de ' + l.contraparte + ' · ' + fmt(l.valor) + '?')) return;
+  m.lancamentos = m.lancamentos.filter(x => x.id !== id);
+  auditar('exclusao', 'Lançamento excluído', {
+    onde: rotuloCurto(mesAtual) + ' · ' + l.natureza + ' · ' + l.contraparte,
+    de: fmtData(l.data) + ' · ' + fmt(l.valor) + (l.descritivo ? ' · ' + l.descritivo : ''), para: 'excluído' });
+  gravar(); fecharModal(); render();
+}
+
+/* ═══════════════ ACOMPANHAMENTO MENSAL · a tela ═══════════════
+   Três níveis, um clique em cada: conta → contraparte → lançamento. Nada
+   aparece duas vezes: o lançamento mora dentro da contraparte que o fez, e
+   não também num bloco solto embaixo. É o que mantém a tela limpa. */
+let compA = null, compB = null;
+
+/* inverter é escolher o par na mão: quem inverte quer AQUELE par, não o
+   automático · sem isso o próximo render desfazia a inversão na cara dele */
+function inverterPeriodos(){ const t = compA; compA = compB; compB = t; parFixado = true; render(); }
+function expandirTudo(){ linhasComparativo().forEach(l => abertasComp.add(l.natureza)); render(); }
+
+function linhasComparativo(){
+  const ms = mesesNaTela();
+  const ap = {};
+  ms.forEach(mk => ap[mk] = apurar(mk));
+  const nats = new Set();
+  ms.forEach(mk => ap[mk].porNatureza.forEach(n => nats.add(n.natureza)));
+  for (const n of (DB.naturezas || [])) nats.add(n.nome);
+
+  const linhas = [];
+  for (const nat of nats) {
+    const vals = {}, qtds = {};
+    let tipo = null;
+    for (const mk of ms) {
+      const x = ap[mk].porNatureza.find(n => n.natureza === nat);
+      vals[mk] = x ? x.total : 0;
+      qtds[mk] = x ? x.qtd : 0;
+      if (x && !tipo) tipo = x.tipo;
+    }
+    /* conta sem movimento nenhum ainda não escolheu lado: vale o que foi
+       dito na hora de criar, senão ela não saberia em que bloco entrar */
+    const cad = (DB.naturezas || []).find(n => n.nome === nat);
+    if (!tipo) tipo = cad ? cad.tipo : 'saida';
+    linhas.push({
+      natureza: nat, tipo, vals, qtds, interna: INTERNAS.includes(nat),
+      va: vals[compA] || 0, vb: vals[compB] || 0,
+      qa: qtds[compA] || 0, qb: qtds[compB] || 0,
+      vazia: ms.every(mk => !vals[mk]),
+    });
+  }
+  return linhas;
+}
+
+/* Variação sempre em módulo: para saída, "+" é gastar mais. A cor é por
+   sentido do negócio, não por sinal · saída que sobe é vermelha. */
+function variacao(va, vb, tipo){
+  const A = Math.abs(va), B = Math.abs(vb);
+  const dif = B - A;
+  let texto, classe;
+  const bom = tipo === 'saida' ? dif < 0 : dif > 0;
+  if (A === 0 && B === 0) return { dif: 0, texto: '-', classe: 'badge-gray' };
+  if (A === 0) { texto = 'novo'; classe = bom ? 'badge-green' : 'badge-red'; return { dif, texto, classe }; }
+  if (B === 0) { texto = 'zerou'; classe = bom ? 'badge-green' : 'badge-red'; return { dif, texto, classe }; }
+  const pct = (B / A - 1) * 100;
+  if (Math.abs(pct) < 0.05) return { dif, texto: 'igual', classe: 'badge-gray', pct };
+  const seta = pct >= 0 ? '▲' : '▼';
+  texto = seta + ' ' + Math.abs(pct).toFixed(1).replace('.', ',') + '%';
+  classe = bom ? 'badge-green' : 'badge-red';
+  return { dif, texto, classe, pct };
+}
+
+/* célula de valor: R$ sempre, vermelho quando negativo, travinha quando não
+   existe o mês · mês que não teve a conta é diferente de mês que teve zero */
+const celComp = (v, extra) => v
+  ? `<td class="num${clsNeg(v)}${extra || ''}">${fmt(v)}</td>`
+  : `<td class="num${extra || ''}"><span style="color:var(--soft)">-</span></td>`;
+
+const selo = v => `<span class="badge var ${v.classe}">${v.texto}</span>`;
+
+/* ═══════════════ A GRADE DE COLUNAS ═══════════════
+   Nome · um mês por coluna · o total do trimestre no fim de cada grupo ·
+   Dif. R$ e Var. % do par comparado. O quadro escuro, a tabela e as gavetas
+   leem todos desta mesma lista: é o que mantém a coluna sendo uma coluna só. */
+const letraCol = c => c.tipo === 'mes' ? 'M' : c.tipo === 'tot' ? 'T' : c.tipo === 'dif' ? 'D' : 'V';
+const grade = cols => '<colgroup><col>' + cols.map(c => `<col class="c${letraCol(c)}">`).join('') + '</colgroup>';
+const nCols = cols => cols.length + 1;
+const colsDeValor = cols => cols.filter(c => c.tipo === 'mes' || c.tipo === 'tot');
+
+/* a coluna do par comparado fica marcada: a Dif. lá na ponta é entre estas duas */
+const marcaPar = c => c.tipo === 'mes' && (c.mk === compA || c.mk === compB) ? ' par'
+                    : (c.tipo === 'tot' ? ' tot' : '');
+
+const rotuloColuna = c => {
+  if (c.tipo === 'mes') return rotuloCurto(c.mk) + (DB.meses[c.mk] && DB.meses[c.mk].simulado ? ' 🧪' : '');
+  if (c.tipo === 'tot') return rotuloTriTot(c.tri, c.completo);
+  return c.tipo === 'dif' ? 'Dif. R$' : 'Var. %';
+};
+
+/* Duas linhas de cabeçalho: a de cima agrupa por trimestre, a de baixo nomeia
+   cada mês. É o desenho de planilha que o CFO já lê sem manual. */
+/* Com o trimestre desligado (o padrão) é UMA linha de cabeçalho: um mês por
+   coluna e pronto. Ligado, entra por cima a faixa que agrupa os meses de cada
+   trimestre, e aí o cabeçalho tem duas linhas. */
+function cabecalhoTabela(cols, grupos){
+  const fim = cols.filter(c => c.tipo === 'dif' || c.tipo === 'var');
+  const comFaixa = grupos.some(g => g.total);
+  const mes = c => `<th class="num${marcaPar(c)}">${rotuloColuna(c)}${puxador(letraCol(c))}</th>`;
+  const ponta = c => `<th class="num fix fix${letraCol(c)}"${comFaixa ? ' rowspan="2"' : ''}>${rotuloColuna(c)}${puxador(letraCol(c))}</th>`;
+
+  if (!comFaixa)
+    return '<thead><tr><th></th>' + colsDeValor(cols).map(mes).join('') + fim.map(ponta).join('') + '</tr></thead>';
+
+  let h = '<thead><tr class="faixa-tri"><th rowspan="2"></th>';
+  for (const g of grupos)
+    h += `<th class="tri" colspan="${g.mks.length + (g.total ? 1 : 0)}">${rotuloTri(g.tk)}</th>`;
+  h += fim.map(ponta).join('') + '</tr><tr>' + colsDeValor(cols).map(mes).join('');
+  return h + '</tr></thead>';
+}
+
+function renderComparativo(){
+  const { cols, grupos, meses } = colunasDaTela();
+  montarSeletorDeMeses(meses);
+
+  const linhas = linhasComparativo();
+  const peso = l => Math.abs(l.vals[compB] || l.vals[compA] || 0);
+  const ent = linhas.filter(l => l.tipo === 'entrada').sort((a,b) => peso(b) - peso(a));
+  const sai = linhas.filter(l => l.tipo === 'saida').sort((a,b) => peso(b) - peso(a));
+
+  const n = nCols(cols);
+  let h = `<div class="comp-quadro" style="${estiloColunas(cols)}">` + cabecalhoIndicadores(cols) +
+    `<table class="fam-table">${grade(cols)}${cabecalhoTabela(cols, grupos)}<tbody>`;
+
+  h += faixaGrupo('Entradas', null, n);
+  h += ent.map(l => linhaComp(l, cols)).join('') || `<tr><td colspan="${n}" class="vazio">Sem entradas nos meses da tela.</td></tr>`;
+  h += totalComp('TOTAL ENTRADAS', a => a.entradas, 'entrada', cols);
+
+  h += `<tr class="respiro"><td colspan="${n}"></td></tr>`;
+  /* a faixa de saídas vem longe do cabeçalho, então repete os títulos */
+  h += faixaGrupo('Saídas', cols, n);
+  h += sai.map(l => linhaComp(l, cols)).join('') || `<tr><td colspan="${n}" class="vazio">Sem saídas nos meses da tela.</td></tr>`;
+  h += totalComp('TOTAL SAÍDAS', a => a.saidas, 'saida', cols);
+
+  h += `</tbody></table></div>`;
+  document.getElementById('comp-corpo').innerHTML = h;
+}
+
+function faixaGrupo(rotulo, cols, n){
+  if (!cols) return `<tr class="grupo"><td colspan="${n}">${rotulo}</td></tr>`;
+  return `<tr class="grupo"><td>${rotulo}</td>` +
+    cols.map(c => `<td class="rep${c.tipo === 'dif' || c.tipo === 'var' ? ' fix fix' + letraCol(c) : ''}">${rotuloColuna(c)}</td>`).join('') + `</tr>`;
+}
+
+/* ═══════════════ QUADRO ESCURO DE INDICADORES ═══════════════
+   Mesma grade da tabela de baixo. Saldo inicial de um trimestre é o do
+   primeiro mês dele e o saldo apurado é o do último · somar saldo daria um
+   número que não existe em lugar nenhum. */
+function cabecalhoIndicadores(cols){
+  const ms = mesesNaTela();
+  const ap = {};
+  ms.forEach(mk => ap[mk] = apurar(mk));
+
+  const pegar = (col, campo, modo) => {
+    if (col.tipo === 'mes') return ap[col.mk] ? ap[col.mk][campo] : 0;
+    const mks = col.mks;
+    if (modo === 'primeiro') return ap[mks[0]][campo];
+    if (modo === 'ultimo')   return ap[mks[mks.length - 1]][campo];
+    return mks.reduce((s, mk) => s + ap[mk][campo], 0);
+  };
+
+  const linha = (rot, campo, modo, tipo, opts) => {
+    opts = opts || {};
+    const va = ap[compA] ? ap[compA][campo] : 0, vb = ap[compB] ? ap[compB][campo] : 0;
+    const v = variacao(va, vb, tipo);
+    const cel = col => {
+      const val = pegar(col, campo, modo);
+      const txt = opts.semRS ? String(val) : fmt(val);
+      /* cor por sentido do negócio · negativo é vermelho, sempre, por cima */
+      const cor = ehNeg(val) ? ' r' : (opts.cor ? ' ' + opts.cor : '');
+      return `<div class="cc-num${cor}${marcaPar(col)}">${txt}</div>`;
+    };
+    return `<div class="cc-linha${opts.forte ? ' forte' : ''}">
+      <div class="cc-rot">${rot}</div>
+      ${colsDeValor(cols).map(cel).join('')}
+      <div class="cc-dif${ehNeg(v.dif) ? ' r' : ''}">${fmtDif(v.dif, opts.semRS)}</div>
+      <div class="cc-var">${selo(v)}</div>
+    </div>`;
+  };
+
+  return `<div class="cc">
+    <div class="cc-linha cc-topo">
+      <div>Indicadores do mês</div>
+      ${colsDeValor(cols).map(c => `<div class="${marcaPar(c).trim()}">${rotuloColuna(c)}</div>`).join('')}
+      <div>Dif. R$</div><div>Var. %</div>
+    </div>
+    ${linha('Saldo inicial', 'saldoInicial', 'primeiro', 'entrada')}
+    ${linha('Entradas do mês', 'entradas', 'soma', 'entrada', { cor: 'v' })}
+    ${linha('Saídas do mês', 'saidas', 'soma', 'saida', { cor: 'r' })}
+    ${linha('Saldo final apurado', 'saldoApurado', 'ultimo', 'entrada', { forte: true })}
+    ${linha('Lançamentos no mês', 'qtd', 'soma', 'entrada', { semRS: true })}
+  </div>`;
+}
+
+function linhaComp(l, cols){
+  const v = variacao(l.va, l.vb, l.tipo);
+  const aberta = abertasComp.has(l.natureza);
+  const tag = l.interna ? ' <span class="badge badge-gray">entre contas da FAM</span>' : '';
+  let h = `<tr class="linha-nat${aberta?' aberta':''}" data-ctx="natcomp" data-nat="${esc(l.natureza)}" onclick="alternarComp(this)">
+    <td><span class="seta">▶</span> <b>${esc(l.natureza)}</b>${tag}</td>
+    ${colsDeValor(cols).map(c => celComp(valorCol(c, l.vals), marcaPar(c))).join('')}
+    <td class="num fix fixD${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
+    <td class="num fix fixV">${selo(v)}</td>
+  </tr>`;
+  if (aberta) h += gavetaComp(l, cols);
+  return h;
+}
+
+function totalComp(rotulo, campo, tipo, cols){
+  const porMes = {};
+  mesesNaTela().forEach(mk => porMes[mk] = campo(apurar(mk)));
+  const v = variacao(porMes[compA] || 0, porMes[compB] || 0, tipo);
+  return `<tr class="subtotal">
+    <td>${rotulo}</td>
+    ${colsDeValor(cols).map(c => {
+      const val = valorCol(c, porMes);
+      return `<td class="num${clsNeg(val)}${marcaPar(c)}">${fmt(val)}</td>`;
+    }).join('')}
+    <td class="num fix fixD${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
+    <td class="num fix fixV">${selo(v)}</td>
+  </tr>`;
+}
+
+/* o nome da conta vem do atributo da linha: nome com apóstrofo não quebra nada */
+function alternarComp(tr){
+  if (!cliqueDeVerdade()) return;          // sobrou selecao: a pessoa estava lendo
+  const nat = tr.dataset.nat;
+  if (abertasComp.has(nat)) abertasComp.delete(nat); else abertasComp.add(nat);
+  render();
+}
+
+/* A chave de uma contraparte dentro de uma conta. O separador é um caractere
+   de controle: nunca aparece num nome digitado, então duas linhas diferentes
+   nunca colidem na mesma chave. */
+const idCP = (nat, cp) => nat + '' + cp;
+
+function alternarCP(tr){
+  if (!cliqueDeVerdade()) return;
+  const id = idCP(tr.dataset.nat, tr.dataset.cp);
+  if (abertasCP.has(id)) abertasCP.delete(id); else abertasCP.add(id);
+  render();
+}
+
+/* Nível 2 · dentro da conta, cada contraparte em todos os meses da tela. É
+   onde se enxerga QUEM fez a conta subir ou cair.
+
+   Os níveis 2 e 3 são LINHAS DA MESMA TABELA, não tabelas dentro de células.
+   É o que garante o trilho: jul/26 do lançamento cai exatamente embaixo de
+   jul/26 da conta, porque é a mesma coluna. O nível se lê pelo recuo do nome,
+   e o mês foi nomeado uma vez só, lá no cabeçalho do bloco. */
+function gavetaComp(l, cols){
+  const ms = mesesNaTela();
+  const porCP = mk => {
+    const m = new Map();
+    for (const x of DB.meses[mk].lancamentos.filter(x => x.natureza === l.natureza)) {
+      const k = normalizar(x.contraparte);
+      if (!m.has(k)) m.set(k, { nome: x.contraparte, total: 0, qtd: 0 });
+      const c = m.get(k); c.total += x.valor; c.qtd++;
+    }
+    return m;
+  };
+  const porMes = {};
+  ms.forEach(mk => porMes[mk] = porCP(mk));
+  const chaves = [...new Set(ms.flatMap(mk => [...porMes[mk].keys()]))];
+
+  const linhas = chaves.map(k => {
+    const vals = {};
+    let nome = k;
+    for (const mk of ms) {
+      const c = porMes[mk].get(k);
+      vals[mk] = c ? c.total : 0;
+      if (c) nome = c.nome;
+    }
+    return { chave: k, nome, vals, v: variacao(vals[compA] || 0, vals[compB] || 0, l.tipo) };
+  }).sort((x,y) => Math.abs(y.vals[compB] || y.vals[compA] || 0) - Math.abs(x.vals[compB] || x.vals[compA] || 0));
+
+  const corpo = linhas.map(x => {
+    const aberta = abertasCP.has(idCP(l.natureza, x.chave));
+    let t = `<tr class="cp n2${aberta?' aberta':''}" data-ctx="cpcomp" data-nat="${esc(l.natureza)}" data-cp="${esc(x.chave)}" onclick="alternarCP(this)">
+      <td class="rot"><span class="seta">▶</span> <b>${esc(x.nome)}</b></td>
+      ${colsDeValor(cols).map(c => celComp(valorCol(c, x.vals), marcaPar(c))).join('')}
+      <td class="num fix fixD${clsNeg(x.v.dif)}">${fmtDif(x.v.dif)}</td>
+      <td class="num fix fixV">${selo(x.v)}</td>
+    </tr>`;
+    if (aberta) t += lancamentosDaCP(l.natureza, x.chave, l.tipo, x.nome, cols);
+    return t;
+  }).join('');
+
+  return corpo || `<tr class="n2"><td colspan="${nCols(cols)}" class="vazio rot">Sem lançamentos nos meses da tela.</td></tr>`;
+}
+
+/* Nível 3 · os lançamentos daquela contraparte, na MESMA grade de colunas do
+   resto da tela: o de maio numa coluna, o de junho na outra, na mesma linha.
+   O mês que não teve aquele lançamento fica com a travinha. */
+function lancamentosDaCP(nat, chave, tipo, nome, cols){
+  const ms = mesesNaTela();
+  const doMes = mk => DB.meses[mk].lancamentos.filter(x => x.natureza === nat && normalizar(x.contraparte) === chave);
+
+  /* "o mesmo lançamento em meses diferentes" é o que repete descritivo e dia.
+     O sufixo #n separa repetições dentro do próprio mês, para dois lançamentos
+     iguais no mesmo dia não caírem em cima um do outro. */
+  const par = new Map();
+  for (const mk of ms) {
+    const usados = new Map();
+    for (const l of doMes(mk)) {
+      const base = normalizar(l.descritivo) + '|' + l.data.slice(8);
+      const n = usados.get(base) || 0;
+      usados.set(base, n + 1);
+      const k = base + '#' + n;
+      if (!par.has(k)) par.set(k, { ref: l, por: {} });
+      par.get(k).por[mk] = l;
+    }
+  }
+
+  const linhas = [...par.values()].sort((x, y) =>
+    (x.ref.data.slice(8) + x.ref.descritivo).localeCompare(y.ref.data.slice(8) + y.ref.descritivo));
+
+  /* A célula de valor se edita com dois cliques e carrega o mês dela: o botão
+     direito e a edição agem no mês onde o clique caiu, sem perguntar nada.
+
+     A célula VAZIA também se digita, e é o pedido do Marco: os lançamentos se
+     repetem quase iguais todo mês, então o mês que ainda não teve aquele
+     lançamento tem uma travinha esperando o valor. Dois cliques nela abrem o
+     mesmo campo, e o que for digitado NASCE ali · a natureza, a contraparte, o
+     descritivo e o dia vêm da própria linha, que é o que faz dela uma linha.
+     É o jeito Excel: onde há uma casa, dá para digitar. */
+  const cel = (l, mk, ref) => {
+    const p = (mk === compA || mk === compB) ? ' par' : '';
+    if (l) return `<td class="num${clsNeg(l.valor)}${p}" style="font-weight:700" data-ctx="lanc" data-id="${l.id}" data-mk="${mk}"
+             data-edit="valor" data-valor="${l.valor}" title="${fmtData(l.data)} · dois cliques para corrigir o valor aqui mesmo">${fmt(l.valor)}</td>`;
+    const dia = ref.data.slice(8);
+    return `<td class="num vazia${p}" data-mk="${mk}" data-edit="novo"
+        data-nat="${esc(nat)}" data-cp="${esc(ref.contraparte)}" data-desc="${esc(ref.descritivo)}"
+        data-dia="${dia}" data-sinal="${ref.valor < 0 ? '-' : '+'}"
+        title="${rotuloMes(mk)} não tem este lançamento · dois cliques para lançar aqui"><span class="tracinho">-</span></td>`;
+  };
+
+  const corpo = linhas.map(x => {
+    const vals = {};
+    ms.forEach(mk => vals[mk] = x.por[mk] ? x.por[mk].valor : 0);
+    const v = variacao(vals[compA] || 0, vals[compB] || 0, tipo);
+    const datas = ms.filter(mk => x.por[mk]).map(mk => fmtData(x.por[mk].data)).join(' · ');
+    /* que lançamento é este em cada mês · a correção da descrição anda em
+       todos eles de uma vez, senão o par se desfaz na hora */
+    const ids = ms.filter(mk => x.por[mk]).map(mk => mk + '|' + x.por[mk].id).join(';');
+    const celulas = colsDeValor(cols).map(c =>
+      c.tipo === 'mes' ? cel(x.por[c.mk], c.mk, x.ref) : celComp(valorCol(c, vals), ' tot')).join('');
+    /* A data vem NA FRENTE do descritivo, na mesma linha. O rótulo "Data /
+       descritivo" saiu junto com o cabeçalho interno: com a data à vista em
+       cada linha, dizer que ali tem data era repetir o óbvio. */
+    return `<tr class="lanc n3" data-ctx="lancpar" data-nat="${esc(nat)}" data-cp="${esc(chave)}" data-ids="${ids}">
+      <td class="rot" data-edit="desc" data-texto="${esc(x.ref.descritivo)}" title="dois cliques para corrigir a descrição aqui mesmo">
+        <span class="dia">${datas}</span> ${esc(x.ref.descritivo)}</td>
+      ${celulas}
+      <td class="num fix fixD${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
+      <td class="num fix fixV">${selo(v)}</td>
+    </tr>`;
+  }).join('');
+
+  return corpo || `<tr class="n3"><td colspan="${nCols(cols)}" class="vazio rot">Sem lançamentos.</td></tr>`;
+}
+</script>

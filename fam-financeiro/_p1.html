@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAM Financeiro · Fluxo de Caixa</title>
+<style>
+/* ═══ Tokens do CRM FAM (app/globals.css) · mesma letra, mesmas cores, mesmos tamanhos ═══ */
+:root{
+  --blue-900:#0a1628; --blue-800:#102040; --blue-700:#1a3560; --blue-600:#1e4080;
+  --blue-400:#3070c8; --blue-200:#a0c0e8; --blue-100:#d0e4f5; --blue-50:#e8f0fa;
+  --accent:#e8b84b; --green:#27a96c; --red:#d64545;
+  --card:#ffffff; --border:#c5d5e8; --soft:#6080a0;
+  /* A cor do quadro resumo. Cabeçalho da tabela e faixas de grupo usam esta
+     mesma cor: a tela inteira lê como uma peça só, não como dois quadros. */
+  --resumo:linear-gradient(160deg,#102040,#1a3560);
+  --resumo-chapado:#132848;
+
+  /* Sombras em tres camadas (contato, corpo e ambiente), tingidas do azul da
+     FAM. E o que da relevo ao card sem mexer em cor, borda ou espacamento:
+     mesmo desenho de antes, so que descolado do fundo. */
+  --sombra-1:0 1px 2px rgba(16,32,64,.05),0 2px 6px rgba(30,64,128,.07);
+  --sombra-2:0 1px 2px rgba(16,32,64,.06),0 6px 16px rgba(30,64,128,.10),0 16px 34px rgba(30,64,128,.07);
+  --sombra-3:0 2px 4px rgba(16,32,64,.08),0 10px 24px rgba(30,64,128,.14),0 24px 52px rgba(30,64,128,.10);
+  --sombra-alta:0 4px 10px rgba(10,22,40,.16),0 20px 46px rgba(10,22,40,.24),0 44px 88px rgba(10,22,40,.18);
+  /* card escuro pede sombra escura: azul claro nele vira mancha */
+  --sombra-escura:0 2px 4px rgba(10,22,40,.16),0 10px 26px rgba(10,22,40,.26),0 24px 54px rgba(10,22,40,.20);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Calibri','Segoe UI',sans-serif;background:#e8eef5;background-image:linear-gradient(180deg,#eff4f9,#e8eef5 280px);background-attachment:fixed;color:#1a2a3a;min-height:100vh;font-size:15px}
+
+/* ── Topo: a marca da FAM, igual à do CRM ── */
+.topo{background:linear-gradient(90deg,#0a1628,#16294a 55%,#1d3564);color:#fff;padding:11px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:80;box-shadow:0 2px 6px rgba(10,22,40,.22),0 10px 28px rgba(10,22,40,.26)}
+.marca{display:flex;align-items:center;gap:13px}
+.logo{width:44px;height:44px;border-radius:11px;background:linear-gradient(145deg,#4d84e6,#2f63c4);display:flex;align-items:center;justify-content:center;font-size:23px;font-weight:700;color:#fff;flex-shrink:0;box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 4px 12px rgba(10,22,40,.42)}
+.topo h1{font-size:21px;font-weight:700;letter-spacing:.2px;line-height:1.1;color:#fff}
+.topo .sub{font-size:11px;font-weight:600;letter-spacing:2.2px;color:#8fb3da;margin-top:3px;text-transform:uppercase}
+.ctx{font-size:12px;color:#a0c0e8;text-align:right;line-height:1.4}
+.topo-dir{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sel-mes{font-family:inherit;font-size:14px;font-weight:600;padding:7px 12px;border-radius:7px;border:1.5px solid #3070c8;background:#102040;color:#fff;cursor:pointer}
+.cfo{font-size:12px;color:#a0c0e8;border-left:1px solid #3070c8;padding-left:12px}
+
+.wrap{max-width:1380px;margin:0 auto;padding:18px 20px 60px}
+
+/* ── Abas, como as de uma planilha ──
+   A Principal é a verdade. Cada Simulação é uma cópia inteira, com a própria
+   cor · o roxo separa na hora o que é conta de verdade do que é hipótese. */
+.abas{display:flex;align-items:flex-end;gap:5px;flex-wrap:wrap;margin-bottom:-1px}
+.aba{display:inline-flex;align-items:center;gap:8px;padding:9px 15px;border:1px solid var(--border);
+  border-bottom-color:transparent;border-radius:10px 10px 0 0;background:#dce6f2;color:#1a3560;
+  font-family:inherit;font-size:13.5px;font-weight:600;cursor:pointer;position:relative;top:1px;
+  box-shadow:0 -1px 4px rgba(30,64,128,.06)}
+.aba:hover{background:#e8f0fa}
+.aba.ativa{background:#fff;color:#102040;box-shadow:0 -3px 10px rgba(30,64,128,.12)}
+.aba.sim{background:#e4dbf6;color:#4a2d7a;border-color:#c3aee6}
+.aba.sim:hover{background:#efe9fa}
+.aba.sim.ativa{background:#fff;color:#4a2d7a}
+.aba .x{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;
+  font-size:14px;line-height:1;color:#8a6fb5;background:rgba(255,255,255,.65)}
+.aba .x:hover{background:#d64545;color:#fff}
+.aba-nova{padding:8px 14px;border:1px dashed var(--border);border-radius:10px 10px 0 0;background:none;
+  color:var(--soft);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;position:relative;top:1px}
+.aba-nova:hover{background:#e8f0fa;color:#1e4080;border-color:#3070c8}
+
+/* a tela toda se veste de simulação: cabeçalho, quadro resumo e faixas */
+body.simulando{--resumo:linear-gradient(160deg,#2a1b4d,#4a3382);--resumo-chapado:#382660}
+body.simulando .topo{background:linear-gradient(90deg,#2a1b4d,#43307a 55%,#5b4199)}
+body.simulando .logo{background:linear-gradient(145deg,#9b7ede,#6f4fc0)}
+body.simulando .topo .sub,body.simulando .ctx,body.simulando .cfo{color:#c9b6ef}
+body.simulando .cfo{border-left-color:#7a5cc4}
+body.simulando .comp-quadro{border-color:#c3aee6;box-shadow:0 1px 2px rgba(40,20,70,.07),0 6px 16px rgba(74,45,122,.13),0 16px 34px rgba(74,45,122,.10)}
+body.simulando .filter-row{border-color:#c3aee6}
+body.simulando .cc-linha.forte{background:rgba(232,184,75,.12)}
+
+.faixa-simulacao{background:#efe9fa;border:1px solid #c3aee6;border-left:5px solid #6f4fc0;border-radius:8px;
+  padding:10px 14px;margin-bottom:12px;box-shadow:var(--sombra-1);font-size:13.5px;color:#4a2d7a;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5}
+.faixa-simulacao b{color:#35205c}
+.faixa-simulacao .acoes-aba{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+
+/* ── Faixa de aviso (mês simulado) ── */
+.faixa-sim{background:#fdf8e6;border:1px solid #efd98a;border-left:5px solid var(--accent);border-radius:8px;padding:10px 14px;margin-bottom:16px;box-shadow:var(--sombra-1);font-size:13.5px;color:#7a5c10;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.faixa-sim b{color:#5f4708}
+
+/* ── Botões (CRM) ── */
+.btn-primary{display:inline-flex;align-items:center;gap:7px;padding:9px 20px;border-radius:8px;border:none;background:#1e4080;color:#fff;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px rgba(10,22,40,.20),0 3px 8px rgba(30,64,128,.28);transition:background .15s,box-shadow .15s,transform .15s}
+.btn-primary:hover{background:#1a3560;box-shadow:0 2px 4px rgba(10,22,40,.22),0 7px 18px rgba(30,64,128,.36);transform:translateY(-1px)}
+.btn-primary:active{transform:translateY(0);box-shadow:0 1px 2px rgba(10,22,40,.24)}
+.btn-secondary{display:inline-flex;align-items:center;gap:7px;padding:9px 20px;border-radius:8px;border:1.5px solid #1e4080;background:#fff;color:#1e4080;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px rgba(30,64,128,.12),0 2px 6px rgba(30,64,128,.10);transition:background .15s,box-shadow .15s,transform .15s}
+.btn-secondary:hover{background:#e8f0fa;box-shadow:0 2px 4px rgba(30,64,128,.14),0 6px 14px rgba(30,64,128,.16);transform:translateY(-1px)}
+.btn-secondary:active{transform:translateY(0);box-shadow:0 1px 2px rgba(30,64,128,.14)}
+.btn-danger{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:8px;border:none;background:#d64545;color:#fff;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px rgba(90,16,16,.20),0 3px 8px rgba(214,69,69,.30)}
+.btn-danger:hover{background:#b83a3a}
+.btn-clear{padding:8px 16px;background:#d0e4f5;border:1.5px solid var(--border);border-radius:7px;font-family:inherit;font-size:13px;font-weight:600;color:#1e4080;cursor:pointer}
+.btn-clear:hover{background:#a0c0e8}
+.btn-mini{padding:4px 9px;border-radius:6px;border:1.5px solid var(--border);background:#fff;color:#1e4080;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.btn-mini:hover{background:#e8f0fa}
+.btn-mini.del{color:#a02020;border-color:#f5b8b8}
+.btn-mini.del:hover{background:#fbeaea}
+
+/* ── Card / seção (CRM) ── */
+.card-panel{background:#fff;border-radius:12px;padding:20px;box-shadow:var(--sombra-2);border:1px solid var(--border);margin-bottom:18px}
+.section-title{font-size:15px;font-weight:700;color:#1a3560;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #d0e4f5;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dot{width:8px;height:8px;border-radius:50%;background:#3070c8;display:inline-block;flex-shrink:0}
+.dot.green{background:#27a96c} .dot.red{background:#d64545}
+.section-title .acoes{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+
+/* ── Tabela (CRM) ── */
+.fam-table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--border);box-shadow:var(--sombra-1)}
+.fam-table{width:100%;border-collapse:collapse;font-size:14px;background:#fff}
+.fam-table thead{background:var(--resumo)}
+.fam-table thead th{padding:11px 14px;text-align:left;color:#fff;font-size:12px;font-weight:700;letter-spacing:.5px;white-space:nowrap;box-shadow:0 3px 7px -2px rgba(16,32,64,.34)}
+.fam-table tbody tr{border-bottom:1px solid #e8f0fa;transition:background .1s}
+.fam-table tbody tr:last-child{border-bottom:none}
+.fam-table tbody td{padding:9px 14px;vertical-align:middle}
+.fam-table td.num,.fam-table th.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+tr.linha-nat{cursor:pointer}
+tr.linha-nat:hover{background:#e8f0fa}
+tr.linha-nat.aberta{background:#e8f0fa}
+tr.subtotal{background:#f2f7fd;font-weight:700}
+tr.subtotal td{border-top:2px solid #d0e4f5}
+tr.grupo td{background:var(--resumo-chapado);color:#fff;font-size:11.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:7px 14px}
+/* a faixa de grupo repete os títulos das colunas: quem desce a tabela reencontra
+   de que mês é cada coluna sem ter que subir de volta */
+tr.grupo td.rep{text-align:right;letter-spacing:.5px;color:#a0c0e8;font-size:11px}
+/* O mesmo respiro que separa o quadro resumo da tabela separa entradas de
+   saídas · são dois blocos, e a vista precisa saber onde um acaba. */
+/* O seletor precisa do .comp-quadro e do .fam-table: a regra de padding das
+   celulas la embaixo e mais especifica e ganharia desta aqui. */
+tr.respiro{border-bottom:none!important}
+.comp-quadro .fam-table tr.respiro td{height:7px;padding:0;font-size:0;line-height:7px;background:#fff;border:none}
+
+/* Regra do CFO: todo número negativo é vermelho, em qualquer tabela da tela. */
+.neg{color:#d64545}
+.pos{color:#1a7a50}
+.seta{display:inline-block;width:14px;color:#3070c8;font-weight:800;transition:transform .15s}
+tr.linha-nat.aberta .seta{transform:rotate(90deg)}
+
+/* ── Badges (CRM) ── */
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
+/* Selo de variação: largura igual em todos, senão a coluna vira um serrilhado.
+   A medida é a do maior texto que aparece ali ("▲ 814,0%"). */
+.badge.var{display:inline-flex;align-items:center;justify-content:center;min-width:86px;padding:3px 8px}
+.badge-green{background:#e6f9f0;color:#1a7a50} .badge-blue{background:#e6f0fb;color:#1a55a0}
+.badge-red{background:#fbeaea;color:#a02020} .badge-orange{background:#fdf3e6;color:#a05010}
+.badge-gray{background:#f0f2f5;color:#607080} .badge-yellow{background:#fdf8e6;color:#907010}
+
+/* ── Barra de participação (AV%) ── */
+.barra{height:7px;border-radius:4px;background:#e8f0fa;overflow:hidden;min-width:70px}
+.barra i{display:block;height:100%;border-radius:4px}
+.barra.e i{background:linear-gradient(90deg,#27a96c,#5fd39c)}
+.barra.s i{background:linear-gradient(90deg,#d64545,#ef8484)}
+
+/* ── Drill-down: NIVEL POR RECUO, NUNCA POR TABELA NOVA ──
+   Contraparte e lançamento sao linhas da mesma tabela do resumo. Uma tabela
+   dentro de uma celula tem grade propria, e era isso que fazia o numero de
+   jul/26 do lançamento cair fora do jul/26 da conta. Aqui a coluna e a mesma
+   do topo ate o ultimo lançamento; o que muda e so o recuo do NOME. */
+.comp-quadro .fam-table tr.n2>td.rot{padding-left:40px}
+.comp-quadro .fam-table tr.n3>td.rot{padding-left:66px}
+.comp-quadro .fam-table tr.n2>td{background:#f4f9fe}
+.comp-quadro .fam-table tr.n3>td{background:#fbfdff;font-size:12.5px}
+.comp-quadro .fam-table tr.n3>td.rot{color:#2a4260}
+/* a data mora na frente do descritivo, na mesma linha */
+.comp-quadro .fam-table td.rot .dia{color:var(--soft);font-variant-numeric:tabular-nums;
+  font-size:11.5px;font-weight:700;margin-right:7px;white-space:nowrap}
+.mini-table{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--sombra-1)}
+.mini-table thead th{background:#e8f0fa;color:#1a3560;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;padding:7px 10px;text-align:left;white-space:nowrap}
+.mini-table tbody td{padding:6px 10px;border-top:1px solid #eef4fb;vertical-align:middle}
+.mini-table tbody tr:hover{background:#f7fafd}
+.mini-table td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.vazio{color:var(--soft);font-style:italic;font-size:13px;padding:8px 2px}
+.col2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+@media(max-width:900px){.col2{grid-template-columns:minmax(0,1fr)}}
+
+/* ── Filtros / campos (CRM) ── */
+.filter-row{display:flex;gap:12px;flex-wrap:wrap;background:#fff;padding:14px 18px;border-radius:10px;margin-bottom:16px;border:1px solid var(--border);box-shadow:var(--sombra-2);align-items:flex-end}
+.filter-group{display:flex;flex-direction:column;gap:4px}
+/* Com seis botoes a barra nao cabe numa linha so em 1440px, e apertar isso
+   encurtaria o nome deles. Entao: periodos em cima, acoes embaixo, com um
+   fio separando · e de proposito, nao e a barra quebrando sozinha. */
+.acoes-tela{display:flex;gap:8px;flex-wrap:wrap;width:100%;padding-top:12px;border-top:1px solid #e2ebf5}
+.filter-label{font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.8px}
+.fam-input{font-family:inherit;font-size:14px;padding:8px 12px;border:1.5px solid var(--border);border-radius:7px;background:#e8f0fa;color:#1a2a3a;outline:none;width:100%;transition:border-color .2s}
+.fam-input:focus{border-color:#3070c8;background:#fff}
+/* campo de dinheiro: alinhado à direita, como toda caixa de valor de banco */
+input[data-dinheiro]{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+select.fam-input{cursor:pointer}
+
+/* ── Modal (CRM) ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(10,22,40,.48);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal-box{background:#fff;border-radius:14px;box-shadow:var(--sombra-alta);padding:24px;width:100%;max-width:560px;max-height:92vh;overflow-y:auto;border:1px solid var(--border)}
+.modal-box.largo{max-width:1180px}
+.modal-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;padding-bottom:12px;border-bottom:2px solid #d0e4f5}
+.modal-title{font-size:17px;font-weight:700;color:#1e4080}
+.modal-title small{display:block;font-size:12px;font-weight:600;color:var(--soft);margin-top:2px}
+.fechar{background:none;border:none;font-size:24px;line-height:1;color:var(--soft);cursor:pointer;padding:0 4px}
+.fechar:hover{color:#d64545}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.form-field{display:flex;flex-direction:column;gap:5px}
+.form-field.full{grid-column:1/-1}
+.form-label{font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.5px}
+.modal-rodape{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid #e8f0fa;flex-wrap:wrap}
+.modal-rodape .esq{margin-right:auto}
+.alert-success{background:#e6f9f0;border:1px solid #a7e9c8;color:#1a7a50;border-radius:8px;padding:10px 14px;font-size:13.5px;font-weight:600}
+.alert-error{background:#fbeaea;border:1px solid #f5b8b8;color:#a02020;border-radius:8px;padding:10px 14px;font-size:13.5px;font-weight:600}
+.aviso{background:#e8f0fa;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px;color:#1a3560;line-height:1.45}
+
+/* ── Regras do simulador ── */
+.regra{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) 110px auto;gap:9px;align-items:end;padding:11px;border:1px solid var(--border);border-radius:9px;background:#f7fafd;box-shadow:var(--sombra-1);margin-bottom:9px}
+@media(max-width:820px){.regra{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.presets{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.preset{padding:7px 13px;border-radius:20px;border:1.5px solid var(--border);background:#fff;color:#1a3560;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.preset:hover{background:#e8f0fa;border-color:#3070c8}
+
+/* ── Acompanhamento mensal: cabecalho de indicadores e tabela na MESMA grade ──
+   As cinco colunas (conta / periodo A / periodo B / diferenca / variacao) valem
+   para os dois blocos. O cabecalho e escuro e o quadro de baixo e claro: mesma
+   leitura em coluna, peso visual diferente. --cols e a unica fonte da largura. */
+/* As quatro colunas de número têm a largura numa variável só. Quem arrasta o
+   cabeçalho mexe nela, e o quadro resumo, a tabela e as gavetas andam juntos:
+   uma coluna só, do topo da tela até o último lançamento. */
+.comp-quadro{--cM:120px;--cT:128px;--cD:132px;--cV:100px;
+  --cols:minmax(0,1fr) var(--cM) var(--cM) var(--cD) var(--cV);
+  overflow-x:auto;border-radius:10px;border:1px solid var(--border);background:#fff;box-shadow:var(--sombra-2)}
+.comp-quadro col.cM{width:var(--cM)} .comp-quadro col.cT{width:var(--cT)}
+.comp-quadro col.cD{width:var(--cD)} .comp-quadro col.cV{width:var(--cV)}
+
+/* Alça de coluna, como no Excel. A divisória fica à mostra o tempo todo: alça
+   invisível ninguém acha, e foi exatamente isso que aconteceu na primeira
+   versão. A faixa de pega tem 14px, bem mais que a linha que se vê.
+
+   A alça fica na borda ESQUERDA da coluna que ela ajusta. Nesta tabela o lado
+   direito é ancorado (as colunas de número terminam coladas na margem), então
+   é a borda esquerda que se move · pondo a alça ali, a linha acompanha o
+   mouse. Na borda direita ela ficava parada enquanto a coluna crescia para o
+   outro lado, que foi o que o Marco viu e reclamou, com razão. */
+.comp-quadro .fam-table thead th,
+.comp-quadro .mini-table thead th{position:relative}
+.puxador{position:absolute;top:0;left:-7px;width:14px;height:100%;cursor:col-resize;z-index:6;
+  touch-action:none;display:flex;align-items:center;justify-content:center}
+.puxador::before{content:'';width:2px;height:54%;border-radius:2px;background:rgba(255,255,255,.32);
+  transition:background .12s,height .12s,width .12s}
+.comp-quadro .mini-table .puxador::before{background:#b9cce4}
+.puxador:hover::before{background:#e8b84b;width:3px;height:80%}
+body.redimensionando{cursor:col-resize;user-select:none}
+body.redimensionando .puxador::before{background:#e8b84b;width:3px;height:80%}
+/* um respiro entre o quadro resumo e a tabela · são a mesma peça, mas a vista
+   precisa de uma pausa para saber onde um acaba e o outro começa */
+.comp-quadro>.cc{margin-bottom:7px}
+/* a largura minima cresce com o numero de meses: com o ano inteiro na tela o
+   quadro rola de lado, em vez de espremer o nome da conta ate sumir */
+.comp-quadro>.cc,.comp-quadro>table{min-width:var(--minw,790px)}
+/* o quadro resumo lê do mesmo token que o cabeçalho e as faixas: é assim que
+   a aba de simulação troca a cor da tela inteira mexendo num lugar só */
+.cc{background:var(--resumo);color:#e8f0fa;box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 4px 10px -3px rgba(16,32,64,.40)}
+.cc-linha{display:grid;grid-template-columns:var(--cols);align-items:center;padding:4px 0;border-top:1px solid rgba(255,255,255,.07)}
+.cc-linha:first-child{border-top:none}
+.cc-topo{padding:9px 0;border-bottom:1px solid rgba(255,255,255,.18)}
+.cc-topo>div{font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:#a0c0e8;padding:0 14px}
+.cc-topo>div:not(:first-child){text-align:right}
+.cc-rot{font-size:12.5px;font-weight:600;color:#d0e4f5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:14px}
+.cc-num{font-size:13.5px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;color:#fff;padding-right:14px}
+.cc-dif{font-size:12.5px;text-align:right;font-variant-numeric:tabular-nums;color:#a0c0e8;padding-right:14px}
+.cc-var{text-align:right;padding-right:14px}
+.cc-linha.forte{background:rgba(232,184,75,.10)}
+.cc-linha.forte .cc-rot{color:#fff;font-weight:700}
+.cc-linha.forte .cc-num{color:#e8b84b}
+.cc-linha .v{color:#7fe0b0} .cc-linha .r{color:#ff9d9d}
+/* negativo é vermelho mesmo na linha de destaque, que normalmente é dourada */
+.cc-linha.forte .cc-num.r{color:#ff9d9d}
+.cc-dif.r{color:#ff9d9d}
+.cc-rodape{padding:7px 14px 9px;font-size:11px;color:#8fb0d0;border-top:1px solid rgba(255,255,255,.10)}
+/* a tabela de baixo herda a mesma grade */
+.comp-quadro table{border-radius:0;border:none}
+.comp-quadro .fam-table{font-size:13px;table-layout:fixed}
+.comp-quadro .fam-table thead th{padding:8px 14px}
+.comp-quadro .fam-table tbody td{padding:7px 14px}
+
+/* ── Contraparte que abre os lançamentos dela (nível 2 da tabela) ── */
+.comp-quadro .fam-table tr.cp{cursor:pointer}
+.comp-quadro .fam-table tr.cp:hover>td{background:#e8f0fa}
+.comp-quadro .fam-table tr.cp.aberta>td{background:#e8f0fa}
+.comp-quadro .fam-table tr.cp.aberta .seta{transform:rotate(90deg)}
+.comp-quadro .fam-table tr.lanc:hover>td{background:#f2f7fd}
+
+/* ── Dentro do CRM: o topo encolhe ──
+   Solto, este arquivo e um sistema inteiro e precisa da marca no alto. Dentro
+   do CRM ele mora abaixo do cabecalho da FAM, e repetir logo e nome seria duas
+   marcas empilhadas na mesma tela. Some a marca, fica o contexto (que mes esta
+   na tela) e quem esta usando · o resto da tela e igual, byte a byte, porque e
+   o mesmo arquivo. */
+body.no-crm .topo{position:static;padding:9px 16px;background:linear-gradient(90deg,#16294a,#1d3564)}
+body.no-crm .topo .marca{display:none}
+body.no-crm .topo .ctx{text-align:left}
+body.no-crm .topo-dir{margin-left:0;width:100%;justify-content:space-between}
+/* Dentro do CRM a moldura ja limita a largura: o max-width de 1380 daqui
+   apertaria de novo, por dentro, e sobraria faixa branca dos dois lados numa
+   tela que ja e menor que a do arquivo solto. Aqui o sistema usa TUDO. */
+body.no-crm .wrap{max-width:none;padding:12px 14px 22px}
+/* a barra de rolagem e a do iframe: sem isto ficam duas, uma dentro da outra */
+body.no-crm{background-attachment:scroll}
+
+/* ── Acesso de leitura no Financeiro ──
+   Quem entra só para conferir vê a tela inteira e não encontra por onde mexer.
+   A trava de verdade e a RLS no banco (a rota recusa a gravacao de quem nao
+   edita) · isto aqui e para a pessoa nao descobrir que nao podia depois de ter
+   digitado, que e a pior hora de descobrir. */
+body.so-leitura td[data-edit],body.so-leitura td.vazia{cursor:default!important}
+body.so-leitura td[data-edit]:hover{outline:none!important}
+body.so-leitura td.vazia:hover{background:none!important;box-shadow:none!important}
+body.so-leitura td.vazia:hover::after{content:none!important}
+body.so-leitura td.vazia:hover .tracinho{visibility:visible!important}
+/* Botao que ESCREVE leva data-escreve no proprio HTML. A primeira versao disto
+   adivinhava nomes de funcao no onclick e deixou passar "Novo lancamento",
+   "Nova natureza" e "Novo mes" · marcar na marcacao e o que nao depende de eu
+   lembrar de todos. */
+body.so-leitura [data-escreve],body.so-leitura #btn-rev{display:none!important}
+
+/* ── Editar na própria linha, como no Excel ──
+   Dois cliques na célula e ela vira campo. O contorno tracejado no passar do
+   mouse é o que conta que aquilo se edita, sem precisar de nenhum aviso. */
+td[data-edit]{cursor:cell}
+td[data-edit]:hover{outline:1.5px dashed #7aa8dd;outline-offset:-2px}
+.edit-campo{width:100%;box-sizing:border-box;font-family:inherit;font-size:inherit;font-weight:inherit;
+  color:#1a2a3a;border:2px solid #3070c8;border-radius:5px;padding:3px 6px;background:#fff;outline:none;
+  box-shadow:0 0 0 3px rgba(48,112,200,.15)}
+.edit-campo.num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* ── Robô FIN ── */
+.fin-chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
+.fin-chip{padding:6px 12px;border-radius:18px;border:1.5px solid var(--border);background:#fff;color:#1a3560;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.fin-chip:hover{background:#e8f0fa;border-color:#3070c8}
+.fin-barra{display:flex;gap:9px;align-items:center;margin-bottom:14px}
+.fin-resp{background:#f7fafd;border:1px solid var(--border);border-left:4px solid #1e4080;border-radius:9px;padding:14px 16px;box-shadow:var(--sombra-1)}
+.fin-tit{font-size:14px;font-weight:700;color:#1a3560;margin-bottom:4px}
+.fin-num{font-size:26px;font-weight:700;color:#102040;line-height:1.15;margin:2px 0 8px}
+.fin-form{background:#fff;border:1px dashed var(--border);border-radius:8px;padding:9px 12px;font-size:12.5px;color:#1a3560;font-variant-numeric:tabular-nums;line-height:1.6;margin-bottom:10px}
+.fin-form b{color:#1e4080}
+.fin-vazio{color:var(--soft);font-size:13.5px;line-height:1.5}
+
+/* ── Importação de extrato ── */
+#drop{border:2px dashed var(--border);border-radius:12px;padding:26px 20px;text-align:center;background:#f7fafd;box-shadow:inset 0 2px 6px rgba(30,64,128,.06);transition:all .18s;cursor:pointer}
+#drop.sobre{border-color:#3070c8;background:#e8f0fa;box-shadow:0 0 0 4px rgba(48,112,200,.14),var(--sombra-2)}
+#drop .ico{font-size:34px;line-height:1}
+#drop .t{font-size:15px;font-weight:700;color:#1a3560;margin:8px 0 3px}
+#drop .s{font-size:12.5px;color:var(--soft);line-height:1.5}
+.sem{display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.sem.v{background:#27a96c} .sem.a{background:#e8b84b} .sem.r{background:#d64545} .sem.c{background:#a0c0e8}
+tr.dup{opacity:.55}
+.resumo-imp{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.resumo-imp span{font-size:12.5px;font-weight:700;padding:6px 12px;border-radius:20px;display:inline-flex;align-items:center;gap:7px}
+
+/* ── Modo revisão (post-its) · só do protótipo ── */
+.flutua{position:fixed;right:16px;z-index:900;padding:10px 16px;border-radius:22px;border:none;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 5px rgba(10,22,40,.22),0 10px 26px rgba(10,22,40,.30);transition:box-shadow .15s,transform .15s;display:inline-flex;align-items:center;gap:7px}
+.flutua:hover{transform:translateY(-2px);box-shadow:0 4px 9px rgba(10,22,40,.24),0 16px 36px rgba(10,22,40,.34)}
+#btn-fin{bottom:16px;background:#1e4080;color:#fff}
+#btn-fin:hover{background:#1a3560}
+#btn-fin.on{background:#27a96c}
+#btn-rev{bottom:64px;background:#fff;color:#1a3560;border:1.5px solid var(--border)}
+#btn-rev:hover{background:#e8f0fa}
+#btn-rev.on{background:#e8b84b;color:#3a2c00;border-color:#d9a92c}
+body.robo-aberto #btn-fin,body.robo-aberto #btn-rev{display:none}
+
+/* ── Barra lateral do Robô Caixa ── */
+.gaveta-lateral{position:fixed;top:0;right:0;bottom:0;width:430px;max-width:94vw;background:#fff;border-left:1px solid var(--border);box-shadow:-2px 0 6px rgba(10,22,40,.10),-16px 0 48px rgba(10,22,40,.26);z-index:960;display:flex;flex-direction:column;transform:translateX(102%);transition:transform .22s ease}
+.gaveta-lateral.aberta{transform:translateX(0)}
+.gl-cab{background:linear-gradient(90deg,#1a3560,#1e4080);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;box-shadow:0 3px 12px rgba(10,22,40,.26);position:relative;z-index:1}
+.gl-cab .t{font-size:16px;font-weight:700;line-height:1.15}
+.gl-cab .s{font-size:11.5px;color:#a0c0e8;margin-top:2px}
+.gl-cab .fechar{margin-left:auto;color:#a0c0e8;font-size:26px}
+.gl-cab .fechar:hover{color:#fff}
+.gl-corpo{padding:14px 16px 22px;overflow-y:auto;flex:1}
+.gl-fundo{position:fixed;inset:0;background:rgba(10,22,40,.22);z-index:950;display:none}
+.gl-fundo.aberto{display:block}
+@media(max-width:520px){.gaveta-lateral{width:100%}}
+.postit{position:absolute;z-index:850;width:210px;background:#fff8c4;border:1px solid #e2d47a;border-radius:8px;box-shadow:0 2px 4px rgba(10,22,40,.14),0 10px 24px rgba(10,22,40,.26);padding:8px 10px;font-size:12.5px;color:#4a3f00}
+.postit .cab{display:flex;align-items:center;gap:6px;font-weight:700;font-size:11px;margin-bottom:5px}
+.postit .pega{cursor:move;flex:1;user-select:none}
+.postit textarea{width:100%;border:none;background:transparent;resize:vertical;font-family:inherit;font-size:12.5px;color:#4a3f00;outline:none;min-height:52px}
+.postit .x{background:#fff;border:1px solid #e2c9c9;border-radius:5px;color:#a02020;font-family:inherit;font-weight:700;cursor:pointer;font-size:10.5px;padding:2px 7px;flex-shrink:0}
+.postit .x:hover{background:#fbeaea}
+body.revisao{cursor:crosshair}
+
+/* ── Menu do botão direito · o jeito Excel de mexer na linha ──
+   O CFO e o CEO vivem no Excel: ali a linha se resolve com o botão direito.
+   Aqui é a mesma gramática, com os verbos deste sistema. */
+.ctx-menu{position:fixed;z-index:1200;min-width:250px;max-width:330px;background:#fff;border:1px solid #b9cce4;border-radius:9px;box-shadow:var(--sombra-alta);padding:5px;user-select:none}
+.ctx-menu .ct{padding:7px 11px 8px;font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctx-item{display:flex;align-items:center;gap:9px;width:100%;padding:7px 11px;border:none;background:none;font-family:inherit;font-size:13.5px;color:#1a2a3a;text-align:left;border-radius:6px;cursor:pointer;white-space:nowrap}
+.ctx-item .ic{width:17px;text-align:center;flex-shrink:0}
+.ctx-item .tx{overflow:hidden;text-overflow:ellipsis}
+.ctx-item .at{margin-left:auto;padding-left:20px;font-size:11.5px;color:var(--soft);flex-shrink:0}
+.ctx-item:hover,.ctx-item.sel{background:#e8f0fa}
+.ctx-item.del{color:#a02020}
+.ctx-item.del:hover,.ctx-item.del.sel{background:#fbeaea}
+.ctx-item[disabled]{color:#a8b8ca;cursor:default}
+.ctx-item[disabled] .at{color:#b8c6d6}
+.ctx-item[disabled]:hover{background:none}
+.ctx-sep{height:1px;background:#e2ebf5;margin:5px 9px}
+/* a linha em que o menu está agindo fica marcada, como a seleção do Excel */
+tr.alvo-ctx>td{background:#dbe9f8!important;box-shadow:inset 3px 0 0 #1e4080}
+/* ── Recado curto que aparece e some (copiou, duplicou, moveu) ── */
+.aviso-flutua{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:1300;background:#102040;color:#fff;font-size:13.5px;font-weight:600;padding:10px 20px;border-radius:22px;box-shadow:0 4px 10px rgba(10,22,40,.28),0 16px 38px rgba(10,22,40,.34);opacity:0;transition:opacity .18s;pointer-events:none;max-width:86vw;text-align:center}
+.aviso-flutua.on{opacity:1}
+
+/* ── Dif. R$ e Var. % congeladas na direita ──
+   Com o ano inteiro na tela a tabela passa a rolar de lado, e as duas colunas
+   que importam para decidir seriam as primeiras a sumir. Elas ficam presas na
+   borda, como "congelar painéis" do Excel · rolar os meses não tira a
+   diferença da vista. Coluna presa precisa de fundo próprio: sem isso o
+   número de baixo aparece atravessado por ela. */
+/* precisa ser mais específico que a regra do puxador (.comp-quadro .fam-table
+   thead th{position:relative}), senão a coluna nunca chega a congelar */
+.comp-quadro .fam-table td.fix,.comp-quadro .fam-table th.fix,
+.comp-quadro .mini-table td.fix,.comp-quadro .mini-table th.fix,
+.cc-dif,.cc-var{position:sticky;z-index:4}
+.comp-quadro td.fixD,.comp-quadro th.fixD,.cc-dif{right:var(--cV,100px)}
+.comp-quadro td.fixV,.comp-quadro th.fixV,.cc-var{right:0}
+.comp-quadro td.fixD,.comp-quadro th.fixD,.cc-dif{box-shadow:-7px 0 11px -7px rgba(10,22,40,.30)}
+.comp-quadro .fam-table thead th.fix{background:var(--resumo-chapado)}
+.comp-quadro .fam-table tbody td.fix{background:#fff}
+.comp-quadro .fam-table tr.linha-nat:hover td.fix,
+.comp-quadro .fam-table tr.linha-nat.aberta td.fix{background:#e8f0fa}
+.comp-quadro .fam-table tr.subtotal td.fix{background:#f2f7fd}
+.comp-quadro .fam-table tr.grupo td.fix{background:var(--resumo-chapado)}
+.comp-quadro .fam-table tr.respiro td.fix{background:#fff}
+/* coluna presa tem fundo proprio, e ele tem de ser o da linha: com o fundo
+   branco fixo, a linha recuada aparecia cortada ao passar por baixo dela */
+.comp-quadro .fam-table tr.n2>td.fix{background:#f4f9fe}
+.comp-quadro .fam-table tr.n3>td.fix{background:#fbfdff}
+.comp-quadro .fam-table tr.cp:hover>td.fix,.comp-quadro .fam-table tr.cp.aberta>td.fix{background:#e8f0fa}
+.comp-quadro .fam-table tr.lanc:hover>td.fix{background:#f2f7fd}
+.cc-dif,.cc-var{background:var(--resumo-chapado)}
+.cc-topo>div:nth-last-child(2),.cc-topo>div:last-child{position:sticky;z-index:4;background:var(--resumo-chapado)}
+.cc-topo>div:nth-last-child(2){right:var(--cV,100px);box-shadow:-7px 0 11px -7px rgba(10,22,40,.30)}
+.cc-topo>div:last-child{right:0}
+/* no papel não há rolagem: coluna presa só atrapalharia a quebra de página */
+@media print{.comp-quadro td.fix,.comp-quadro th.fix,.cc-dif,.cc-var,
+  .cc-topo>div:nth-last-child(2),.cc-topo>div:last-child{position:static!important;box-shadow:none!important}}
+
+/* ── A célula vazia do nível 3, que espera um lançamento ──
+   Ela precisa parecer casa vazia de planilha, não buraco: a travinha some no
+   passar do mouse e no lugar aparece o convite. Sem isso ninguém descobre que
+   dá para digitar ali. */
+.comp-quadro td.vazia{cursor:cell}
+.comp-quadro td.vazia:hover{background:#eef6ff;box-shadow:inset 0 0 0 1.5px #7fb0ee}
+.comp-quadro td.vazia:hover .tracinho{visibility:hidden}
+.comp-quadro td.vazia:hover::after{content:'digitar';position:absolute;right:10px;
+  font-size:10.5px;font-weight:700;color:#2f63c4;letter-spacing:.3px}
+.comp-quadro td.vazia{position:relative}
+.comp-quadro td.vazia .tracinho{color:var(--soft)}
+
+/* ── Seletor de meses da tela ── */
+.chips-mes{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip-mes{padding:6px 12px;border-radius:18px;border:1.5px solid var(--border);background:#fff;color:#1a3560;
+  font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.chip-mes:hover{background:#e8f0fa;border-color:#3070c8}
+.chip-mes.on{background:#1e4080;border-color:#1e4080;color:#fff}
+.chip-sep{width:1px;height:20px;background:var(--border);margin:0 3px}
+.chip-conta{font-size:11.5px;color:var(--soft);white-space:nowrap}
+/* o seletor de meses ocupa a linha inteira: são muitos botões, e quebrar no
+   meio deles é o que embaralhava a leitura da barra */
+.filter-group.linha-cheia{flex:1 1 100%}
+.par-comp{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+.par-comp .fam-input{min-width:126px;max-width:168px;padding-right:6px}
+.seta-par{color:#3070c8;font-weight:700}
+.ano-bloco{border:1px solid var(--border);border-radius:9px;margin-bottom:10px;overflow:hidden}
+.ano-tit{background:#e8f0fa;padding:8px 12px;font-size:13px;font-weight:700;color:#1a3560;
+  display:flex;align-items:center;gap:8px}
+.ano-tit .btn-mini{margin-left:0}
+.ano-tit .btn-mini:first-of-type{margin-left:auto}
+.ano-meses{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;padding:10px 12px}
+.mes-check{display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--border);
+  border-radius:7px;cursor:pointer;font-size:13px;background:#fff}
+.mes-check:hover{background:#f2f7fd}
+.mes-check small{margin-left:auto;color:var(--soft);font-size:11px;white-space:nowrap}
+
+/* ── A faixa de trimestre em cima dos meses ── */
+.comp-quadro .fam-table thead tr.faixa-tri th.tri{text-align:center;font-size:11px;letter-spacing:1.2px;
+  color:#a0c0e8;border-left:1px solid rgba(255,255,255,.16);border-right:1px solid rgba(255,255,255,.16);
+  padding-bottom:6px}
+.comp-quadro .fam-table thead tr.faixa-tri th[rowspan]{vertical-align:bottom}
+/* a coluna do par comparado, marcada do quadro escuro ate o ultimo lancamento */
+.comp-quadro td.par,.comp-quadro th.par{background:rgba(48,112,200,.07)}
+/* O tingido claro do par so vale no cabecalho ESCURO da tabela de cima.
+   Solto, ele pegava tambem o cabecalho claro das gavetas e o deixava quase
+   transparente, virando uma mancha escura por cima do nome do mes. */
+.comp-quadro .fam-table thead th.par{background:rgba(255,255,255,.09)}
+.comp-quadro .mini-table thead th.par{background:#dcebfb}
+.comp-quadro td.tot,.comp-quadro th.tot{background:rgba(232,184,75,.13);font-weight:700}
+.comp-quadro thead th.tot{background:rgba(232,184,75,.16)}
+.cc-num.par{background:rgba(255,255,255,.06)}
+.cc-num.tot{background:rgba(232,184,75,.10);color:#f0d089}
+.cc-topo>div.par{color:#d0e4f5}
+.cc-topo>div.tot{color:#e8b84b}
+
+/* ── Assinatura · fecha toda pagina, na tela e no papel ── */
+.credito{text-align:center;font-size:12px;color:var(--soft);padding:6px 20px 24px;letter-spacing:.2px}
+.credito .linha{display:inline-block;border-top:1px solid var(--border);padding-top:10px;min-width:300px}
+.credito b{color:#1a3560;font-weight:700}
+.credito-papel{display:none}
+
+/* ── A barra de cima, em tamanho de sistema ──
+   Ela é comando, não é conteúdo. No notebook os botões grandes comiam a altura
+   que faz falta para a tabela, e ainda sobrava vazio na direita porque nada
+   nela precisa daquele tamanho. Encolhida, a linha de ações cabe inteira e o
+   PDF para de ficar sozinho numa segunda linha. Só vale dentro da .filter-row:
+   os mesmos botões dentro dos modais continuam do tamanho de sempre. */
+.filter-row{gap:9px;padding:10px 14px;margin-bottom:12px;border-radius:9px}
+.filter-row .filter-group{gap:3px}
+.filter-row .filter-label{font-size:9.5px;letter-spacing:.7px}
+.filter-row .fam-input{font-size:12.5px;padding:5px 8px;border-width:1px;border-radius:6px}
+.filter-row .btn-clear{padding:5px 11px;font-size:12px;border-width:1px;border-radius:6px}
+.filter-row .btn-secondary{padding:5px 11px;font-size:12.5px;gap:5px;border-width:1px;border-radius:6px;
+  box-shadow:0 1px 2px rgba(30,64,128,.10)}
+.filter-row .btn-secondary:hover{transform:none;box-shadow:0 1px 3px rgba(30,64,128,.18)}
+.acoes-tela{gap:6px;padding-top:9px}
+.chip-mes{padding:4px 10px;font-size:12px;border-width:1px}
+.chip-sep{height:17px}
+.chip-conta{font-size:11px}
+.par-comp{gap:5px}
+.par-comp .fam-input{min-width:110px;max-width:148px}
+
+/* ── O botão da HP, na cor da máquina de verdade ──
+   Ele também se arrasta (data-arrasta): parado no canto de baixo, junto dos
+   outros dois, ele tapa justamente as últimas linhas da tabela. */
+#btn-calc{bottom:112px;padding:8px 15px;background:linear-gradient(180deg,#3c3c3f,#1d1d1f);
+  color:#eee;border:1px solid #0c0c0d;cursor:grab;touch-action:none;gap:6px}
+#btn-calc:hover{background:linear-gradient(180deg,#4a4a4e,#262629)}
+#btn-calc:active{cursor:grabbing}
+#btn-calc b{color:#e0a63a;font-size:13.5px;letter-spacing:.5px}
+.hp-logo{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:700;
+  font-size:17px;line-height:1;letter-spacing:-1.5px;color:#f2f2f2}
+body.calc-aberta #btn-calc{display:none}
+body.arrastando-calc{user-select:none;cursor:grabbing}
+
+/* ── A HP-12C, copiada da máquina ──
+   Corpo preto, placa dourada escovada em cima com o visor e o selo hp 12C, o
+   teclado num campo preto cercado por um fio dourado, e HEWLETT·PACKARD no pé.
+   Todas as teclas são pretas: as únicas coloridas são o f (laranja) e o g
+   (azul). O que muda de cor é a LEGENDA · laranja acima da tecla, branca na
+   tecla, azul no rodapé dela. */
+/* 470px, nao 640. Ela fica POR CIMA da tabela, e a 640 tapava as colunas de
+   valor justo quando a pessoa quer somar linhas · que e a hora em que ela mais
+   precisa ver a tabela e a calculadora ao mesmo tempo. */
+.hp-janela{position:fixed;z-index:970;width:470px;max-width:97vw;display:none;
+  background:#121213;border:1px solid #000;border-radius:9px;padding:7px;
+  box-shadow:0 8px 20px rgba(0,0,0,.42),0 26px 64px rgba(0,0,0,.50)}
+.hp-janela.aberta{display:block}
+
+/* a placa de cima, em metal dourado escovado · é ela que se arrasta */
+.hp-placa{position:relative;display:flex;align-items:center;gap:12px;padding:9px 12px;
+  border-radius:4px;cursor:grab;touch-action:none;
+  background:linear-gradient(180deg,#e2d6a6,#cdbe86 62%,#bcab72);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(0,0,0,.22)}
+/* o escovado: fios finíssimos no sentido do comprimento */
+.hp-placa::before{content:'';position:absolute;inset:0;border-radius:4px;pointer-events:none;
+  background:repeating-linear-gradient(90deg,rgba(255,255,255,.16) 0 1px,transparent 1px 3px);opacity:.5}
+body.arrastando-calc .hp-placa{cursor:grabbing}
+
+.hp-lcd{flex:1;background:linear-gradient(180deg,#cfcda8,#c2c19c);border-radius:2px;
+  padding:4px 12px 3px;position:relative;z-index:1;
+  border:1px solid #8d8a63;box-shadow:inset 0 2px 6px rgba(0,0,0,.30),0 0 0 3px #d8c98f}
+.hp-x{font-family:Consolas,'Courier New',monospace;font-size:20px;font-weight:700;color:#14170e;
+  text-align:right;letter-spacing:1.5px;line-height:1.2;min-height:25px;word-break:break-all}
+.hp-x i,.hp-x sup{font-style:normal}
+.hp-flags{display:flex;align-items:center;gap:9px;font-size:7px;font-weight:700;letter-spacing:1px;
+  color:#14170e;min-height:10px}
+.hp-flags i{font-style:normal;visibility:hidden}
+.hp-flags i.on{visibility:visible}
+.hp-eco{margin-left:auto;font-weight:600;letter-spacing:0;font-size:9.5px;color:#41462f;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:66%}
+
+/* o selo hp 12C, no canto da placa */
+.hp-selo{position:relative;z-index:1;width:34px;flex-shrink:0;text-align:center;
+  background:linear-gradient(180deg,#2c2c2e,#141415);border-radius:3px;padding:2px 0 3px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.10)}
+.hp-selo i{display:block;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:700;
+  font-size:12px;line-height:1;letter-spacing:-1.2px;color:#e6dcb4}
+.hp-selo b{display:block;font-size:7px;font-weight:700;letter-spacing:1.1px;color:#c9b477;margin-top:1px}
+.hp-fechar{position:absolute;top:2px;right:3px;z-index:2;background:none;border:none;color:#6b6242;
+  font-size:17px;line-height:1;cursor:pointer;font-family:inherit;padding:0 3px}
+.hp-fechar:hover{color:#1a1a1a}
+
+/* o campo preto do teclado, com o fio dourado em volta */
+.hp-campo{margin-top:9px;padding:8px 9px 5px;border:1px solid #a99553;border-radius:3px;background:#0d0d0e}
+.hp-teclado{display:grid;grid-template-columns:repeat(10,1fr);column-gap:5px;row-gap:2px;align-items:end}
+.hp-marca{text-align:center;font-size:8.5px;font-weight:700;letter-spacing:3px;color:#e8e6df;
+  margin-top:5px;padding-bottom:1px}
+.hp-marca span{color:#c9b477}
+
+/* legenda laranja do f, impressa no corpo acima da tecla */
+.hp-lf{font-size:6px;font-weight:700;color:#e8862a;text-align:center;letter-spacing:.1px;
+  line-height:1;padding-bottom:2px;white-space:nowrap;overflow:hidden}
+/* os arcos que amarram BOND, DEPRECIATION e CLEAR */
+.hp-cinta{display:flex;align-items:center;justify-content:center;gap:4px;height:8px;
+  font-size:5.5px;font-weight:700;color:#e8862a;letter-spacing:.9px;white-space:nowrap}
+.hp-cinta::before,.hp-cinta::after{content:'';flex:1;height:1px;background:#e8862a;
+  box-shadow:0 3px 0 -2px #e8862a}
+
+.hp-tecla{position:relative;padding:5px 1px 2px;border-radius:3px;border:none;
+  background:linear-gradient(180deg,#37373a,#191919 62%,#232326);color:#f4f4f4;
+  font-family:inherit;font-size:10px;font-weight:600;cursor:pointer;line-height:1;text-align:center;
+  box-shadow:0 2px 0 #000,0 3px 5px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.10)}
+.hp-tecla:hover{filter:brightness(1.35)}
+.hp-tecla:active{transform:translateY(2px);box-shadow:0 0 0 #000,inset 0 1px 3px rgba(0,0,0,.6)}
+.hp-tecla .tx{display:block;min-height:11px}
+.hp-tecla .tx i{font-style:italic;font-family:Georgia,'Times New Roman',serif}
+.hp-tecla .tx sup{font-size:.7em;font-style:italic}
+.hp-tecla .lg{display:block;font-size:6px;font-weight:700;color:#5fc0ee;letter-spacing:.2px;
+  line-height:1;margin-top:2px;min-height:7px}
+.hp-tecla.grande .tx{font-size:13px}
+/* o f e o g são as duas únicas teclas coloridas da máquina */
+.hp-tecla.pf{background:linear-gradient(180deg,#f0972e,#d0761a);color:#231202}
+.hp-tecla.pg{background:linear-gradient(180deg,#68c2ee,#3d9ed2);color:#04202f}
+.hp-tecla.pf.ligada,.hp-tecla.pg.ligada{filter:brightness(1.4);box-shadow:0 0 0 2px #fff inset,0 2px 0 #000}
+/* o ENTER de duas fileiras, com o nome de pé, como no aparelho */
+.hp-tecla.alto{padding:5px 1px 3px}
+.hp-tecla.alto .tx{writing-mode:vertical-rl;text-orientation:upright;letter-spacing:-2.5px;
+  margin:0 auto;font-size:9px;min-height:0}
+.hp-tecla.alto .lg{writing-mode:horizontal-tb;margin-top:4px}
+
+/* a pilha e os cinco registradores, FORA do corpo da máquina */
+.hp-espia{display:flex;flex-direction:column;gap:2px;margin-top:8px;padding:0 2px}
+.hp-pilha,.hp-regs{display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px;
+  font-size:9px;color:#86868c;font-variant-numeric:tabular-nums}
+.hp-pilha b{color:#dcdce0;font-weight:700;margin-left:4px}
+.hp-regs b{color:#e0a63a;font-weight:700;margin-left:4px}
+.hp-regs .btn-mini{padding:2px 8px;font-size:10.5px;background:#2c2c30;color:#e2e2e4;border-color:#43434a}
+.hp-regs .btn-mini:first-of-type{margin-left:auto}
+.hp-regs .btn-mini:hover{background:#3c3c42}
+
+@media(max-width:500px){
+  .hp-janela{width:97vw;padding:6px}
+  .hp-teclado{column-gap:3px}
+  .hp-tecla{font-size:9.5px;padding:5px 0 2px}
+  .hp-tecla .lg,.hp-lf{font-size:5.5px}
+  .hp-x{font-size:18px}
+  .hp-marca{font-size:9px;letter-spacing:3px}
+}
+@media print{.hp-janela{display:none!important}}
+
+/* ── Trilha de auditoria ── */
+.aud-filtros{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
+.aud-filtros .fam-input{min-width:120px}
+.aud-wrap{max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:8px}
+.aud-tab{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff}
+.aud-tab th{background:var(--resumo-chapado);color:#fff;text-align:left;padding:8px 10px;font-size:10.5px;
+  text-transform:uppercase;letter-spacing:.7px;position:sticky;top:0;z-index:2;white-space:nowrap}
+.aud-tab td{padding:7px 10px;border-bottom:1px solid #e6eef7;vertical-align:top;line-height:1.45}
+.aud-tab tr:last-child td{border-bottom:none}
+.aud-tab tr:hover td{background:#f2f7fd}
+.aud-tab .quando{white-space:nowrap;color:var(--soft);font-variant-numeric:tabular-nums}
+.aud-tab .quem{white-space:nowrap;font-weight:600;color:#1a3560}
+.aud-de{color:#a02020}
+.aud-para{color:#166b45;font-weight:600}
+.aud-tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:10.5px;font-weight:700;white-space:nowrap}
+.aud-tag.inclusao{background:#dff3e8;color:#166b45}
+.aud-tag.alteracao{background:#e8f0fa;color:#1e4080}
+.aud-tag.exclusao{background:#fbe3e3;color:#a02020}
+.aud-tag.importacao{background:#fff2d6;color:#7a5600}
+.aud-tag.sistema{background:#f2ecfb;color:#4a2d7a}
+.aud-resumo{font-size:12.5px;color:var(--soft);margin-top:10px;line-height:1.6}
+
+/* ── Impressão / PDF (Ctrl+P → Salvar como PDF) ── */
+.so-impressao{display:none}
+@media print{
+  @page{size:A4 landscape;margin:10mm}
+  body{background:#fff;font-size:11.5px}
+  .topo{position:static;box-shadow:none}
+  .flutua,.gaveta-lateral,.gl-fundo,.postit,footer,.section-title .acoes,.sel-mes,
+  .filter-row,.modal-header .fechar,.modal-rodape,#drop,.dica-tela,
+  .ctx-menu,.aviso-flutua,.abas,.faixa-simulacao .acoes-aba{display:none!important}
+  /* A assinatura fecha TODA folha impressa: fixa no rodape, ela se repete em
+     cada pagina do PDF · o rodape da tela, esse sim, fica de fora. */
+  .credito-papel{display:block!important;position:fixed;left:0;right:0;bottom:0;
+    text-align:center;font-size:9px;color:#6080a0;padding:3px 0;border-top:1px solid #c5d5e8;background:#fff}
+  .credito-papel b{color:#1a3560}
+  @page{margin-bottom:14mm}
+  .comp-quadro{overflow:visible!important}
+  .comp-quadro>.cc,.comp-quadro>table{min-width:0!important}
+  .comp-quadro .fam-table thead tr.faixa-tri th.tri{color:#fff}
+  td.par,th.par,td.tot,th.tot{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .so-impressao{display:block;margin-bottom:10px}
+  *{box-shadow:none!important}
+  body{background-image:none!important}
+  .card-panel,.comp-quadro{break-inside:avoid}
+  .fam-table-wrap{overflow:visible!important;max-height:none!important;border:1px solid #c5d5e8}
+  .fam-table{font-size:10.5px}
+  .fam-table thead th{padding:6px 8px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .fam-table tbody td{padding:5px 8px}
+  tr.grupo td,.cc,.badge,.barra i{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  tr{break-inside:avoid}
+  .modal-overlay{position:static;background:none;padding:0;display:block}
+  .modal-box{max-width:100%;max-height:none;overflow:visible;box-shadow:none;border:none;padding:0;border-radius:0}
+  /* imprimindo a tela: some qualquer modal que esteja por cima */
+  body.imprimindo-painel #modais{display:none!important}
+  /* imprimindo uma janela (a trilha de auditoria): some a tela de trás, e a
+     tabela para de ser um quadro com rolagem para virar folha corrida */
+  body.imprimindo-modal .topo,body.imprimindo-modal #comp-corpo,
+  body.imprimindo-modal #faixa-sim{display:none!important}
+  .aud-wrap{max-height:none!important;overflow:visible!important;border:none}
+  .aud-tab th{position:static}
+  .aud-tab,.aud-tab td{font-size:9.5px}
+  .aud-tab tr{break-inside:avoid}
+  .aud-filtros,.aud-resumo{display:none!important}
+}
+
+/* ── Responsivo (mesmos cortes do CRM) ── */
+/* LARGURA, nao altura. A regra antiga era
+   `@media(max-width:768px),(max-height:600px)` · a segunda metade dizia "tela
+   baixa e celular deitado". Dentro do CRM isso passou a ser falso: o cabecalho,
+   os dois tickers e as abas comem tanta altura que o iframe fica com menos de
+   600px num notebook comum, e a tela inteira virava celular · o modal abria de
+   ponta a ponta e os campos empilhavam um por linha. Tela baixa e apertada na
+   vertical, nao estreita na horizontal. */
+@media(max-width:768px){
+  body{font-size:14px}
+  /* fundo fixo engasga em navegador de celular: aqui ele rola junto */
+  body{background-attachment:scroll}
+  .topo{padding:10px 12px} .topo h1{font-size:17px}
+  .logo{width:36px;height:36px;border-radius:9px;font-size:19px}
+  .topo .sub{font-size:10px;letter-spacing:1.6px}
+  .ctx{display:none}
+  .wrap{padding:14px 12px 60px}
+  .fam-table{font-size:13px} .fam-table thead th{padding:9px 10px} .fam-table tbody td{padding:8px 10px}
+  .card-panel{padding:16px} .section-title{font-size:14px}
+  .section-title .acoes{width:100%;margin-left:0}
+  .section-title .acoes button{flex:1 1 auto;justify-content:center}
+  .form-grid{grid-template-columns:1fr} .form-field.full{grid-column:1}
+  .modal-overlay{align-items:flex-end;padding:0}
+  .modal-box{max-width:100%;border-radius:14px 14px 0 0;max-height:94vh;padding:18px}
+  .filter-row{padding:12px 14px;gap:10px} .filter-group{flex:1 1 150px}
+}
+
+/* O que realmente depende de tela baixa: o modal nao pode passar da janela.
+   Largura e colunas ficam de fora · e por isso que esta regra e separada. */
+@media(max-height:600px){
+  .modal-box{max-height:94vh;padding:18px}
+  .modal-overlay{padding:10px}
+}
+@media(max-width:560px){ .badge.var{min-width:74px} }
+</style>
+</head>
+<body>

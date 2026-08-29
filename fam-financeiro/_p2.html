@@ -1,0 +1,113 @@
+
+<header class="topo">
+  <div class="marca">
+    <div class="logo">F</div>
+    <div>
+      <h1>FAM Seguradora</h1>
+      <div class="sub">Controle Financeiro</div>
+    </div>
+  </div>
+  <div class="topo-dir">
+    <div class="ctx">Acompanhamento mensal<br><span id="topo-mes">-</span></div>
+    <span class="cfo">CFO: ALDEIR</span>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="abas"></div>
+  <div id="faixa-sim"></div>
+
+  <!-- cabeçalho que só aparece no papel -->
+  <div class="so-impressao" id="cab-impressao"></div>
+
+  <!-- ═══ Acompanhamento mensal · é a tela, não é mais uma janela ═══ -->
+  <div class="filter-row">
+    <div class="filter-group linha-cheia">
+      <label class="filter-label">Meses na tela</label>
+      <div class="chips-mes" id="sel-meses"></div>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label">Diferença financeira entre</label>
+      <div class="par-comp">
+        <select id="c-a" class="fam-input" onchange="fixarPar(this.value, compB)"></select>
+        <span class="seta-par">→</span>
+        <select id="c-b" class="fam-input" onchange="fixarPar(compA, this.value)"></select>
+        <button class="btn-mini" id="btn-solta-par" onclick="soltarPar()" title="voltar para os dois últimos meses da tela">↺ dois últimos</button>
+      </div>
+    </div>
+    <button class="btn-clear" onclick="inverterPeriodos()">⇄ Inverter</button>
+    <button class="btn-clear" onclick="expandirTudo()">Expandir tudo</button>
+    <button class="btn-clear" onclick="recolherTudo()">Recolher tudo</button>
+    <button class="btn-clear" id="btn-desfazer" style="display:none" onclick="desfazer()">↶ Desfazer</button>
+    <button class="btn-clear" id="btn-refazer" style="display:none" onclick="refazer()">↷ Refazer</button>
+    <span class="acoes-tela">
+      <button class="btn-secondary" data-escreve onclick="novoLancamentoNaTela()">＋ Novo lançamento</button>
+      <button class="btn-secondary" data-escreve onclick="abrirNovaNatureza()">＋ Nova natureza</button>
+      <button class="btn-secondary" data-escreve onclick="abrirNovoMes()">📅 Novo mês</button>
+      <button class="btn-secondary" data-escreve onclick="abrirImportacao()">📥 Importar extrato</button>
+      <button id="btn-sim" class="btn-secondary" data-escreve onclick="abrirSimulador()">🧪 Simulador</button>
+      <button class="btn-secondary" onclick="imprimirTela()">🖨️ PDF</button>
+    </span>
+  </div>
+
+  <div id="comp-corpo" data-ctx="tabela"></div>
+
+  <p class="dica-tela" style="font-size:12.5px;color:var(--soft);margin-top:12px;line-height:1.6">
+    <b>Todos os meses cabem na tela.</b> Escolha em “Meses na tela”, aqui em cima, quantos aparecem: eles entram
+    em ordem de calendário. O <b>botão direito na tela</b> abre o resto: agrupar por trimestre, escolher mês a
+    mês e a trilha de auditoria.
+    A <b>Dif. R$</b> e a <b>Var. %</b> comparam sempre <b>dois</b> meses (por padrão os dois últimos da tela),
+    e as colunas desse par ficam marcadas · comparar tudo com tudo não é comparação.
+    <br>Clique numa conta para ver as empresas e grupos dela · clique na empresa para abrir os lançamentos.
+    A largura das colunas se ajusta arrastando a borda do título, como no Excel (dois cliques na borda volta ao tamanho de fábrica).
+    Nos lançamentos, <b>dois cliques na descrição ou no valor</b> corrigem ali mesmo, e <b>dois cliques na casa vazia</b>
+    lançam aquele mesmo lançamento no mês que ainda não o teve. Tudo se desfaz com <b>Ctrl+Z</b>.
+    Conta que existe num mês e não no outro <b>continua aparecendo</b>, com “zerou” ou “novo”: sumir da tabela é o que esconde informação.
+    <br><b>Como no Excel:</b> clique com o <b>botão direito</b> em qualquer linha para inserir, editar, duplicar, copiar ou excluir.
+  </p>
+</div>
+
+<!-- ═══ Botões flutuantes ═══ -->
+<button id="btn-calc" class="flutua" data-arrasta="btn-calc" onclick="alternarCalc()"
+        title="a HP-12C · arraste este botão para onde ele não atrapalhar"><span class="hp-logo">hp</span><b>12C</b></button>
+<button id="btn-rev" class="flutua" onclick="alternarRevisao()">📌 Lembretes</button>
+<button id="btn-fin" class="flutua" onclick="alternarRobo()">🤖 Robô Caixa</button>
+
+<!-- ═══ Barra lateral do Robô Caixa ═══ -->
+<div class="gl-fundo" id="robo-fundo" onclick="if(cliqueNasceuEm(this))fecharRobo()"></div>
+<aside class="gaveta-lateral" id="robo" aria-label="Robô Caixa">
+  <div class="gl-cab">
+    <div>
+      <div class="t">🤖 Robô Caixa</div>
+      <div class="s">determinístico · responde com a conta à mostra e nunca chuta número</div>
+    </div>
+    <button class="fechar" onclick="fecharRobo()" aria-label="fechar">×</button>
+  </div>
+  <div class="gl-corpo">
+    <div class="fin-barra">
+      <input id="fin-q" class="fam-input" placeholder="quanto gastei com fornecedores?" onkeydown="if(event.key==='Enter')perguntarFIN()">
+      <button class="btn-primary" onclick="perguntarFIN()">Ir</button>
+    </div>
+    <div class="fin-chips" id="fin-chips"></div>
+    <div id="fin-resp"></div>
+  </div>
+</aside>
+
+<!-- ═══ A HP-12C · a placa dourada de cima é a alça que arrasta a janela ═══ -->
+<div id="hp12c" class="hp-janela" aria-label="HP-12C">
+  <div class="hp-placa" data-arrasta="hp12c" title="arraste daqui para mover a calculadora">
+    <div class="hp-lcd">
+      <div class="hp-x" id="hp-x">0,00</div>
+      <div class="hp-flags" id="hp-flags"></div>
+    </div>
+    <div class="hp-selo"><i>hp</i><b>12C</b></div>
+    <button class="hp-fechar" onclick="fecharCalc()" aria-label="fechar" title="fechar (a tecla ON também fecha)">×</button>
+  </div>
+  <div class="hp-campo">
+    <div class="hp-teclado" id="hp-teclado"></div>
+    <div class="hp-marca">HEWLETT<span>·</span>PACKARD</div>
+  </div>
+  <div class="hp-espia" id="hp-espia"></div>
+</div>
+
+<div id="modais"></div>

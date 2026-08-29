@@ -1,0 +1,233 @@
+
+<script>
+/* ══════════════ TRILHA DE AUDITORIA ══════════════
+   O sistema substitui uma planilha em que ninguém sabia quem tinha mudado o
+   quê. A trilha existe para responder três perguntas, sempre: quando, quem, e
+   de que valor para que valor.
+
+   Ela é append-only: não há botão de apagar registro, nem aqui nem no menu do
+   botão direito. Restaurar um backup não substitui a trilha, JUNTA a do
+   arquivo com a que já estava na máquina · trilha que some ao restaurar
+   backup não é trilha, é enfeite.
+
+   O teto existe porque o navegador tem um limite de espaço. Ao encostar nele o
+   sistema tira os mais antigos e GRAVA um registro dizendo quantos tirou, para
+   o buraco ficar visível em vez de silencioso. Antes disso, avisa para exportar.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const CHAVE_AUD  = 'fam-financeiro-auditoria';
+const CHAVE_QUEM = 'fam-financeiro-usuario';
+const AUD_TETO = 8000, AUD_AVISO = 6000, AUD_PODA = 500;
+
+let AUDITORIA = [];
+let quemUsa = 'Aldeir (CFO)';
+let audAvisou = false;
+
+function carregarAuditoria(){
+  try { const o = JSON.parse(localStorage.getItem(CHAVE_AUD) || '[]'); if (Array.isArray(o)) AUDITORIA = o; } catch(e) {}
+  try { const q = localStorage.getItem(CHAVE_QUEM); if (q) quemUsa = q; } catch(e) {}
+  /* Dentro do CRM quem assina vem da SESSÃO, e o que estiver no navegador não
+     tem voz. Trilha assinada por texto que o próprio usuário edita é registro,
+     não auditoria. O servidor ainda carimba de novo na hora de gravar: aqui é
+     só para a tela mostrar o nome certo. */
+  if (window.FAM_SESSAO && window.FAM_SESSAO.nome) quemUsa = window.FAM_SESSAO.nome;
+}
+function gravarAuditoria(){ try { localStorage.setItem(CHAVE_AUD, JSON.stringify(AUDITORIA)); } catch(e) {} }
+
+/* tipo: inclusao · alteracao · exclusao · importacao · sistema */
+function auditar(tipo, acao, d){
+  d = d || {};
+  const reg = {
+    id: 'A' + Date.now().toString(36) + Math.floor(Math.random() * 900 + 100),
+    ts: new Date().toISOString(),
+    quem: quemUsa,
+    aba: (typeof RAIZ !== 'undefined' && RAIZ) ? nomeDaAba() : 'Principal',
+    tipo, acao,
+    onde: d.onde || '', de: d.de || '', para: d.para || '', detalhe: d.detalhe || '',
+  };
+  AUDITORIA.push(reg);
+
+  if (AUDITORIA.length > AUD_TETO) {
+    const tirados = AUDITORIA.splice(0, AUD_PODA);
+    AUDITORIA.unshift({
+      id: 'A' + Date.now().toString(36) + 'poda',
+      ts: new Date().toISOString(), quem: 'sistema', aba: 'Principal',
+      tipo: 'sistema', acao: 'Trilha podada por falta de espaço',
+      onde: '', de: tirados.length + ' registros mais antigos', para: 'fora da trilha',
+      detalhe: 'De ' + (tirados[0] || {}).ts + ' a ' + (tirados[tirados.length-1] || {}).ts +
+               '. Eles só existem em cópia de segurança exportada antes desta data.',
+    });
+  } else if (AUDITORIA.length > AUD_AVISO && !audAvisou) {
+    audAvisou = true;
+    setTimeout(() => flash('A trilha de auditoria está perto do limite. Exporte o arquivo dela.'), 800);
+  }
+
+  gravarAuditoria();
+  /* a trilha também é dos dois: o registro sobe separado do estado, porque no
+     banco ela é só-inserção e reenviar o mesmo id não duplica nem reescreve */
+  if (typeof nuvemEnfileirarAuditoria === 'function') nuvemEnfileirarAuditoria(reg);
+  return reg;
+}
+
+/* juntar sem duplicar: mesmo id, mesmo registro */
+function juntarAuditoria(lista){
+  const vistos = new Set(AUDITORIA.map(r => r.id));
+  let novos = 0;
+  for (const r of lista) if (r && r.id && !vistos.has(r.id)) { AUDITORIA.push(r); vistos.add(r.id); novos++; }
+  AUDITORIA.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  gravarAuditoria();
+  return novos;
+}
+
+/* ═══════════════ A TELA ═══════════════ */
+let audFiltro = { periodo: 'tudo', tipo: 'tudo', texto: '' };
+
+const audData = ts => {
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getDate()) + '/' + p(d.getMonth()+1) + '/' + d.getFullYear() + '<br><span style="font-size:11px">' + p(d.getHours()) + ':' + p(d.getMinutes()) + '</span>';
+};
+
+function audFiltrada(){
+  const agora = Date.now();
+  const corte = audFiltro.periodo === 'hoje' ? new Date().setHours(0,0,0,0)
+              : audFiltro.periodo === '7'  ? agora - 7  * 864e5
+              : audFiltro.periodo === '30' ? agora - 30 * 864e5 : 0;
+  const t = normalizar(audFiltro.texto);
+  return AUDITORIA.filter(r => {
+    if (corte && new Date(r.ts).getTime() < corte) return false;
+    if (audFiltro.tipo !== 'tudo' && r.tipo !== audFiltro.tipo) return false;
+    if (t && !normalizar([r.acao, r.onde, r.de, r.para, r.detalhe, r.quem, r.aba].join(' ')).includes(t)) return false;
+    return true;
+  }).slice().reverse();          // o mais recente em cima
+}
+
+function abrirAuditoria(){
+  abrirModal(`
+    <div class="modal-header">
+      <div class="modal-title">🧾 Trilha de auditoria<small>append-only: registro que entra não sai · quem, quando, de que valor para qual</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button>
+    </div>
+    <div class="aud-filtros">
+      <div class="filter-group">
+        <label class="filter-label">Período</label>
+        <select class="fam-input" onchange="audFiltro.periodo=this.value;renderAuditoria()">
+          <option value="tudo">Desde o começo</option>
+          <option value="hoje">Hoje</option>
+          <option value="7">Últimos 7 dias</option>
+          <option value="30">Últimos 30 dias</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label">O que aconteceu</label>
+        <select class="fam-input" onchange="audFiltro.tipo=this.value;renderAuditoria()">
+          <option value="tudo">Tudo</option>
+          <option value="inclusao">Inclusões</option>
+          <option value="alteracao">Alterações</option>
+          <option value="exclusao">Exclusões</option>
+          <option value="importacao">Importações</option>
+          <option value="sistema">Sistema</option>
+        </select>
+      </div>
+      <div class="filter-group" style="flex:1 1 200px">
+        <label class="filter-label">Procurar</label>
+        <input class="fam-input" placeholder="conta, empresa, valor, pessoa" oninput="audFiltro.texto=this.value;renderAuditoria()">
+      </div>
+      <div class="filter-group">
+        <label class="filter-label">Quem está usando</label>
+        <button class="btn-clear" onclick="trocarQuemUsa()" id="aud-quem">${esc(quemUsa)}</button>
+      </div>
+    </div>
+    <div class="aud-wrap"><table class="aud-tab" id="aud-tab"></table></div>
+    <div class="aud-resumo" id="aud-resumo"></div>
+    <div class="modal-rodape">
+      <button class="btn-clear esq" onclick="exportarAuditoriaCSV()">📊 Exportar CSV</button>
+      <button class="btn-clear" onclick="exportarAuditoriaJSON()">💾 Exportar arquivo</button>
+      <button class="btn-clear" onclick="imprimirAuditoria()">🖨️ PDF</button>
+      <button class="btn-primary" onclick="fecharModal()">Fechar</button>
+    </div>`, true);
+  renderAuditoria();
+}
+
+function renderAuditoria(){
+  const L = audFiltrada();
+  const cab = `<thead><tr><th>Quando</th><th>Quem</th><th>Aba</th><th>O que</th><th>Onde</th><th>De</th><th>Para</th></tr></thead>`;
+  const corpo = L.length ? L.map(r => `<tr>
+      <td class="quando">${audData(r.ts)}</td>
+      <td class="quem">${esc(r.quem)}</td>
+      <td>${esc(r.aba)}</td>
+      <td><span class="aud-tag ${esc(r.tipo)}">${esc(r.acao)}</span>${r.detalhe ? '<div style="margin-top:4px;color:var(--soft)">' + esc(r.detalhe) + '</div>' : ''}</td>
+      <td>${esc(r.onde)}</td>
+      <td class="aud-de">${esc(r.de)}</td>
+      <td class="aud-para">${esc(r.para)}</td>
+    </tr>`).join('')
+    : `<tr><td colspan="7" class="vazio" style="padding:26px;text-align:center;color:var(--soft)">Nenhum registro com esse filtro.</td></tr>`;
+  document.getElementById('aud-tab').innerHTML = cab + '<tbody>' + corpo + '</tbody>';
+
+  const primeiro = AUDITORIA[0];
+  document.getElementById('aud-resumo').innerHTML =
+    `<b>${L.length}</b> registro(s) na tela de <b>${AUDITORIA.length}</b> na trilha` +
+    (primeiro ? ' · o mais antigo é de ' + fmtData(String(primeiro.ts).slice(0,10)) : '') +
+    `. A trilha vai junto na cópia de segurança e não pode ser apagada por dentro do sistema. ` +
+    `Ela guarda até ${AUD_TETO.toLocaleString('pt-BR')} registros neste navegador: exporte de tempos em tempos.`;
+}
+
+function trocarQuemUsa(){
+  const q = prompt('Quem está usando o sistema neste computador?\nO nome entra em cada registro da trilha.', quemUsa);
+  if (q === null) return;
+  const nome = q.trim();
+  if (!nome || nome === quemUsa) return;
+  const antes = quemUsa;
+  quemUsa = nome;
+  try { localStorage.setItem(CHAVE_QUEM, quemUsa); } catch(e) {}
+  auditar('sistema', 'Trocou quem está usando', { de: antes, para: quemUsa });
+  const b = document.getElementById('aud-quem');
+  if (b) b.textContent = quemUsa;
+  renderAuditoria();
+}
+
+const audCSV = r => [
+  String(r.ts).slice(0,19).replace('T', ' '), r.quem, r.aba, r.tipo, r.acao, r.onde, r.de, r.para, r.detalhe,
+].map(c => '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"').join(';');
+
+function baixarArquivo(nome, texto, tipo){
+  const blob = new Blob([texto], { type: tipo });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+const carimboArquivo = () => {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + p(d.getMonth()+1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+};
+
+function exportarAuditoriaCSV(){
+  const L = audFiltrada();
+  /* BOM na frente: sem ele o Excel em português abre os acentos errados */
+  const txt = '﻿' + ['Quando;Quem;Aba;Tipo;O que;Onde;De;Para;Detalhe', ...L.map(audCSV)].join('\r\n');
+  baixarArquivo('fam-financeiro-auditoria-' + carimboArquivo() + '.csv', txt, 'text/csv;charset=utf-8');
+  flash(L.length + ' registro(s) exportados. O arquivo abre direto no Excel.');
+}
+
+function exportarAuditoriaJSON(){
+  baixarArquivo('fam-financeiro-auditoria-' + carimboArquivo() + '.json',
+    JSON.stringify({ arquivo: 'FAM Financeiro · trilha de auditoria', gravadoEm: new Date().toISOString(), registros: AUDITORIA }, null, 2),
+    'application/json');
+  flash(AUDITORIA.length + ' registro(s) salvos em arquivo.');
+}
+
+function imprimirAuditoria(){
+  const L = audFiltrada();
+  document.getElementById('cab-impressao').innerHTML = cabecalhoImpressao('Trilha de auditoria',
+    L.length + ' registro(s) · filtro: ' +
+    ({ tudo: 'desde o começo', hoje: 'hoje', 7: 'últimos 7 dias', 30: 'últimos 30 dias' }[audFiltro.periodo]) +
+    (audFiltro.tipo !== 'tudo' ? ' · ' + audFiltro.tipo : '') +
+    (audFiltro.texto ? ' · "' + audFiltro.texto + '"' : ''));
+  document.body.classList.add('imprimindo-modal');
+  window.print();
+  setTimeout(() => document.body.classList.remove('imprimindo-modal'), 600);
+}
+</script>

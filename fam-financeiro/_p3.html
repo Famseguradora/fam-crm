@@ -1,0 +1,637 @@
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   FAM Financeiro · Tela 1: Dashboard
+   Protótipo de arquivo único. Design copiado do CRM FAM (app/globals.css).
+   Julho/2026 vem da planilha do Aldeir ("Detalhado 2", 93 lançamentos).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const JULHO = /*__JULHO__*/null;
+
+/* Transferência entre contas próprias da FAM: entra no extrato, mas não é
+   receita nem despesa. A planilha soma tudo junto · aqui o número dela é
+   mantido e a composição fica dita embaixo do card, sem esconder nada. */
+const INTERNAS = ['Transf da LFT para CC', 'Aplicação em Fundo'];
+
+const MESES_PT = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+const rotuloMes = mk => { const [a,m] = mk.split('-'); return MESES_PT[+m-1][0].toUpperCase() + MESES_PT[+m-1].slice(1) + '/' + a; };
+const rotuloCurto = mk => { const [a,m] = mk.split('-'); return MESES_PT[+m-1].slice(0,3) + '/' + a.slice(2); };
+
+/* centavo de arredondamento nao vira "-R$ 0,00" na tela: quem le acha que sobrou algo */
+const fmt  = v => { if (Math.abs(v) < 0.005) v = 0; return (v<0?'-':'') + 'R$ ' + Math.abs(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+const fmtN = v => Math.abs(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtData = d => { const [a,m,x] = d.split('-'); return x+'/'+m+'/'+a.slice(2); };
+/* Regra do CFO, valendo na tela inteira: onde há dinheiro há "R$", e todo
+   número negativo é vermelho. Estes três ajudantes são o único caminho. */
+const ehNeg = v => v < -0.005;
+const clsNeg = v => ehNeg(v) ? ' neg' : '';
+/* diferença sempre com o sinal na frente e com R$ · zero vira travinha.
+   semRS é para a linha de contagem de lançamentos, que não é dinheiro. */
+const fmtDif = (d, semRS) => Math.abs(d) < 0.005 ? '-' : (d > 0 ? '+' : '-') + (semRS ? '' : ' R$ ') + fmtN(d);
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* identidade de lançamento: uma só fonte, para incluir, duplicar e importar */
+const novoId = () => 'L' + Date.now().toString(36) + Math.floor(Math.random()*900+100);
+/* sem acento, minúsculo, espaço único · a chave de comparação de texto do sistema inteiro */
+const normalizar = s => String(s==null?'':s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+
+/* ═══════════════ ESTADO ═══════════════
+   Como numa planilha: existe a aba Principal, que é a verdade, e as abas de
+   Simulação, cada uma uma cópia inteira e independente. RAIZ guarda todas;
+   DB é só um apontador para a aba aberta · o resto do sistema continua
+   escrevendo "DB.meses" sem saber de nada, e é isso que segura o tamanho
+   desta mudança. Trocar de aba é uma linha. */
+const CHAVE = 'fam-financeiro-tela1';
+/* Carimbo da carga de fábrica. Enquanto ele for o mesmo, o que está gravado no
+   navegador vale. Quando muda, o sistema descarta o que havia e sobe de novo
+   só a planilha Matriz · é assim que uma carga nova chega a quem já usa o
+   sistema, sem depender de ninguém clicar em nada. */
+const CARGA = 'matriz-2026-07';
+let RAIZ = null;                  // { versao:2, principal, cenarios:[] }
+let DB = null;                    // aponta para a aba aberta
+let abaAtual = 'principal';
+let mesAtual = '2026-07';
+/* Quais meses aparecem na tela. A diferença financeira continua sendo entre
+   dois meses · o que muda é que agora dá para ver o ano inteiro ao lado,
+   agrupado por trimestre, sem perder a coluna de variação. */
+const CHAVE_VISAO = 'fam-financeiro-visao-meses';
+let visaoMeses = { modo: 'tudo', n: 6, tri: false };   // tudo · ultimos · ano · lista
+let parFixado = false;                     // o par de comparação foi escolhido na mão?
+let abertasComp = new Set();      // contas com a gaveta de empresas aberta
+let abertasCP = new Set();        // empresas com os lançamentos abertos (nível 3)
+
+const clonar = o => JSON.parse(JSON.stringify(o));
+const simulando = () => abaAtual !== 'principal';
+const cenarioAtual = () => (RAIZ.cenarios || []).find(c => c.id === abaAtual) || null;
+const nomeDaAba = () => simulando() ? (cenarioAtual() || {}).nome : 'Principal';
+
+/* A carga de fábrica é a planilha Matriz e nada além dela: julho/2026, os 93
+   lançamentos, as 14 naturezas do Aldeir. Nenhum mês inventado entra aqui ·
+   mês que não veio do extrato nem da mão do CFO não é dado, é enfeite. */
+function baseInicial(){
+  const db = { versao: 1, carga: CARGA, meses: {} };
+  db.meses['2026-07'] = {
+    rotulo: 'Julho/2026',
+    origem: 'planilha Matriz · 2026.07 - Santander - Recebimentos e Pagamentos New',
+    saldoInicial: JULHO.saldoInicial,
+    saldoFinalBancario: JULHO.saldoFinalBancario,
+    simulado: false,
+    lancamentos: JULHO.lancamentos.map(l => ({...l})),
+  };
+  return db;
+}
+
+function carregar(){
+  let o = null;
+  try { o = JSON.parse(localStorage.getItem(CHAVE) || 'null'); } catch(e) {}
+
+  if (o && o.versao === 2 && o.principal) RAIZ = o;
+  /* quem já usava o sistema tem o formato antigo gravado, com os meses na
+     raiz · ele vira a aba Principal sem perder nada e sem pedir nada */
+  else if (o && o.versao === 1 && o.meses) RAIZ = { versao: 2, principal: o, cenarios: [] };
+  else RAIZ = null;
+
+  /* Carga de fábrica diferente da que está gravada: o que havia veio de outra
+     carga e não vale mais. O sistema zera, sobe a Matriz de novo e diz o que
+     fez · sumiço silencioso de dado é o que ninguém perdoa. */
+  const trocouACarga = !!(RAIZ && RAIZ.principal && RAIZ.principal.carga !== CARGA);
+  if (trocouACarga) RAIZ = null;
+
+  if (!RAIZ) {
+    RAIZ = { versao: 2, principal: baseInicial(), cenarios: [] };
+    abaAtual = 'principal';
+    mesAtual = '2026-07';
+    visaoMeses = { modo: 'tudo', n: 6, tri: false }; parFixado = false;
+    abrirAba('principal', true);
+    gravar();
+    auditar('sistema', trocouACarga ? 'Carga de fábrica trocada' : 'Primeira abertura', {
+      detalhe: 'Dados zerados. Subiu só a planilha Matriz: julho/2026, ' + JULHO.lancamentos.length +
+               ' lançamentos, saldo final bancário ' + fmt(JULHO.saldoFinalBancario) + '.',
+    });
+    if (trocouACarga) setTimeout(() => flash('Carga nova: os dados voltaram para a planilha Matriz (julho/2026).'), 500);
+    return;
+  }
+  RAIZ.cenarios = RAIZ.cenarios || [];
+  /* aba que não existe mais (excluída noutra sessão) não pode deixar a tela órfã */
+  if (abaAtual !== 'principal' && !RAIZ.cenarios.some(c => c.id === abaAtual)) abaAtual = 'principal';
+  abrirAba(abaAtual, true);
+  /* a foto de partida · sem ela a PRIMEIRA mudança da sessão não teria de onde
+     voltar, que é justamente a que mais dá vontade de desfazer */
+  estadoAnterior = fotoAgora();
+}
+
+/* ═══════════════ GRAVAR, E DESFAZER ═══════════════
+   gravar() é o funil por onde passa TODA mudança de dado do sistema: 20 lugares
+   chamam, e nenhum outro escreve. Pendurar o desfazer aqui é o que faz ele
+   nascer completo e continuar completo · função nova que gravar não precisa
+   lembrar de nada, e nenhuma mudança escapa por esquecimento.
+
+   Guarda-se uma foto do estado ANTES de cada gravação. A foto leva junto a aba
+   e o mês abertos, senão desfazer devolveria os números certos numa tela
+   olhando para outro lugar.
+
+   O desfazer vive só nesta sessão: fechou a página, acabou. Quem guarda o
+   histórico de verdade é a trilha de auditoria, e ela é append-only · desfazer
+   NÃO apaga o que foi feito, escreve mais uma linha dizendo que desfez. */
+const TETO_DESFAZER = 30;
+let pilhaDesfazer = [], pilhaRefazer = [];
+let estadoAnterior = null;      // foto da última gravação
+let mexendoNaPilha = false;     // desfazer/refazer gravam sem virar novo passo
+
+const fotoAgora = () => ({ json: JSON.stringify(RAIZ), aba: abaAtual, mes: mesAtual });
+const ultimaAcao = () => (AUDITORIA[AUDITORIA.length - 1] || {}).acao || 'a última mudança';
+
+function gravar(){
+  const agora = JSON.stringify(RAIZ);
+  if (!mexendoNaPilha && estadoAnterior && estadoAnterior.json !== agora) {
+    /* o rótulo vem da trilha: em toda mutação o auditar() roda antes do gravar,
+       então o que está na ponta da trilha é exatamente o que se vai desfazer */
+    pilhaDesfazer.push({ ...estadoAnterior, rotulo: ultimaAcao() });
+    if (pilhaDesfazer.length > TETO_DESFAZER) pilhaDesfazer.shift();
+    pilhaRefazer.length = 0;
+  }
+  estadoAnterior = { json: agora, aba: abaAtual, mes: mesAtual };
+  try { localStorage.setItem(CHAVE, agora); } catch(e) {}
+  /* Dentro do CRM, o mesmo caixa é do Marco e do Aldeir: a gravação local
+     continua sendo a que vale na hora, e o envio ao servidor vai atrás. Fora
+     do CRM esta linha não faz nada · o arquivo solto segue como sempre foi. */
+  if (typeof nuvemAgendarEnvio === 'function') nuvemAgendarEnvio();
+  atualizarDesfazer();
+}
+
+function aplicarFoto(foto){
+  mexendoNaPilha = true;
+  RAIZ = JSON.parse(foto.json);
+  RAIZ.cenarios = RAIZ.cenarios || [];
+  abaAtual = (foto.aba === 'principal' || RAIZ.cenarios.some(c => c.id === foto.aba)) ? foto.aba : 'principal';
+  DB = abaAtual === 'principal' ? RAIZ.principal : RAIZ.cenarios.find(c => c.id === abaAtual).db;
+  document.body.classList.toggle('simulando', simulando());
+  mesAtual = DB.meses[foto.mes] ? foto.mes : mesesOrdenados()[0];
+  compA = null; compB = null; parFixado = false;
+  abertasComp.clear(); abertasCP.clear();
+  gravar();
+  mexendoNaPilha = false;
+  fecharModal();
+  render();
+}
+
+function desfazer(){
+  if (!pilhaDesfazer.length) return flash('Não há nada para desfazer nesta sessão.');
+  const foto = pilhaDesfazer.pop();
+  pilhaRefazer.push({ ...fotoAgora(), rotulo: foto.rotulo });
+  /* a trilha não perde nada: o que foi desfeito continua registrado, e o
+     desfazer entra como mais uma linha depois dele */
+  auditar('sistema', 'Desfez: ' + foto.rotulo, { detalhe: 'A ação desfeita continua registrada acima nesta trilha.' });
+  aplicarFoto(foto);
+  flash('Desfeito: ' + foto.rotulo + '. Ctrl+Y refaz.');
+}
+
+function refazer(){
+  if (!pilhaRefazer.length) return flash('Não há nada para refazer.');
+  const foto = pilhaRefazer.pop();
+  pilhaDesfazer.push({ ...fotoAgora(), rotulo: foto.rotulo });
+  auditar('sistema', 'Refez: ' + foto.rotulo, {});
+  aplicarFoto(foto);
+  flash('Refeito: ' + foto.rotulo + '.');
+}
+
+const oQueDesfazer = () => pilhaDesfazer.length ? pilhaDesfazer[pilhaDesfazer.length - 1].rotulo : '';
+const oQueRefazer  = () => pilhaRefazer.length  ? pilhaRefazer[pilhaRefazer.length - 1].rotulo   : '';
+
+/* Os dois botões só aparecem quando há o que desfazer ou refazer, e dizem o
+   quê · botão sempre à mostra e quase sempre inútil é poluição, e o Marco
+   acabou de pedir o contrário disso. */
+function atualizarDesfazer(){
+  const por = (id, texto, quê) => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.style.display = quê ? '' : 'none';
+    b.title = quê ? texto + ': ' + quê : '';
+  };
+  por('btn-desfazer', 'Desfazer', oQueDesfazer());
+  por('btn-refazer', 'Refazer', oQueRefazer());
+}
+
+/* Ctrl+Z desfaz, Ctrl+Y (ou Ctrl+Shift+Z) refaz. Dentro de um campo de texto o
+   Ctrl+Z é do navegador, e tem que continuar sendo: quem está corrigindo uma
+   descrição quer desfazer a LETRA, não o lançamento inteiro. */
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const alvo = e.target;
+  if (alvo && (alvo.tagName === 'INPUT' || alvo.tagName === 'TEXTAREA' || alvo.isContentEditable)) return;
+  const k = String(e.key || '').toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); desfazer(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); refazer(); }
+});
+
+/* ═══════════════ ABAS ═══════════════ */
+function abrirAba(id, semDesenhar){
+  const c = id === 'principal' ? null : (RAIZ.cenarios || []).find(x => x.id === id);
+  if (id !== 'principal' && !c) return;
+  abaAtual = id;
+  DB = c ? c.db : RAIZ.principal;
+  document.body.classList.toggle('simulando', simulando());
+  compA = null; compB = null;                 // cada aba tem os meses dela
+  if (!DB.meses[mesAtual]) mesAtual = mesesOrdenados()[0];
+  abertasComp.clear(); abertasCP.clear();
+  if (!semDesenhar) render();
+}
+
+/* A simulação nasce como cópia inteira da aba em que se está: o CFO parte do
+   que está vendo, mexe à vontade, e a Principal fica exatamente como estava. */
+function novaSimulacao(){
+  RAIZ.cenarios = RAIZ.cenarios || [];
+  const n = RAIZ.cenarios.length + 1;
+  const c = {
+    id: 'C' + Date.now().toString(36) + n,
+    nome: 'Simulação ' + n,
+    nasceuDe: nomeDaAba(),
+    criadoEm: new Date().toISOString(),
+    db: clonar(DB),
+  };
+  RAIZ.cenarios.push(c);
+  auditar('inclusao', 'Simulação criada', { onde: c.nome, de: 'cópia de ' + c.nasceuDe, para: c.nome });
+  gravar();
+  abrirAba(c.id);
+  flash('"' + c.nome + '" criada a partir de ' + c.nasceuDe + '. A Principal ficou intacta.');
+}
+
+function renomearAba(id){
+  const c = (RAIZ.cenarios || []).find(x => x.id === id);
+  if (!c) return;
+  const novo = prompt('Nome desta simulação:', c.nome);
+  if (novo === null) return;
+  const nome = novo.trim();
+  if (!nome) return;
+  const antes = c.nome;
+  c.nome = nome;
+  auditar('alteracao', 'Simulação renomeada', { de: antes, para: nome });
+  gravar(); render();
+}
+
+function excluirAba(id){
+  const c = (RAIZ.cenarios || []).find(x => x.id === id);
+  if (!c) return;
+  if (!confirm('Excluir a simulação "' + c.nome + '"?\nOs números dela se perdem. A Principal não é tocada.')) return;
+  RAIZ.cenarios = RAIZ.cenarios.filter(x => x.id !== id);
+  auditar('exclusao', 'Simulação excluída', { onde: c.nome, de: Object.keys(c.db.meses).length + ' mês(es) simulados', para: 'apagada' });
+  gravar();
+  abrirAba(abaAtual === id ? 'principal' : abaAtual);
+  flash('Simulação "' + c.nome + '" excluída.');
+}
+
+/* levar para a Principal o que a simulação virou · é uma via de mão única e
+   por isso pergunta com todas as letras o que vai ser sobrescrito */
+function promoverSimulacao(id){
+  const c = (RAIZ.cenarios || []).find(x => x.id === id);
+  if (!c) return;
+  if (!confirm('Isto substitui a aba Principal pelos números de "' + c.nome + '".\n' +
+               'O que estiver hoje na Principal se perde. Confirma?')) return;
+  auditar('alteracao', 'Simulação levada para a Principal', {
+    onde: c.nome,
+    de: 'Principal com ' + Object.keys(RAIZ.principal.meses).length + ' mês(es)',
+    para: c.nome + ' com ' + Object.keys(c.db.meses).length + ' mês(es)' });
+  RAIZ.principal = clonar(c.db);
+  gravar();
+  abrirAba('principal');
+  flash('A Principal agora tem os números de "' + c.nome + '".');
+}
+
+function barraAbas(){
+  const aba = (id, nome, sim) =>
+    `<button type="button" class="aba${sim ? ' sim' : ''}${abaAtual === id ? ' ativa' : ''}"
+       onclick="abrirAba('${id}')" ${sim ? `ondblclick="renomearAba('${id}')" title="dois cliques renomeia"` : ''}>
+       ${sim ? '🧪 ' : '📘 '}${esc(nome)}
+       ${sim ? `<span class="x" title="excluir esta simulação" onclick="event.stopPropagation();excluirAba('${id}')">×</span>` : ''}
+     </button>`;
+  return `<div class="abas">
+    ${aba('principal', 'Principal', false)}
+    ${(RAIZ.cenarios || []).map(c => aba(c.id, c.nome, true)).join('')}
+    <button type="button" class="aba-nova" data-escreve onclick="novaSimulacao()" title="cria uma cópia desta aba para simular sem tocar na Principal">＋ Nova simulação</button>
+  </div>`;
+}
+
+/* Zerar é voltar exatamente ao que a planilha Matriz tinha · nem um mês a
+   mais. A trilha de auditoria guarda o que existia antes de sumir. */
+function restaurar(){
+  if (!confirm('Isto apaga TUDO que existe hoje no sistema: meses criados, lançamentos importados, '
+    + 'edições e todas as abas de simulação.\n\n'
+    + 'No lugar sobe só a planilha Matriz (julho/2026, ' + JULHO.lancamentos.length + ' lançamentos). Confirma?')) return;
+  const antes = mesesOrdenados().map(mk => rotuloCurto(mk) + ' (' + DB.meses[mk].lancamentos.length + ')').join(' · ');
+  RAIZ = { versao: 2, principal: baseInicial(), cenarios: [] };
+  abaAtual = 'principal'; DB = RAIZ.principal;
+  document.body.classList.remove('simulando');
+  visaoMeses = { modo: 'tudo', n: 6, tri: false }; parFixado = false; gravarVisao();
+  mesAtual = '2026-07'; compA = null; compB = null;
+  auditar('sistema', 'Sistema zerado para a planilha Matriz',
+    { de: antes, para: 'jul/26 (' + JULHO.lancamentos.length + ')' });
+  gravar();
+  recolherTudo(); fecharModal(); render();
+  flash('Sistema zerado. Só a planilha Matriz está carregada.');
+}
+
+/* ═══════════════ APURAÇÃO · um só caminho para cada número ═══════════════ */
+function apurar(mk){
+  const m = DB.meses[mk];
+  if (!m) return null;
+  const L = m.lancamentos;
+  let entradas = 0, saidas = 0, internasE = 0, internasS = 0;
+  const mapa = new Map();
+  for (const l of L) {
+    if (l.valor > 0) entradas += l.valor; else saidas += l.valor;
+    if (INTERNAS.includes(l.natureza)) { if (l.valor > 0) internasE += l.valor; else internasS += l.valor; }
+    if (!mapa.has(l.natureza)) mapa.set(l.natureza, { natureza: l.natureza, total: 0, qtd: 0 });
+    const n = mapa.get(l.natureza); n.total += l.valor; n.qtd++;
+  }
+  const porNatureza = [...mapa.values()].map(n => ({...n, tipo: n.total >= 0 ? 'entrada' : 'saida', interna: INTERNAS.includes(n.natureza)}));
+  porNatureza.sort((a,b) => Math.abs(b.total) - Math.abs(a.total));
+  const resultado = entradas + saidas;
+  const saldoApurado = m.saldoInicial + resultado;
+  return {
+    mk, mes: m, simulado: !!m.simulado,
+    saldoInicial: m.saldoInicial, entradas, saidas, resultado, saldoApurado,
+    saldoBancario: m.saldoFinalBancario,
+    diferenca: saldoApurado - m.saldoFinalBancario,
+    qtd: L.length, porNatureza, internasE, internasS,
+  };
+}
+
+const mesesOrdenados = () => Object.keys(DB.meses).sort();
+
+/* ═══════════════ MESES NA TELA ═══════════════
+   A planilha do Aldeir mostrava um mês. A tela passou a mostrar dois, e agora
+   mostra quantos ele quiser · o ano inteiro, agrupado por trimestre.
+   A diferença financeira continua sendo entre DOIS meses, os dois últimos do
+   calendário entre os que estão na tela: comparar tudo com tudo não é
+   comparação, é confusão. Quem quiser outro par troca no seletor. */
+function carregarVisao(){
+  try { const o = JSON.parse(localStorage.getItem(CHAVE_VISAO) || 'null'); if (o && o.modo) visaoMeses = o; } catch(e) {}
+}
+function gravarVisao(){ try { localStorage.setItem(CHAVE_VISAO, JSON.stringify(visaoMeses)); } catch(e) {} }
+
+function mesesNaTela(){
+  const todos = mesesOrdenados();
+  if (!todos.length) return [];
+  const v = visaoMeses || { modo: 'tudo' };
+  let ms = todos;
+  if (v.modo === 'ultimos')   ms = todos.slice(-Math.max(1, v.n || 6));
+  else if (v.modo === 'ano')  ms = todos.filter(mk => mk.slice(0,4) === String(v.ano));
+  else if (v.modo === 'lista')ms = todos.filter(mk => (v.lista || []).includes(mk));
+  return ms.length ? ms : todos.slice(-2);
+}
+
+/* O trimestre (a faixa por cima dos meses e a coluna de total) nasce DESLIGADO.
+   A tela é de conferir número, e faixa mais coluna extra em cada grupo poluía a
+   leitura antes de servir para alguma coisa · quem quiser liga pelo botão
+   direito. O código dele fica de pé para a versão melhor que vem depois. */
+const totalTriLigado = () => (visaoMeses || {}).tri === true;
+
+const trimestreDe  = mk => mk.slice(0,4) + '-T' + (Math.floor((Number(mk.slice(5,7)) - 1) / 3) + 1);
+const rotuloTri = tk => tk.slice(5) + ' · ' + tk.slice(0,4);
+/* "Total T3" só pode significar o trimestre inteiro. Faltando mês na tela, o
+   rótulo diz PARCIAL · somar dois meses e chamar de trimestre é o tipo de
+   número que vai para uma reunião e não volta. */
+const rotuloTriTot = (tk, completo) => completo ? 'Total ' + tk.slice(5) : tk.slice(5) + ' parcial';
+
+/* Uma coluna por mês, na ordem do calendário, com o total do trimestre logo
+   depois do último mês dele. Dif. e Var. fecham a grade, sempre. */
+function colunasDaTela(){
+  const ms = mesesNaTela();
+  const grupos = [];
+  for (const mk of ms) {
+    const tk = trimestreDe(mk);
+    const g = grupos[grupos.length - 1];
+    if (g && g.tk === tk) g.mks.push(mk); else grupos.push({ tk, mks: [mk] });
+  }
+  const cols = [];
+  for (const g of grupos) {
+    for (const mk of g.mks) cols.push({ tipo: 'mes', mk, tri: g.tk });
+    g.completo = g.mks.length === 3;
+    g.total = totalTriLigado() && g.mks.length > 1;
+    if (g.total) cols.push({ tipo: 'tot', tri: g.tk, mks: g.mks.slice(), completo: g.completo });
+  }
+  const comTotal = grupos.some(g => g.total);
+  cols.push({ tipo: 'dif' }, { tipo: 'var' });
+  return { cols, grupos, comTotal, meses: ms };
+}
+
+/* o valor de uma coluna: o mês dele, ou a soma dos meses do trimestre */
+const valorCol = (col, porMes) => col.tipo === 'mes' ? (porMes[col.mk] || 0)
+                                : col.mks.reduce((s, mk) => s + (porMes[mk] || 0), 0);
+
+/* ═══ O seletor: quantos meses aparecem, e qual par é comparado ═══ */
+function montarSeletorDeMeses(meses){
+  const todos = mesesOrdenados();
+  const v = visaoMeses || { modo: 'tudo' };
+  const anos = [...new Set(todos.map(mk => mk.slice(0,4)))];
+  const chip = (rot, ligado, acao, titulo) =>
+    `<button type="button" class="chip-mes${ligado ? ' on' : ''}" title="${titulo || ''}" onclick="${acao}">${rot}</button>`;
+
+  let h = chip('Tudo (' + todos.length + ')', v.modo === 'tudo', "verMeses({modo:'tudo'})", 'todos os meses que existem no sistema');
+  for (const n of [3, 6, 12]) if (todos.length > n)
+    h += chip('Últimos ' + n, v.modo === 'ultimos' && v.n === n, `verMeses({modo:'ultimos',n:${n}})`);
+  if (anos.length > 1) for (const a of anos)
+    h += chip(a, v.modo === 'ano' && String(v.ano) === a, `verMeses({modo:'ano',ano:'${a}'})`);
+  h += chip('Escolher…', v.modo === 'lista', 'abrirMesesDaTela()', 'marcar mês a mês');
+  if (totalTriLigado())
+    h += chip('Trimestre ligado', true, 'alternarTotalTri()', 'desliga a faixa e a coluna de total de cada trimestre');
+  h += `<span class="chip-conta">${meses.length} de ${todos.length} ${todos.length === 1 ? 'mês' : 'meses'} na tela</span>`;
+  const el = document.getElementById('sel-meses');
+  if (el) el.innerHTML = h;
+
+  /* o par comparado só pode apontar para mês que está na tela */
+  const opts = sel => meses.map(mk =>
+    `<option value="${mk}"${mk === sel ? ' selected' : ''}>${rotuloMes(mk)}${DB.meses[mk].simulado ? ' · simulado' : ''}</option>`).join('');
+  const selA = document.getElementById('c-a'), selB = document.getElementById('c-b');
+  if (selA) selA.innerHTML = opts(compA);
+  if (selB) selB.innerHTML = opts(compB);
+  const solta = document.getElementById('btn-solta-par');
+  if (solta) solta.style.display = parFixado ? '' : 'none';
+}
+
+/* Mês que acabou de nascer, ou de receber extrato, precisa aparecer. Recorte
+   que esconde o que a pessoa acabou de fazer parece que engoliu o trabalho. */
+function garantirMesNaTela(mks){
+  const naTela = mesesNaTela();
+  if (mks.every(mk => naTela.includes(mk))) return;
+  const v = visaoMeses || { modo: 'tudo' };
+  if (v.modo === 'lista') visaoMeses = { ...v, lista: [...new Set([...(v.lista || []), ...mks])] };
+  else if (v.modo === 'ultimos') {
+    const todos = mesesOrdenados();
+    const maisAntigo = Math.min(...mks.map(mk => todos.indexOf(mk)).filter(i => i >= 0));
+    visaoMeses = { ...v, n: Math.max(v.n || 6, todos.length - maisAntigo) };
+  } else if (v.modo === 'ano') visaoMeses = { modo: 'tudo', tri: v.tri };
+  gravarVisao();
+}
+
+function verMeses(v){
+  visaoMeses = { ...v, tri: totalTriLigado() };
+  parFixado = false;                         // recorte novo, par novo
+  gravarVisao(); recolherTudo();
+}
+
+function alternarTotalTri(){
+  visaoMeses = { ...(visaoMeses || { modo: 'tudo' }), tri: !totalTriLigado() };
+  gravarVisao(); render();
+}
+
+/* O par é do CFO quando ele escolhe. Enquanto não escolher, ele acompanha os
+   dois últimos meses da tela sozinho · é o que ele pediu como padrão. */
+function fixarPar(a, b){
+  if (!a || !b || !DB.meses[a] || !DB.meses[b]) return;
+  /* o calendário manda: a diferença é sempre do mais antigo para o mais novo */
+  compA = a < b ? a : b;
+  compB = a < b ? b : a;
+  parFixado = true;
+  recolherTudo();
+}
+
+function soltarPar(){ parFixado = false; recolherTudo(); flash('A diferença voltou para os dois últimos meses da tela.'); }
+
+function abrirMesesDaTela(){
+  const todos = mesesOrdenados();
+  const naTela = new Set(mesesNaTela());
+  const porAno = {};
+  for (const mk of todos) (porAno[mk.slice(0,4)] = porAno[mk.slice(0,4)] || []).push(mk);
+  const blocos = Object.keys(porAno).sort().map(ano => `
+    <div class="ano-bloco">
+      <div class="ano-tit">${ano}
+        <button class="btn-mini" onclick="marcarAno('${ano}',true)">marcar o ano</button>
+        <button class="btn-mini" onclick="marcarAno('${ano}',false)">desmarcar</button>
+      </div>
+      <div class="ano-meses">${porAno[ano].map(mk => `
+        <label class="mes-check"><input type="checkbox" value="${mk}" ${naTela.has(mk) ? 'checked' : ''}>
+          <span>${rotuloMes(mk)}${DB.meses[mk].simulado ? ' 🧪' : ''}</span>
+          <small>${DB.meses[mk].lancamentos.length} lanç.</small></label>`).join('')}</div>
+    </div>`).join('');
+
+  abrirModal(`
+    <div class="modal-header">
+      <div class="modal-title">🗓️ Meses na tela<small>marque quais aparecem como coluna · a diferença continua sendo entre dois deles</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button>
+    </div>
+    <div id="meses-lista">${blocos}</div>
+    <div class="alert-info" style="margin-top:14px">
+      Os meses entram em ordem de calendário e são agrupados por trimestre. A coluna
+      <b>Total T1/T2/T3/T4</b> aparece em todo trimestre que tiver mais de um mês na tela.
+    </div>
+    <div class="modal-rodape">
+      <button class="btn-clear esq" onclick="verMeses({modo:'tudo'});fecharModal()">Mostrar todos</button>
+      <button class="btn-clear" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" onclick="salvarMesesDaTela()">Aplicar</button>
+    </div>`, true);
+}
+
+function marcarAno(ano, ligado){
+  document.querySelectorAll('#meses-lista input[type=checkbox]').forEach(c => {
+    if (c.value.slice(0,4) === ano) c.checked = ligado;
+  });
+}
+
+function salvarMesesDaTela(){
+  const lista = [...document.querySelectorAll('#meses-lista input[type=checkbox]')].filter(c => c.checked).map(c => c.value);
+  if (!lista.length) { alert('Marque pelo menos um mês.'); return; }
+  visaoMeses = { modo: 'lista', lista, tri: totalTriLigado() };
+  parFixado = false;
+  gravarVisao(); fecharModal(); recolherTudo();
+  flash(lista.length === 1 ? 'Um mês na tela.' : lista.length + ' meses na tela.');
+}
+
+/* ═══════════════ A TELA ═══════════════
+   Só existe uma: o Acompanhamento mensal. O que era o painel de cards virou o
+   quadro escuro de indicadores lá dentro, na mesma grade da tabela de baixo. */
+function render(){
+  ajustarPeriodos();
+  document.getElementById('abas').innerHTML = barraAbas();
+  /* O Simulador so aparece DENTRO de uma aba de simulacao. Ele fabrica um mes
+     inteiro a partir de regras ("subir 20% na folha") · isso e util, e as abas
+     nao fazem. O que estava errado era ele poder despejar esse mes inventado na
+     aba Principal, que e a verdade da casa · foi exatamente o que as abas
+     vieram impedir. Aqui ele nao some, muda de lugar. */
+  const bs = document.getElementById('btn-sim');
+  if (bs) {
+    bs.style.display = simulando() ? '' : 'none';
+    bs.title = 'cria um mes inteiro a partir de regras, dentro desta simulacao';
+  }
+  const naTela = mesesNaTela();
+  document.getElementById('topo-mes').textContent =
+    (simulando() ? nomeDaAba() + ' · ' : 'Conta Santander · ') +
+    (naTela.length > 2 ? naTela.length + ' meses na tela · diferença ' + rotuloCurto(compA) + ' → ' + rotuloCurto(compB)
+                       : rotuloMes(compA) + ' × ' + rotuloMes(compB));
+  document.getElementById('faixa-sim').innerHTML = avisoDaAba() + avisoSimulado();
+  atualizarDesfazer();
+  renderComparativo();
+}
+
+/* Numa aba de simulação a tela inteira muda de cor, e ainda assim ela diz por
+   escrito o que é · cor sozinha não basta para ninguém apresentar um número
+   errado numa reunião achando que era o real. */
+function avisoDaAba(){
+  if (!simulando()) return '';
+  const c = cenarioAtual() || {};
+  return `<div class="faixa-simulacao">🧪 <b>${esc(c.nome || 'Simulação')}</b> ·
+    cópia de ${esc(c.nasceuDe || 'Principal')} feita em ${c.criadoEm ? fmtData(c.criadoEm.slice(0,10)) : '-'}.
+    Nada do que for mexido aqui encosta na aba Principal.
+    <span class="acoes-aba">
+      <button class="btn-mini" onclick="promoverSimulacao('${c.id}')">Levar para a Principal</button>
+      <button class="btn-mini" onclick="abrirAba('principal')">Voltar para a Principal</button>
+    </span></div>`;
+}
+
+/* Os dois períodos precisam existir e ser diferentes · mês apagado ou backup
+   restaurado não pode deixar a tela apontando para um mês que sumiu. */
+function ajustarPeriodos(){
+  const ms = mesesNaTela();
+  if (!ms.length) return;
+  /* O par comparado sai sozinho dos dois últimos meses da tela. Só fica onde
+     está se o CFO o escolheu na mão E os dois continuam à vista · par apontando
+     para mês que saiu da tela é diferença que ninguém consegue conferir. */
+  const valido = parFixado && compA && compB && ms.includes(compA) && ms.includes(compB);
+  if (!valido) {
+    parFixado = false;
+    compB = ms[ms.length - 1];
+    compA = ms.length > 1 ? ms[ms.length - 2] : ms[0];
+  }
+  if (!DB.meses[mesAtual]) mesAtual = compB;
+}
+
+function avisoSimulado(){
+  const sims = [compA, compB].filter(mk => DB.meses[mk] && DB.meses[mk].simulado);
+  if (!sims.length) return '';
+  const mk = sims[sims.length - 1], m = DB.meses[mk];
+  return `<div class="faixa-sim">🧪 <b>${rotuloMes(mk)} é um mês simulado</b> · números projetados a partir de ${rotuloMes(m.baseSimulacao||'2026-07')}${m.cenario?' pelo cenário “'+esc(m.cenario)+'”':''}. Não é extrato. <button class="btn-mini" onclick="abrirSimulador()" style="margin-left:auto">Refazer simulação</button></div>`;
+}
+
+function recolherTudo(){ abertasComp.clear(); abertasCP.clear(); render(); }
+
+/* O botão "＋ Novo lançamento" da barra trabalha no período B, o mês mais
+   recente da tela · o título do modal diz em qual mês está entrando. */
+function novoLancamentoNaTela(){ mesAtual = compB; abrirLancamento(); }
+
+/* ═══════════════ PDF ═══════════════
+   Sem biblioteca: a folha é a própria tela, com o CSS de impressão. No Edge,
+   Ctrl+P → "Salvar como PDF". É o caminho que sai bonito e não dá manutenção. */
+function agoraTexto(){
+  const d = new Date();
+  const p2 = n => String(n).padStart(2,'0');
+  return p2(d.getDate()) + '/' + p2(d.getMonth()+1) + '/' + d.getFullYear() + ' às ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
+
+function cabecalhoImpressao(titulo, subtitulo){
+  return `<div style="border-bottom:2px solid #1e4080;padding-bottom:7px">
+    <div style="font-size:15px;font-weight:700;color:#1a3560">FAM SEGURADORA · ${titulo}</div>
+    <div style="font-size:11px;color:#6080a0;margin-top:2px">${subtitulo} · CFO: Aldeir · emitido em ${agoraTexto()}</div>
+  </div>`;
+}
+
+function imprimirTela(){
+  const naTela = mesesNaTela();
+  document.getElementById('cab-impressao').innerHTML = cabecalhoImpressao('Acompanhamento mensal',
+    'Conta Santander · ' + naTela.map(rotuloCurto).join(' · ') +
+    ' · diferença ' + rotuloMes(compA) + ' → ' + rotuloMes(compB) +
+    (naTela.some(mk => DB.meses[mk].simulado) ? ' · contém mês simulado' : ''));
+  document.body.classList.add('imprimindo-painel');
+  window.print();
+  setTimeout(() => document.body.classList.remove('imprimindo-painel'), 600);
+}
+
+</script>

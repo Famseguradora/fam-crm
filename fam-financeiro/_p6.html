@@ -1,0 +1,300 @@
+
+<script>
+/* ══════════════ FIN · o robô do caixa ══════════════
+   Determinístico. Não é IA: lê o estado carregado, cruza a pergunta com quatro
+   eixos (métrica · período · natureza · contraparte) e responde com a fórmula
+   à mostra. Quando não entende, diz que não entendeu · nunca chuta número. */
+
+const CHIPS = [
+  'Qual o saldo?',
+  'Quanto entrou no mês?',
+  'Quanto gastei no mês?',
+  'A conciliação bate?',
+  'Quanto gastei com Fornecedores?',
+  'Maiores contrapartes',
+  'Compare julho com agosto',
+  'Qual o fôlego de caixa?',
+];
+
+const SINONIMOS = {
+  saldoInicial: ['saldo inicial'],
+  saldo:      ['saldo', 'quanto tenho', 'quanto tem em caixa', 'caixa hoje', 'saldo final'],
+  entradas:   ['entrada', 'entradas', 'entrou', 'recebi', 'recebido', 'receita', 'receitas', 'faturamento'],
+  saidas:     ['saida', 'saidas', 'saiu', 'gastei', 'gasto', 'gastos', 'despesa', 'despesas', 'paguei', 'pagamento'],
+  resultado:  ['resultado', 'sobrou', 'sobra', 'lucro', 'prejuizo'],
+  conciliacao:['concilia', 'conciliacao', 'diferenca', 'bate', 'fecha', 'confere'],
+  qtd:        ['quantos lancamentos', 'quantidade de lancamentos', 'quantas linhas'],
+  maiores:    ['maiores', 'maior', 'quem mais', 'ranking', 'top '],
+  folego:     ['folego', 'runway', 'quanto tempo', 'aguenta', 'quantos meses'],
+};
+
+function detectarMetrica(q){
+  for (const chave of ['saldoInicial','conciliacao','folego','maiores','qtd','resultado','entradas','saidas','saldo'])
+    if (SINONIMOS[chave].some(t => q.includes(t))) return chave;
+  return null;
+}
+
+function detectarMeses(q){
+  const achados = [];
+  MESES_PT.forEach((nome, i) => {
+    if (q.includes(normalizar(nome))) {
+      const mm = String(i+1).padStart(2,'0');
+      const mk = mesesOrdenados().find(x => x.endsWith('-' + mm));
+      if (mk && !achados.includes(mk)) achados.push(mk);
+    }
+  });
+  mesesOrdenados().forEach(mk => { if (q.includes(mk) && !achados.includes(mk)) achados.push(mk); });
+  if (!achados.length && (q.includes('mes passado') || q.includes('mes anterior'))) {
+    const ant = mesesOrdenados().filter(m => m < mesAtual).pop();
+    if (ant) achados.push(ant);
+  }
+  return achados.sort();
+}
+
+function detectarNatureza(q, mk){
+  const nomes = new Set();
+  for (const m of Object.keys(DB.meses)) for (const l of DB.meses[m].lancamentos) nomes.add(l.natureza);
+  let melhor = null;
+  for (const n of nomes) {
+    const nn = normalizar(n);
+    const primeira = nn.split(' ')[0];
+    const bate = q.includes(nn) || (primeira.length >= 6 && q.includes(primeira));
+    if (bate && (!melhor || nn.length > normalizar(melhor).length)) melhor = n;
+  }
+  return melhor;
+}
+
+function detectarContraparte(q){
+  const nomes = new Set();
+  for (const m of Object.keys(DB.meses)) for (const l of DB.meses[m].lancamentos) nomes.add(l.contraparte);
+  let melhor = null;
+  for (const c of nomes) {
+    const cc = normalizar(c);
+    const primeira = cc.split(' ')[0];
+    const bate = q.includes(cc) || (primeira.length >= 5 && q.includes(primeira));
+    if (bate && (!melhor || cc.length > normalizar(melhor).length)) melhor = c;
+  }
+  return melhor;
+}
+
+/* Resposta = { titulo, valor, cor, formula[], itens[], nota } */
+function responderFIN(pergunta){
+  const q = normalizar(pergunta);
+  if (!q) return null;
+  const meses = detectarMeses(q);
+  const mk = meses.length ? meses[meses.length-1] : mesAtual;
+  const a = apurar(mk);
+  const metrica = detectarMetrica(q);
+  const nat = detectarNatureza(q, mk);
+  const cp = nat ? null : detectarContraparte(q);
+
+  /* dois meses citados → comparação */
+  if (meses.length >= 2) {
+    const A = apurar(meses[0]), B = apurar(meses[meses.length-1]);
+    if (nat) {
+      const va = (A.porNatureza.find(n => n.natureza === nat) || {total:0}).total;
+      const vb = (B.porNatureza.find(n => n.natureza === nat) || {total:0}).total;
+      const v = variacao(va, vb, vb <= 0 && va <= 0 ? 'saida' : 'entrada');
+      return {
+        titulo: nat + ' · ' + rotuloMes(A.mk) + ' × ' + rotuloMes(B.mk),
+        valor: (v.dif > 0 ? '+' : '-') + fmtN(v.dif) + '  (' + v.texto + ')',
+        formula: [
+          rotuloMes(A.mk) + ': <b>' + fmt(va) + '</b>',
+          rotuloMes(B.mk) + ': <b>' + fmt(vb) + '</b>',
+          'variação = |' + fmtN(vb) + '| - |' + fmtN(va) + '| = <b>' + (v.dif>0?'+':'-') + fmtN(v.dif) + '</b>',
+        ],
+        itens: DB.meses[B.mk].lancamentos.filter(l => l.natureza === nat),
+        nota: 'Abra o Acompanhamento mensal para ver as duas colunas inteiras, com todas as naturezas.',
+      };
+    }
+    const v = variacao(A.resultado, B.resultado, 'entrada');
+    return {
+      titulo: 'Comparação · ' + rotuloMes(A.mk) + ' × ' + rotuloMes(B.mk),
+      valor: v.texto + ' no resultado',
+      formula: [
+        'entradas: ' + fmt(A.entradas) + ' → <b>' + fmt(B.entradas) + '</b>',
+        'saídas: ' + fmt(A.saidas) + ' → <b>' + fmt(B.saidas) + '</b>',
+        'resultado: ' + fmt(A.resultado) + ' → <b>' + fmt(B.resultado) + '</b>',
+        'saldo final apurado: ' + fmt(A.saldoApurado) + ' → <b>' + fmt(B.saldoApurado) + '</b>',
+      ],
+      itens: [],
+      nota: 'A tabela conta a conta está no Acompanhamento mensal.',
+    };
+  }
+
+  /* contraparte: procura no mês e, se não achar, em todos */
+  if (cp) {
+    let itens = DB.meses[mk].lancamentos.filter(l => normalizar(l.contraparte) === normalizar(cp));
+    let escopo = rotuloMes(mk);
+    if (!itens.length) {
+      itens = [];
+      for (const m of mesesOrdenados()) itens.push(...DB.meses[m].lancamentos.filter(l => normalizar(l.contraparte) === normalizar(cp)));
+      escopo = 'todos os meses';
+    }
+    const total = itens.reduce((s,l) => s + l.valor, 0);
+    return {
+      titulo: cp + ' · ' + escopo,
+      valor: fmt(total),
+      formula: [itens.length + ' lançamento(s) somando <b>' + fmt(total) + '</b>',
+                'natureza: ' + [...new Set(itens.map(l => l.natureza))].join(' · ')],
+      itens,
+      nota: escopo === 'todos os meses' ? 'Não havia nada em ' + rotuloMes(mk) + ', então procurei em todos os meses.' : '',
+    };
+  }
+
+  /* natureza */
+  if (nat) {
+    const n = a.porNatureza.find(x => x.natureza === nat);
+    const itens = DB.meses[mk].lancamentos.filter(l => l.natureza === nat);
+    const base = n && n.tipo === 'entrada' ? a.entradas : Math.abs(a.saidas);
+    const av = n && base ? Math.abs(n.total)/base*100 : 0;
+    return {
+      titulo: nat + ' · ' + rotuloMes(mk),
+      valor: fmt(n ? n.total : 0),
+      formula: [
+        (n ? n.qtd : 0) + ' lançamento(s) somando <b>' + fmt(n ? n.total : 0) + '</b>',
+        'AV% = ' + fmtN(Math.abs(n ? n.total : 0)) + ' ÷ ' + fmtN(base) + ' = <b>' + av.toFixed(1).replace('.',',') + '%</b> do total de ' + (n && n.tipo === 'entrada' ? 'entradas' : 'saídas'),
+      ],
+      itens,
+      nota: '',
+    };
+  }
+
+  /* métricas do mês */
+  if (metrica === 'saldo' || metrica === 'saldoInicial') {
+    if (metrica === 'saldoInicial') return { titulo: 'Saldo inicial · ' + rotuloMes(mk), valor: fmt(a.saldoInicial),
+      formula: ['saldo final apurado do mês anterior'], itens: [], nota: '' };
+    return {
+      titulo: 'Saldo · ' + rotuloMes(mk), valor: fmt(a.saldoApurado),
+      formula: ['saldo inicial <b>' + fmt(a.saldoInicial) + '</b> + resultado <b>' + fmt(a.resultado) + '</b> = <b>' + fmt(a.saldoApurado) + '</b>',
+                a.simulado ? 'mês simulado: não há extrato para conferir' : 'saldo do extrato: <b>' + fmt(a.saldoBancario) + '</b> · diferença <b>' + fmt(a.diferenca) + '</b>'],
+      itens: [], nota: '',
+    };
+  }
+  if (metrica === 'entradas' || metrica === 'saidas') {
+    const ent = metrica === 'entradas';
+    const itens = DB.meses[mk].lancamentos.filter(l => ent ? l.valor > 0 : l.valor < 0).sort((x,y) => Math.abs(y.valor) - Math.abs(x.valor)).slice(0, 12);
+    const interna = ent ? a.internasE : a.internasS;
+    return {
+      titulo: (ent ? 'Entradas' : 'Saídas') + ' · ' + rotuloMes(mk),
+      valor: fmt(ent ? a.entradas : a.saidas),
+      formula: [
+        'soma dos valores ' + (ent ? 'positivos' : 'negativos') + ' de ' + a.qtd + ' lançamentos = <b>' + fmt(ent ? a.entradas : a.saidas) + '</b>',
+        interna ? 'atenção: <b>' + fmt(interna) + '</b> é transferência entre contas da própria FAM, não é ' + (ent ? 'receita' : 'despesa') : '',
+      ].filter(Boolean),
+      itens, nota: itens.length === 12 ? 'Mostrando os 12 maiores.' : '',
+    };
+  }
+  if (metrica === 'resultado') {
+    return { titulo: 'Resultado · ' + rotuloMes(mk), valor: fmt(a.resultado),
+      formula: ['entradas <b>' + fmt(a.entradas) + '</b> + saídas <b>' + fmt(a.saidas) + '</b> = <b>' + fmt(a.resultado) + '</b>'], itens: [], nota: '' };
+  }
+  if (metrica === 'conciliacao') {
+    const ok = Math.abs(a.diferenca) < 0.005;
+    return {
+      titulo: 'Conciliação · ' + rotuloMes(mk),
+      valor: a.simulado ? 'não se aplica' : (ok ? 'bate: R$ 0,00' : 'não bate: ' + fmt(a.diferenca)),
+      formula: a.simulado ? ['mês simulado não tem extrato para conferir'] : [
+        'saldo apurado <b>' + fmt(a.saldoApurado) + '</b> - saldo do extrato <b>' + fmt(a.saldoBancario) + '</b> = <b>' + fmt(a.diferenca) + '</b>',
+        ok ? 'ideal é zero · e está zero' : 'ideal é zero: falta lançamento, sobra lançamento ou o saldo do extrato está errado',
+      ],
+      itens: [], nota: '',
+    };
+  }
+  if (metrica === 'qtd') {
+    return { titulo: 'Lançamentos · ' + rotuloMes(mk), valor: String(a.qtd),
+      formula: [a.porNatureza.length + ' naturezas'], itens: [], nota: '' };
+  }
+  if (metrica === 'maiores') {
+    const mapa = new Map();
+    for (const l of DB.meses[mk].lancamentos) {
+      if (l.valor >= 0) continue;
+      const k = normalizar(l.contraparte);
+      if (!mapa.has(k)) mapa.set(k, { nome: l.contraparte, total: 0, qtd: 0 });
+      const c = mapa.get(k); c.total += l.valor; c.qtd++;
+    }
+    const top = [...mapa.values()].sort((x,y) => x.total - y.total).slice(0, 8);
+    return {
+      titulo: 'Maiores contrapartes de saída · ' + rotuloMes(mk),
+      valor: top.length ? top[0].nome + ' · ' + fmt(top[0].total) : '-',
+      formula: top.map((c,i) => (i+1) + '. ' + esc(c.nome) + ' · <b>' + fmt(c.total) + '</b> (' + c.qtd + ')'),
+      itens: [], nota: '',
+    };
+  }
+  if (metrica === 'folego') {
+    const reais = mesesOrdenados().filter(m => !DB.meses[m].simulado);
+    const medias = reais.map(m => Math.abs(apurar(m).saidas));
+    const media = medias.reduce((s,x) => s + x, 0) / (medias.length || 1);
+    const meses = media ? a.saldoApurado / media : 0;
+    return {
+      titulo: 'Fôlego de caixa · ' + rotuloMes(mk),
+      valor: meses.toFixed(1).replace('.',',') + ' mês(es)',
+      formula: [
+        'saída média de ' + reais.length + ' mês(es) reais = <b>' + fmt(media) + '</b>',
+        'saldo <b>' + fmt(a.saldoApurado) + '</b> ÷ saída média <b>' + fmt(media) + '</b> = <b>' + meses.toFixed(1).replace('.',',') + '</b>',
+      ],
+      itens: [],
+      nota: 'Este número só enxerga a conta corrente do Santander. Enquanto o Fundo LFT não entrar no sistema, ele subestima o caixa real · o dinheiro aplicado sai da conta e não reaparece em lugar nenhum.',
+    };
+  }
+  return null;
+}
+
+function perguntarFIN(texto){
+  const campo = document.getElementById('fin-q');
+  const pergunta = texto !== undefined ? texto : campo.value;
+  if (texto !== undefined) campo.value = texto;
+  const r = responderFIN(pergunta);
+  const el = document.getElementById('fin-resp');
+  if (!r) {
+    el.innerHTML = `<div class="fin-resp">
+      <div class="fin-tit">Não entendi essa.</div>
+      <div class="fin-vazio">Prefiro dizer que não entendi a chutar um número. Eu sei responder:
+      saldo · entradas · saídas · resultado · conciliação · fôlego de caixa · maiores contrapartes ·
+      qualquer natureza do plano · qualquer contraparte · e a comparação entre dois meses
+      (“compare julho com agosto”).</div></div>`;
+    return;
+  }
+  const itens = r.itens && r.itens.length ? `
+    <table class="mini-table" style="margin-top:10px">
+      <thead><tr><th style="width:80px">Data</th><th>Contraparte / descritivo</th><th class="num" style="width:120px">Valor</th></tr></thead>
+      <tbody>${r.itens.slice(0,20).map(l => `<tr>
+        <td style="white-space:nowrap">${fmtData(l.data)}</td>
+        <td><b>${esc(l.contraparte)}</b><br><span style="color:var(--soft);font-size:12px">${esc(l.descritivo)}</span></td>
+        <td class="num" style="color:${l.valor>=0?'#1a7a50':'#a02020'};font-weight:700">${fmt(l.valor)}</td>
+      </tr>`).join('')}</tbody>
+    </table>${r.itens.length > 20 ? '<div class="fin-vazio" style="margin-top:6px">…e mais ' + (r.itens.length-20) + ' lançamento(s).</div>' : ''}` : '';
+  el.innerHTML = `<div class="fin-resp">
+    <div class="fin-tit">${esc(r.titulo)}</div>
+    <div class="fin-num">${r.valor}</div>
+    <div class="fin-form">${r.formula.join('<br>')}</div>
+    ${r.nota ? '<div class="fin-vazio">' + r.nota + '</div>' : ''}
+    ${itens}
+  </div>`;
+}
+
+/* ═══ a barra lateral ═══ */
+let roboAberto = false;
+
+function alternarRobo(){ roboAberto ? fecharRobo() : abrirRobo(); }
+
+function abrirRobo(){
+  roboAberto = true;
+  document.getElementById('robo').classList.add('aberta');
+  document.getElementById('robo-fundo').classList.add('aberto');
+  document.body.classList.add('robo-aberto');
+  setTimeout(() => { const c = document.getElementById('fin-q'); if (c) c.focus(); }, 220);
+}
+
+function fecharRobo(){
+  roboAberto = false;
+  document.getElementById('robo').classList.remove('aberta');
+  document.getElementById('robo-fundo').classList.remove('aberto');
+  document.body.classList.remove('robo-aberto');
+}
+
+function montarChips(){
+  document.getElementById('fin-chips').innerHTML = CHIPS
+    .map(c => `<button class="fin-chip" onclick="perguntarFIN('${c.replace(/'/g,"\\'")}')">${c}</button>`).join('');
+}
+</script>

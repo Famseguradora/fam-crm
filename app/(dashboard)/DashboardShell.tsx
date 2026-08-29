@@ -20,6 +20,10 @@ interface Props {
   emailUsuario: string
   userId: string
   dataInicio: string | null
+  /* Vem de `financeiro_acesso`, NÃO de `perfil`. É a única entrada do menu que
+     não se decide por ser admin: quem não está na lista do Financeiro não vê
+     nem o item. Quem decide são o Marco e o Aldeir, na própria tela. */
+  veFinanceiro?: boolean
   children: React.ReactNode
 }
 
@@ -37,6 +41,11 @@ const TABS: Tab[] = [
   { label: '🏢 Corretoras', href: '/corretoras', adminOnly: true },
   { label: '📦 Produtos',   href: '/produtos',   adminOnly: true },
 ]
+
+/* Telas sem a moldura clara da área de conteúdo: elas são painéis inteiros e
+   usam a janela toda. Uma lista só, para o próximo caso não virar mais um
+   ternário aninhado aqui dentro. */
+const TELA_CHEIA = ['/corretoras', '/financeiro']
 
 // Telas que aparecem no menu do app no celular (as demais ficam só no desktop).
 // Corretoras entra no mobile (respeitando adminOnly); o cockpit é responsivo.
@@ -57,7 +66,7 @@ const CONFIG_ITEMS: {
   { label: 'Sistema',      href: '/configuracoes/sistema', icon: '⚙️', proprietarioOnly: true },
 ]
 
-export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, podePublicarAvisos, emailUsuario, userId, dataInicio, children }: Props) {
+export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, podePublicarAvisos, emailUsuario, userId, dataInicio, veFinanceiro = false, children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -453,6 +462,10 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
             {PERFORMANCE_ITEMS.map((item) => (
               <SidebarBtn key={item.href} href={item.href} icon={item.icon} label={item.label} disabled={item.disabled} />
             ))}
+            {/* Financeiro · lista própria de acesso, fora do perfil do CRM */}
+            {veFinanceiro && (
+              <SidebarBtn href="/financeiro" icon="💰" label="Financeiro" />
+            )}
           </div>
 
           {/* Relatórios (gerencial / contábil) */}
@@ -526,8 +539,11 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
 
         {/* ── Conteúdo ── */}
         {/* Corretoras usa o cockpit em tela cheia (full-bleed): sem o padding da
-            área de conteúdo, o painel ocupa todo o espaço, sem a moldura clara. */}
-        <div style={{ flex: 1, padding: pathname === '/corretoras' ? 0 : (isMobile ? '16px 12px' : '28px 32px'), minWidth: 0 }}>
+            área de conteúdo, o painel ocupa todo o espaço, sem a moldura clara.
+            Financeiro entra na mesma regra: é um sistema inteiro dentro da tela,
+            e o CFO passa o dia nele · 60px de moldura clara em volta custam uma
+            faixa de lançamentos que ele deixaria de ver. */}
+        <div style={{ flex: 1, padding: TELA_CHEIA.includes(pathname) ? 0 : (isMobile ? '16px 12px' : '28px 32px'), minWidth: 0 }}>
           <PermissoesProvider perfil={perfilUsuario} proprietario={proprietario} podePublicarAvisos={podePublicarAvisos}>
             <DateRangeProvider initialDate={dataInicio}>
               {children}

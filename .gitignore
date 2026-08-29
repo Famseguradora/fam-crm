@@ -56,3 +56,26 @@ next-env.d.ts
 
 # Sandbox de testes (artefato de compilação)
 .sandbox-test/
+
+# ── Caixa real da FAM: NUNCA versionar ──────────────────────────────────────
+# Estes arquivos têm o fluxo de caixa de verdade (remuneração de cada diretor,
+# resseguro, SUSEP). Git não esquece: uma vez commitado, fica no histórico para
+# sempre, e seria contraditório mandá-lo para o repositório em texto puro no
+# mesmo projeto em que se constrói o cofre para escondê-lo.
+#
+# O dashboard.html versionado é o de PUBLICAÇÃO, gerado com semente neutra por
+#   node fam-financeiro/build-dashboard.cjs --publicar
+# O julho de verdade entra uma vez, pelo botão "Restaurar de um arquivo", e
+# passa a viver cifrado dentro do cofre.
+fam-financeiro/julho.json
+fam-financeiro/seed-julho.json
+fam-financeiro/artifact.html
+fam-financeiro/fam-financeiro.html
+fam-financeiro/_*.part
+fam-financeiro/build.cjs
+
+# O extrato de exemplo e o gerador dele foram montados a partir do extrato real
+# de julho (contrapartes e valores verdadeiros). Servem para testar o leitor de
+# PDF na maquina, nao vao para o deploy.
+fam-financeiro/gerar-extrato-exemplo.cjs
+fam-financeiro/extrato-exemplo-agosto.pdf

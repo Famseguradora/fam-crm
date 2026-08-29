@@ -1,0 +1,672 @@
+
+<script>
+/* ══════════════ IMPORTAÇÃO DE EXTRATO ══════════════
+   É o que tira a digitação do caminho. A porta de entrada é o extrato em PDF do
+   banco, lido aqui dentro, sem internet e sem biblioteca externa. Cada
+   lançamento ganha uma identidade (data, valor e descritivo do banco): é por
+   ela que o sistema sabe o que já entrou e não duplica nada na reimportação.
+   Os leitores de OFX e CSV continuam no arquivo como socorro para quem
+   arrastar um desses, mas o seletor de arquivo só oferece PDF. */
+
+const REGRAS_FABRICA = [
+  { texto: 'tar pix',            natureza: 'Tarifa bancária' },
+  { texto: 'tarifa',             natureza: 'Tarifa bancária' },
+  { texto: 'tar ',               natureza: 'Tarifa bancária' },
+  { texto: 'ted cip',            natureza: 'Tarifa bancária' },
+  { texto: 'cesta',              natureza: 'Tarifa bancária' },
+  { texto: 'susep',              natureza: 'Taxa fiscalização SUSEP' },
+  { texto: 'irrf',               natureza: 'Tributos e Taxas - Retenção' },
+  { texto: 'csrf',               natureza: 'Tributos e Taxas - Retenção' },
+  { texto: 'darf',               natureza: 'Tributos e Taxas' },
+  { texto: 'iss',                natureza: 'Tributos e Taxas' },
+  { texto: 'pmsp',               natureza: 'Tributos e Taxas' },
+  { texto: 'premio',             natureza: 'Premio recebido' },
+  { texto: 'prêmio',             natureza: 'Premio recebido' },
+  { texto: 'rendimento',         natureza: 'Rendimento líquido Contamax' },
+  { texto: 'contamax',           natureza: 'Rendimento líquido Contamax' },
+  { texto: 'aplicacao',          natureza: 'Aplicação em Fundo' },
+  { texto: 'aplicaç',            natureza: 'Aplicação em Fundo' },
+  { texto: 'resgate',            natureza: 'Transf da LFT para CC' },
+  { texto: 'transf da lft',      natureza: 'Transf da LFT para CC' },
+  { texto: 'comissao',           natureza: 'Comissão Corretoras' },
+  { texto: 'corretora',          natureza: 'Comissão Corretoras' },
+  { texto: 'cartao de credito',  natureza: 'Cartão de Crédito Corporativo' },
+  { texto: 'reembolso',          natureza: 'Reembolso de despesas' },
+  { texto: 'remuneracao',        natureza: 'Remuneração Time FAM' },
+];
+
+let impTrans = [], impArquivo = '', impSaldo = null;
+
+/* ── leitura do arquivo ── */
+function decodificar(buffer){
+  const utf8 = new TextDecoder('utf-8').decode(buffer);
+  // arquivo do banco costuma vir em Windows-1252: se aparecer o caractere de
+  // substituição, decodifica de novo na tabela certa em vez de mostrar lixo
+  if (utf8.includes('�')) { try { return new TextDecoder('windows-1252').decode(buffer); } catch(e) {} }
+  return utf8;
+}
+
+function tagOFX(bloco, tag){
+  const m = bloco.match(new RegExp('<' + tag + '>([^<\\r\\n]*)', 'i'));
+  return m ? m[1].trim() : '';
+}
+
+function parseOFX(txt){
+  const trans = [];
+  const blocos = txt.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || [];
+  for (const b of blocos) {
+    const dt = tagOFX(b, 'DTPOSTED').slice(0, 8);
+    const valor = Number(tagOFX(b, 'TRNAMT').replace(',', '.'));
+    if (!dt || !isFinite(valor) || valor === 0) continue;
+    const nome = tagOFX(b, 'NAME');
+    const memo = tagOFX(b, 'MEMO');
+    const descritivo = (memo || nome || 'Lançamento do extrato').trim();
+    trans.push({
+      data: dt.slice(0,4) + '-' + dt.slice(4,6) + '-' + dt.slice(6,8),
+      valor: Number(valor.toFixed(2)),
+      fitid: tagOFX(b, 'FITID') || (dt + '|' + valor + '|' + descritivo.slice(0,20)),
+      descritivo,
+      contraparte: limparContraparte(nome || memo),
+    });
+  }
+  const bal = txt.match(/<LEDGERBAL>[\s\S]*?<\/LEDGERBAL>/i) || txt.match(/<LEDGERBAL>[\s\S]{0,200}/i);
+  let saldo = null;
+  if (bal) {
+    const v = Number(tagOFX(bal[0], 'BALAMT').replace(',', '.'));
+    const d = tagOFX(bal[0], 'DTASOF').slice(0, 8);
+    if (isFinite(v) && d) saldo = { valor: v, data: d.slice(0,4) + '-' + d.slice(4,6) + '-' + d.slice(6,8) };
+  }
+  return { trans, saldo };
+}
+
+function parseCSV(txt){
+  const linhas = txt.split(/\r?\n/).filter(l => l.trim());
+  if (!linhas.length) return { trans: [], saldo: null };
+  const sep = (linhas[0].match(/;/g) || []).length >= (linhas[0].match(/,/g) || []).length ? ';' : ',';
+  const trans = [];
+  for (const linha of linhas) {
+    const c = linha.split(sep).map(x => x.trim().replace(/^"|"$/g, ''));
+    if (c.length < 2) continue;
+    const dm = c.find(x => /^\d{2}\/\d{2}\/\d{2,4}$/.test(x) || /^\d{4}-\d{2}-\d{2}$/.test(x));
+    if (!dm) continue;                                   // linha sem data = cabeçalho ou rodapé
+    let data;
+    if (dm.includes('/')) {
+      const [d, m, y] = dm.split('/');
+      data = (y.length === 2 ? '20' + y : y) + '-' + m + '-' + d;
+    } else data = dm;
+    // valor = último campo que parece número com 2 casas
+    let valor = NaN, iv = -1;
+    for (let i = c.length - 1; i >= 0; i--) {
+      const n = lerValor(c[i]);
+      if (isFinite(n) && n !== 0 && /[\d]/.test(c[i]) && /[.,]\d{2}$/.test(c[i])) { valor = n; iv = i; break; }
+    }
+    if (!isFinite(valor)) continue;
+    const texto = c.filter((x, i) => i !== iv && x !== dm && x.length > 2 && !/^-?[\d.,]+$/.test(x)).join(' · ') || 'Lançamento do extrato';
+    trans.push({
+      data, valor: Number(valor.toFixed(2)),
+      fitid: 'CSV|' + data + '|' + valor.toFixed(2) + '|' + normalizar(texto).slice(0, 24),
+      descritivo: texto, contraparte: limparContraparte(texto),
+    });
+  }
+  return { trans, saldo: null };
+}
+
+/* Tira o ruído do banco da frente do nome: "PIX ENVIADO 12/07 FULANO LTDA" → "FULANO LTDA" */
+function limparContraparte(txt){
+  let t = String(txt || '').trim();
+  // o banco escreve o meio de pagamento antes do nome: fora com ele
+  t = t.replace(/^(pix|ted|doc|tev)\s+(enviad[oa]|recebid[oa]|remetid[oa])?\s*/i, '');
+  t = t.replace(/^(transferencia|transferência|pagamento|pagto|deb\s*aut|debito|débito|credito|crédito|cred|deb)\s*/i, '');
+  t = t.replace(/\b\d{2}\/\d{2}(\/\d{2,4})?\b/g, ' ');
+  t = t.replace(/\s{2,}/g, ' ').trim();
+  return (t || 'NÃO IDENTIFICADO').slice(0, 60).toUpperCase();
+}
+
+/* ══════════════ LEITURA DE PDF ══════════════
+   Sem biblioteca externa: o PDF e aberto aqui mesmo. Os fluxos comprimidos
+   passam pelo descompactador nativo do navegador (DecompressionStream) e o
+   conteudo de texto e lido operador a operador, montando as linhas pela
+   coordenada Y. E o que permite ler o extrato em PDF do banco offline. */
+
+const latin1 = u8 => {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+  return s;
+};
+
+async function inflar(u8){
+  /* lendo o fluxo na mao, pedaco a pedaco: com a pagina aberta por duplo clique
+     (file://) o navegador recusa `new Response(stream)` com "Failed to fetch" */
+  for (const fmt of ['deflate', 'deflate-raw']) {
+    const pedacos = [];
+    let total = 0;
+    try {
+      const leitor = new Blob([u8]).stream().pipeThrough(new DecompressionStream(fmt)).getReader();
+      for (;;) {
+        const { done, value } = await leitor.read();
+        if (done) break;
+        pedacos.push(value); total += value.length;
+      }
+    } catch (e) {
+      /* o byte de sobra depois do fluxo faz o descompactador reclamar no fim;
+         o que ja saiu antes disso e valido e e o que interessa */
+    }
+    if (total) {
+      const saida = new Uint8Array(total);
+      let off = 0;
+      for (const c of pedacos) { saida.set(c, off); off += c.length; }
+      return saida;
+    }
+  }
+  return null;
+}
+
+/* devolve os fluxos de conteudo (os que desenham texto) */
+async function conteudosPDF(buffer){
+  const bytes = new Uint8Array(buffer);
+  const bruto = latin1(bytes);
+  const saida = [];
+  const re = /stream\r\n|stream\n|stream\r/g;
+  let m;
+  while ((m = re.exec(bruto))) {
+    const ini = m.index + m[0].length;
+    const fim = bruto.indexOf('endstream', ini);
+    if (fim < 0) break;
+    const dic = bruto.slice(Math.max(0, m.index - 600), m.index);
+    let corte = fim;                                  // tira o fim de linha que separa o fluxo do "endstream"
+    while (corte > ini && (bytes[corte - 1] === 10 || bytes[corte - 1] === 13)) corte--;
+    let dados = bytes.subarray(ini, corte);
+    if (/FlateDecode/.test(dic)) dados = await inflar(dados);
+    if (dados) {
+      const txt = latin1(dados);
+      if (/\bTj\b|\bTJ\b/.test(txt)) saida.push(txt);
+    }
+    re.lastIndex = fim + 9;
+  }
+  return saida;
+}
+
+/* percorre o fluxo de conteudo e devolve os eventos de posicao e de texto */
+function eventosPDF(cont){
+  const ev = [];
+  let i = 0, nums = [];
+  while (i < cont.length) {
+    const c = cont[i];
+    if (c === '%') { while (i < cont.length && cont[i] !== '\n') i++; continue; }
+    if (c === '(') {                                   // texto entre parenteses
+      let d = 1, s = '', j = i + 1;
+      while (j < cont.length && d > 0) {
+        const ch = cont[j];
+        if (ch === '\\') {
+          const n = cont[j + 1];
+          if (n >= '0' && n <= '7') {
+            const oct = /^[0-7]{1,3}/.exec(cont.substr(j + 1, 3))[0];
+            s += String.fromCharCode(parseInt(oct, 8)); j += 1 + oct.length;
+          } else {
+            const mapa = { n: '\n', r: '', t: ' ', b: '', f: '' };
+            s += (mapa[n] !== undefined ? mapa[n] : n); j += 2;
+          }
+          continue;
+        }
+        if (ch === '(') { d++; s += ch; j++; continue; }
+        if (ch === ')') { d--; j++; if (!d) break; s += ch; continue; }
+        s += ch; j++;
+      }
+      ev.push({ t: 's', s }); i = j; continue;
+    }
+    if (c === '<' && cont[i + 1] !== '<') {             // texto em hexadecimal
+      const fim = cont.indexOf('>', i);
+      if (fim < 0) break;
+      const hex = cont.slice(i + 1, fim).replace(/\s/g, '');
+      let s = '';
+      for (let k = 0; k + 1 < hex.length; k += 2) s += String.fromCharCode(parseInt(hex.substr(k, 2), 16));
+      ev.push({ t: 's', s }); i = fim + 1; continue;
+    }
+    if (/[-+.\d]/.test(c)) {
+      const m = /^[-+]?[\d.]+/.exec(cont.slice(i, i + 24));
+      if (m) { nums.push(parseFloat(m[0])); i += m[0].length; continue; }
+      i++; continue;
+    }
+    if (/[A-Za-z*'"]/.test(c)) {
+      const op = /^[A-Za-z*'"\d]+/.exec(cont.slice(i, i + 12))[0];
+      i += op.length;
+      if (op === 'Td' || op === 'TD') ev.push({ t: 'p', rel: true, dx: nums[nums.length - 2] || 0, dy: nums[nums.length - 1] || 0 });
+      else if (op === 'Tm')           ev.push({ t: 'p', rel: false, x: nums[nums.length - 2] || 0, y: nums[nums.length - 1] || 0 });
+      else if (op === 'T*')           ev.push({ t: 'p', rel: true, dx: 0, dy: -12 });
+      else if (op === 'BT')           ev.push({ t: 'bt' });
+      nums = [];
+      continue;
+    }
+    i++;
+  }
+  return ev;
+}
+
+/* monta as linhas: mesmo Y e a mesma linha; salto em X vira espaco entre colunas */
+function linhasPDF(conteudos){
+  const linhas = [];
+  for (const cont of conteudos) {
+    let x = 0, y = 0, atual = null, ay = null;
+    for (const e of eventosPDF(cont)) {
+      if (e.t === 'bt') { x = 0; y = 0; }
+      else if (e.t === 'p') {
+        const yAnterior = y;
+        if (e.rel) { x += e.dx; y += e.dy; } else { x = e.x; y = e.y; }
+        if (atual !== null && Math.abs(y - yAnterior) < 1.5 && !atual.endsWith(' ')) atual += ' ';
+      } else if (e.t === 's') {
+        if (atual === null || Math.abs(y - ay) > 1.5) {
+          if (atual !== null && atual.trim()) linhas.push(atual.trim());
+          atual = ''; ay = y;
+        }
+        atual += e.s;
+      }
+    }
+    if (atual !== null && atual.trim()) linhas.push(atual.trim());
+  }
+  return linhas;
+}
+
+/* ── do texto do extrato para lancamentos ── */
+const RE_MOEDA = /-?\d{1,3}(?:\.\d{3})*,\d{2}-?/g;
+const RE_DATA  = /\b(\d{2})\/(\d{2})(?:\/(\d{2,4}))?\b/;
+
+const valorBR = t => {
+  const neg = t.trim().startsWith('-') || t.trim().endsWith('-');
+  const n = Number(t.replace(/[^\d,]/g, '').replace(/\./g, '').replace(',', '.'));
+  return neg ? -n : n;
+};
+
+function parsePDFExtrato(linhas){
+  const texto = linhas.join(' ');
+  const ano = (texto.match(/\b20\d{2}\b/) || [String(new Date().getFullYear())])[0];
+  const trans = [];
+  let saldoAnterior = null, saldo = null;
+
+  for (const bruta of linhas) {
+    const l = bruta.replace(/\s+/g, ' ').trim();
+    if (!l || /^(data|hist[oó]rico|lan[cç]amento|documento|valor|saldo)\b.*\b(valor|saldo)\b/i.test(l)) continue;
+
+    const moedas = l.match(RE_MOEDA);
+    const md = RE_DATA.exec(l);
+
+    /* Linha de saldo (anterior, do dia, final) nao e lancamento: ela vira a
+       referencia de saldo. O "saldo anterior" e o que permite descobrir se o
+       primeiro lancamento do extrato entrou ou saiu. */
+    if (moedas && /\bsaldo\b/i.test(l)) {
+      const v = valorBR(moedas[moedas.length - 1]);
+      saldoAnterior = v;
+      let dataSaldo = saldo ? saldo.data : null;
+      if (md) {
+        const a2 = md[3] ? (md[3].length === 2 ? '20' + md[3] : md[3]) : ano;
+        dataSaldo = a2 + '-' + md[2] + '-' + md[1];
+      }
+      saldo = { valor: v, data: dataSaldo };
+      continue;
+    }
+    if (!md || !moedas) continue;
+
+    const dia = md[1], mes = md[2];
+    const anoLinha = md[3] ? (md[3].length === 2 ? '20' + md[3] : md[3]) : ano;
+    const data = anoLinha + '-' + mes + '-' + dia;
+    if (!/^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(data)) continue;
+
+    let valor = valorBR(moedas[0]);
+    if (moedas.length >= 2) {
+      // a ultima coluna e o saldo corrido: e ele quem diz se o lancamento
+      // entrou ou saiu, mesmo quando o PDF nao imprime o sinal
+      const saldoLinha = valorBR(moedas[moedas.length - 1]);
+      if (saldoAnterior !== null && Math.abs(Math.abs(saldoLinha - saldoAnterior) - Math.abs(valor)) < 0.02) {
+        valor = Math.abs(valor) * (saldoLinha >= saldoAnterior ? 1 : -1);
+      }
+      saldoAnterior = saldoLinha;
+      saldo = { valor: saldoLinha, data };
+    }
+
+    let descritivo = l;
+    for (const m of moedas) descritivo = descritivo.replace(m, ' ');
+    descritivo = descritivo.replace(md[0], ' ').replace(/\s{2,}/g, ' ').trim();
+    if (!descritivo) descritivo = 'Lançamento do extrato';
+    // numero de apolice e de documento nao ajudam a reconhecer a contraparte
+    const paraContraparte = descritivo.replace(/\b\d{6,}\b/g, ' ').replace(/\s{2,}/g, ' ').trim();
+
+    trans.push({
+      data, valor: Number(valor.toFixed(2)),
+      // PDF nao tem FITID: a chave de deduplicacao e data + valor + descritivo
+      fitid: 'PDF|' + data + '|' + valor.toFixed(2) + '|' + normalizar(descritivo).slice(0, 28),
+      descritivo, contraparte: limparContraparte(paraContraparte),
+    });
+  }
+  return { trans, saldo: saldo && saldo.data ? saldo : null };
+}
+
+/* ── classificação ── */
+function indiceContrapartes(){
+  const idx = new Map();
+  for (const mk of Object.keys(DB.meses)) {
+    if (DB.meses[mk].simulado) continue;
+    for (const l of DB.meses[mk].lancamentos) {
+      const k = normalizar(l.contraparte);
+      if (!idx.has(k)) idx.set(k, new Map());
+      const c = idx.get(k);
+      c.set(l.natureza, (c.get(l.natureza) || 0) + 1);
+    }
+  }
+  return idx;
+}
+
+function fitidsExistentes(){
+  const s = new Set();
+  for (const mk of Object.keys(DB.meses)) for (const l of DB.meses[mk].lancamentos) if (l.fitid) s.add(l.fitid);
+  return s;
+}
+
+/* A regra bate no comeco de uma palavra, nunca no meio: sem isso "iss" casaria
+   dentro de "comissao" e mandaria comissao de corretora para tributos. */
+function bateRegra(alvo, texto){
+  const t = normalizar(texto);
+  if (!t) return false;
+  const rx = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('(^|[^a-z0-9])' + rx).test(alvo);
+}
+
+function classificar(trans){
+  // regra mais longa primeiro: a mais especifica ganha da mais ampla
+  const regras = [...(DB.regras || []), ...REGRAS_FABRICA]
+    .slice().sort((a,b) => normalizar(b.texto).length - normalizar(a.texto).length);
+  const idx = indiceContrapartes();
+  const jaTem = fitidsExistentes();
+  return trans.map(t => {
+    const alvo = normalizar(t.descritivo + ' ' + t.contraparte);
+    let natureza = '', semaforo = 'r', porque = 'contraparte nova e nenhuma regra: precisa de você';
+    const regra = regras.find(r => bateRegra(alvo, r.texto));
+    if (regra) { natureza = regra.natureza; semaforo = 'v'; porque = 'regra “' + regra.texto + '”'; }
+    else {
+      /* No PDF a contraparte vem grudada no historico do banco, entao nao basta
+         a igualdade: vale tambem quando o nome conhecido aparece dentro dela. */
+      const alvoCp = normalizar(t.contraparte);
+      let c = idx.get(alvoCp);
+      if (!c) {
+        const conhecidas = [...idx.keys()].filter(k => k.length >= 8).sort((a,b) => b.length - a.length);
+        const achou = conhecidas.find(k => alvoCp.includes(k) || k.includes(alvoCp));
+        if (achou) c = idx.get(achou);
+      }
+      if (c) {
+        natureza = [...c.entries()].sort((a,b) => b[1]-a[1])[0][0];
+        semaforo = 'a'; porque = 'contraparte parecida com uma ja usada em “' + natureza + '”, confirme';
+      }
+    }
+    const dup = jaTem.has(t.fitid);
+    return { ...t, natureza, semaforo: dup ? 'c' : semaforo, porque: dup ? 'já importado antes · não entra de novo' : porque, dup, importar: !dup };
+  });
+}
+
+/* ── tela ── */
+function abrirImportacao(){
+  impTrans = []; impArquivo = ''; impSaldo = null;
+  abrirModal(`
+    <div class="modal-header">
+      <div class="modal-title">📥 Importar extrato<small>Extrato em PDF do Santander: o sistema vira lançamento sozinho</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button>
+    </div>
+    <div id="imp-corpo">
+      <div id="drop" onclick="document.getElementById('imp-file').click()">
+        <div class="ico">📄</div>
+        <div class="t">Solte o extrato em PDF aqui, ou clique para escolher</div>
+        <div class="s">
+          No internet banking do Santander: Extrato → Salvar em <b>PDF</b>.<br>
+          Só arquivos <b>.pdf</b>. Nada sai deste computador: o PDF é lido aqui dentro.
+        </div>
+      </div>
+      <input type="file" id="imp-file" accept=".pdf,application/pdf" style="display:none" onchange="lerExtrato(this.files[0])">
+      <div class="aviso" style="margin-top:14px">
+        O sistema guarda a identidade de cada lançamento lido (data, valor e descritivo do banco).
+        É por ela que ele reconhece o que já entrou: <b>importar o mesmo extrato duas vezes não duplica nada</b>.
+      </div>
+    </div>`, true);
+  const d = document.getElementById('drop');
+  d.addEventListener('dragover', e => { e.preventDefault(); d.classList.add('sobre'); });
+  d.addEventListener('dragleave', () => d.classList.remove('sobre'));
+  d.addEventListener('drop', e => { e.preventDefault(); d.classList.remove('sobre'); if (e.dataTransfer.files[0]) lerExtrato(e.dataTransfer.files[0]); });
+}
+
+let impLinhas = [];
+
+function lerExtrato(file){
+  if (!file) return;
+  impArquivo = file.name;
+  document.getElementById('imp-corpo').innerHTML = '<div class="aviso">Lendo <b>' + esc(file.name) + '</b>...</div>';
+  const fr = new FileReader();
+  fr.onload = async () => {
+    let r = { trans: [], saldo: null };
+    impLinhas = [];
+    const cabeca = latin1(new Uint8Array(fr.result.slice(0, 8)));
+    if (cabeca.startsWith('%PDF')) {
+      impLinhas = linhasPDF(await conteudosPDF(fr.result));
+      r = parsePDFExtrato(impLinhas);
+    } else {
+      // nao e PDF: ainda assim tenta ler, para nao travar quem arrastar um OFX
+      const txt = decodificar(fr.result);
+      r = /<STMTTRN>/i.test(txt) ? parseOFX(txt) : parseCSV(txt);
+    }
+    impSaldo = r.saldo;
+    if (!r.trans.length) { semLancamentos(file.name); return; }
+    impTrans = classificar(r.trans).sort((a,b) => a.data.localeCompare(b.data));
+    renderConferencia();
+  };
+  fr.readAsArrayBuffer(file);
+}
+
+/* Quando nao reconhece nada, mostra o que conseguiu ler do arquivo. Assim da
+   para ver o formato do extrato e ajustar a leitura, em vez de so dar erro. */
+function semLancamentos(nome){
+  const amostra = impLinhas.slice(0, 30).join(String.fromCharCode(10));
+  document.getElementById('imp-corpo').innerHTML = `
+    <div class="alert-error">Não reconheci nenhum lançamento em <b>${esc(nome)}</b>.</div>
+    <div class="aviso" style="margin-top:12px">
+      Preciso de linhas com <b>data</b> (dd/mm/aaaa) e <b>valor</b> (1.234,56) no mesmo lugar.
+      ${amostra ? 'Isto foi o que consegui ler do arquivo. Copie e me mande, que eu ajusto a leitura para o layout do seu banco:' : 'Não consegui extrair texto nenhum: o PDF pode ser uma imagem digitalizada, e aí não há texto para ler.'}
+    </div>
+    ${amostra ? `<textarea class="fam-input" style="min-height:220px;font-family:Consolas,monospace;font-size:12px;margin-top:10px" onclick="this.select()">${esc(amostra)}</textarea>` : ''}
+    <div class="modal-rodape"><button class="btn-clear" onclick="abrirImportacao()">Escolher outro arquivo</button></div>`;
+}
+
+function renderConferencia(){
+  const nats = naturezasConhecidas();
+  const novos = impTrans.filter(t => !t.dup);
+  const cont = { v: 0, a: 0, r: 0, c: impTrans.length - novos.length };
+  novos.forEach(t => cont[t.semaforo]++);
+  const marcados = impTrans.filter(t => t.importar);
+  const meses = [...new Set(marcados.map(t => t.data.slice(0,7)))].sort();
+
+  /* O robô chuta a natureza pela regra que aprendeu. Descritivo genérico ("Transf
+     Fornecedores") ele acerta pouco de propósito · por isso a natureza E o valor
+     ficam editáveis aqui, antes de virar lançamento. O descritivo do banco não
+     muda: é ele, com a data e o valor lidos, que impede a reimportação duplicar. */
+  const campoMini = 'class="fam-input" style="font-size:12.5px;padding:5px 8px"';
+  const linhas = impTrans.map((t, i) => `
+    <tr class="${t.dup ? 'dup' : ''}${t.manual ? ' manual' : ''}">
+      <td style="text-align:center">
+        <input type="checkbox" ${t.importar ? 'checked' : ''} ${t.dup ? 'disabled' : ''} onchange="impTrans[${i}].importar=this.checked;atualizarRodapeImp()">
+      </td>
+      <td style="white-space:nowrap">${t.manual
+        ? `<span class="sem ${t.semaforo}"></span> <input type="date" ${campoMini} style="font-size:12px;padding:4px 6px;width:132px" value="${t.data}" oninput="impTrans[${i}].data=this.value;atualizarRodapeImp()">`
+        : `<span class="sem ${t.semaforo}"></span> ${fmtData(t.data)}`}</td>
+      <td>${t.manual
+        ? `<input ${campoMini} placeholder="quem pagou ou recebeu" value="${esc(t.contraparte)}" oninput="impTrans[${i}].contraparte=this.value">
+           <input ${campoMini} style="margin-top:4px;font-size:12px" placeholder="descritivo" value="${esc(t.descritivo)}" oninput="impTrans[${i}].descritivo=this.value">`
+        : `<b>${esc(t.contraparte)}</b><br><span style="color:var(--soft);font-size:12px">${esc(t.descritivo)}</span>`}</td>
+      <td class="num">
+        <input ${campoMini} inputmode="decimal" data-dinheiro="neg" style="font-size:12.5px;padding:5px 8px;color:${t.valor>=0?'#1a7a50':'#a02020'}"
+               value="${t.valor ? valorEditavel(t.valor) : ''}" placeholder="R$ 0,00"
+               oninput="mudarValorImp(${i}, this)" title="dá para corrigir o valor antes de importar · a tecla - inverte o sinal">
+      </td>
+      <td>
+        <input ${campoMini} list="dl-nat-imp" value="${esc(t.natureza)}"
+               placeholder="escolha a natureza"
+               oninput="impTrans[${i}].natureza=this.value;impTrans[${i}].semaforo=this.value?'v':'r';atualizarRodapeImp()">
+      </td>
+      <td style="font-size:11.5px;color:var(--soft)">${esc(t.porque)}</td>
+    </tr>`).join('');
+
+  const semNatureza = marcados.filter(t => !t.natureza).length;
+
+  document.getElementById('imp-corpo').innerHTML = `
+    <datalist id="dl-nat-imp">${nats.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+    <div class="resumo-imp">
+      <span class="badge-blue" style="background:#e6f0fb;color:#1a55a0">📄 ${esc(impArquivo)}</span>
+      <span class="badge-green" style="background:#e6f9f0;color:#1a7a50"><span class="sem v"></span> ${cont.v} categorizado(s) por regra</span>
+      <span class="badge-yellow" style="background:#fdf8e6;color:#907010"><span class="sem a"></span> ${cont.a} sugerido(s), confirme</span>
+      <span class="badge-red" style="background:#fbeaea;color:#a02020"><span class="sem r"></span> ${cont.r} sem natureza</span>
+      <span class="badge-gray" style="background:#f0f2f5;color:#607080"><span class="sem c"></span> ${cont.c} já importado(s)</span>
+    </div>
+    ${impSaldo ? `<div class="aviso" style="margin-bottom:12px">O extrato diz que o saldo em ${fmtData(impSaldo.data)} é <b>${fmt(impSaldo.valor)}</b>. Vou gravar esse número como saldo bancário de ${rotuloMes(impSaldo.data.slice(0,7))} · é ele que o card <b>Diferença a conciliar</b> usa.</div>` : ''}
+    <div class="fam-table-wrap" style="max-height:46vh;overflow-y:auto">
+      <table class="fam-table">
+        <thead><tr>
+          <th style="width:40px"></th>
+          <th style="width:110px">Data</th>
+          <th>Contraparte / descritivo do banco</th>
+          <th class="num" style="width:130px">Valor</th>
+          <th style="width:210px">Natureza</th>
+          <th style="width:210px">Por quê</th>
+        </tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>
+    <div id="imp-rodape">${rodapeImp()}</div>`;
+}
+
+/* Campo de dinheiro nasce e vive formatado: "R$ 1.000,00". Quem digita mexe só
+   nos dígitos · a máscara põe o R$, o ponto e a vírgula no lugar. */
+const valorEditavel = v => (v < 0 ? '-' : '') + 'R$ ' + fmtN(v);
+
+/* Corrigir o valor não mexe na identidade do lançamento no banco (data, valor e
+   descritivo LIDOS), que continua guardada no fitid · reimportar o mesmo extrato
+   segue sem duplicar, mesmo depois da correção. */
+function mudarValorImp(i, campo){
+  const v = lerValor(campo.value);
+  impTrans[i].valor = isFinite(v) ? Number(v.toFixed(2)) : 0;
+  campo.style.color = impTrans[i].valor >= 0 ? '#1a7a50' : '#a02020';
+  atualizarRodapeImp();
+}
+
+/* Lançamento que o extrato não trouxe entra por aqui, na mesma conferência. */
+function adicionarLinhaImp(){
+  const base = impTrans.find(t => t.data) || {};
+  impTrans.unshift({
+    data: base.data || (mesAtual + '-01'),
+    contraparte: '', descritivo: '', valor: 0, natureza: '',
+    semaforo: 'r', porque: 'digitado à mão nesta conferência',
+    fitid: 'M' + Date.now().toString(36) + Math.floor(Math.random()*900+100),
+    dup: false, importar: true, manual: true,
+  });
+  renderConferencia();
+  const el = document.querySelector('#imp-corpo tbody tr.manual input:not([type=checkbox]):not([type=date])');
+  if (el) el.focus();
+}
+
+/* O rodape se refaz sozinho enquanto o usuario digita a natureza · de proposito
+   sem redesenhar a tabela, senao o campo perde o foco no meio da digitacao. */
+function rodapeImp(){
+  const marcados = impTrans.filter(t => t.importar);
+  const meses = [...new Set(marcados.map(t => t.data.slice(0,7)))].sort();
+  const semNatureza = marcados.filter(t => !t.natureza).length;
+  const semValor = marcados.filter(t => !t.valor).length;
+  const semNome = marcados.filter(t => !String(t.contraparte || '').trim()).length;
+  const falta = [
+    semNatureza && semNatureza + ' sem natureza',
+    semValor && semValor + ' com valor zerado',
+    semNome && semNome + ' sem contraparte',
+  ].filter(Boolean);
+  return `${falta.length ? `<div class="alert-error" style="margin-top:12px">Falta ajustar antes de importar: ${falta.join(' · ')}. Preencha, ou desmarque a linha.</div>` : ''}
+    <div class="modal-rodape">
+      <span class="esq" style="font-size:12.5px;color:var(--soft);align-self:center">
+        ${marcados.length} lançamento(s) para ${meses.map(rotuloMes).join(' e ') || '-'}
+      </span>
+      <button class="btn-clear" onclick="adicionarLinhaImp()">＋ Adicionar linha à mão</button>
+      <button class="btn-clear" onclick="abrirImportacao()">Trocar arquivo</button>
+      <button class="btn-primary" onclick="confirmarImportacao()">Importar ${marcados.length} lançamento(s)</button>
+    </div>`;
+}
+
+function atualizarRodapeImp(){
+  const el = document.getElementById('imp-rodape');
+  if (el) el.innerHTML = rodapeImp();
+}
+
+function confirmarImportacao(){
+  const incompletos = impTrans.filter(t => t.importar &&
+    (!t.natureza || !t.valor || !String(t.contraparte || '').trim()));
+  if (incompletos.length) {
+    alert(incompletos.length + ' linha(s) marcada(s) ainda estao incompletas: falta natureza, ' +
+          'valor ou contraparte. Preencha essas linhas, ou desmarque a caixinha delas, antes de importar.');
+    return;
+  }
+  const marcados = impTrans.filter(t => t.importar && t.natureza);
+  if (!marcados.length) { alert('Nenhum lançamento marcado para importar.'); return; }
+  const meses = [...new Set(marcados.map(t => t.data.slice(0,7)))].sort();
+
+  // mês simulado no caminho: o extrato manda, mas só com o "sim" do usuário
+  for (const mk of meses) {
+    const m = DB.meses[mk];
+    if (m && m.simulado) {
+      if (!confirm(rotuloMes(mk) + ' hoje é um mês SIMULADO. Importar o extrato apaga a simulação e transforma o mês em real. Confirma?')) return;
+      m.lancamentos = []; m.simulado = false; delete m.cenario; delete m.baseSimulacao; delete m.regras;
+    }
+  }
+
+  for (const mk of meses) {
+    if (!DB.meses[mk]) {
+      const anterior = mesesOrdenados().filter(x => x < mk).pop();
+      const saldoAnt = anterior ? apurar(anterior).saldoApurado : 0;
+      DB.meses[mk] = { rotulo: rotuloMes(mk), saldoInicial: Number(saldoAnt.toFixed(2)), saldoFinalBancario: 0, simulado: false, lancamentos: [] };
+    }
+  }
+
+  DB.regras = DB.regras || [];
+  let k = 0;
+  for (const t of marcados) {
+    const mk = t.data.slice(0,7);
+    DB.meses[mk].lancamentos.push({
+      id: 'X' + Date.now().toString(36) + (++k),
+      data: t.data, natureza: t.natureza, contraparte: t.contraparte,
+      descritivo: t.descritivo, valor: t.valor, obs: '', fitid: t.fitid,
+      origem: t.manual ? 'manual' : 'extrato',
+    });
+    // toda confirmação vira regra: no mês que vem esse mesmo lançamento já entra verde
+    const chave = normalizar(t.contraparte);
+    if (chave && chave !== 'nao identificado') {
+      const r = DB.regras.find(x => normalizar(x.texto) === chave);
+      if (r) { r.natureza = t.natureza; r.acertos = (r.acertos || 0) + 1; }
+      else DB.regras.push({ texto: t.contraparte, natureza: t.natureza, acertos: 1, origem: 'aprendida' });
+    }
+  }
+
+  if (impSaldo) {
+    const mk = impSaldo.data.slice(0,7);
+    if (DB.meses[mk]) DB.meses[mk].saldoFinalBancario = Number(impSaldo.valor.toFixed(2));
+  }
+
+  auditar('importacao', 'Extrato importado', {
+    onde: meses.map(rotuloMes).join(' · '),
+    de: impArquivo || 'arquivo de extrato',
+    para: marcados.length + ' lançamento(s) · ' + fmt(marcados.reduce((s,t) => s + t.valor, 0)),
+    detalhe: impSaldo ? 'Saldo do extrato: ' + fmt(impSaldo.valor) + ' em ' + fmtData(impSaldo.data) : 'O arquivo não trouxe saldo do extrato.' });
+  gravar(); fecharModal();
+  /* o extrato entrou num mês: é esse mês que a tela tem que estar mostrando,
+     e é ele que a diferença tem que estar comparando */
+  garantirMesNaTela(meses);
+  mesAtual = meses[meses.length-1];
+  compB = mesAtual;
+  compA = mesesNaTela().filter(x => x < mesAtual).pop() || mesAtual;
+  parFixado = true;
+  abertasComp.clear(); abertasCP.clear(); render();
+  const a = apurar(mesAtual);
+  const ok = Math.abs(a.diferenca) < 0.005;
+  alert(marcados.length + ' lançamento(s) importado(s) para ' + meses.map(rotuloMes).join(' e ') + '.\n\n' +
+        (impSaldo
+          ? (ok ? 'Conciliação: bate com o extrato · diferença zero.'
+                : 'Conciliação: diferença de ' + fmt(a.diferenca) + '. Confira antes de fechar o mês.')
+          : 'O arquivo não trouxe saldo do extrato: informe o saldo bancário para o sistema conciliar.'));
+}
+</script>

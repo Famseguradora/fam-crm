@@ -1,0 +1,423 @@
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   O COFRE · o caixa é cifrado no navegador, e só abre com senha
+
+   O servidor guarda ruído. Nem o Marco, que é dono do acesso, nem quem
+   escreveu este código conseguem abrir. Isso não é promessa: a chave nasce
+   aqui dentro, é derivada da senha de quem digita, e não sai da memória desta
+   aba. Nenhuma linha deste arquivo manda senha ou chave para lugar nenhum ·
+   se algum dia mandar, o sigilo acabou nesse commit.
+
+   COMO É FEITO
+   Existe UMA chave de cofre (AES-256-GCM, sorteada uma vez). Ela cifra o caixa.
+   Ela nunca é guardada em claro. O que vai para o banco são ENVELOPES: a mesma
+   chave do cofre, cifrada por uma senha pessoal ou pela chave de recuperação.
+   Abrir qualquer envelope devolve a chave do cofre.
+
+   POR QUE ENVELOPE, E NÃO "cifrar com a senha direto"
+   Porque assim dá para ter mais de uma pessoa lendo, e trocar uma senha sem
+   ter que recifrar o caixa inteiro. Trocar senha = refazer um envelope.
+
+   QUEM NÃO TEM ENVELOPE entra no MODO MANUTENÇÃO: dados sintéticos gerados
+   aqui na hora, e o envio para o servidor desligado. É o que permite o Marco
+   abrir a tela para achar defeito sem nunca receber um número verdadeiro.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const COFRE = {
+  chave: null,        // CryptoKey do cofre · só na memória desta aba
+  aberto: false,
+  virgem: false,      // ainda não existe cofre: primeira vez
+  semChave: false,    // tem acesso à tela, não tem envelope → manutenção
+  envelopes: [],
+  eu: null,
+};
+
+const ITERACOES = 310000;                    // PBKDF2-SHA256, recomendação OWASP
+const b64 = b => btoa(String.fromCharCode(...new Uint8Array(b)));
+const deB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const sortear = n => crypto.getRandomValues(new Uint8Array(n));
+
+/* ── senha → chave que abre o envelope ───────────────────────────────────── */
+async function chaveDaSenha(senha, sal, iteracoes){
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(senha), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: sal, iterations: iteracoes, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+async function cifrar(chave, texto){
+  const nonce = sortear(12);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, chave, new TextEncoder().encode(texto));
+  return { nonce: b64(nonce), ct: b64(ct) };
+}
+async function decifrar(chave, nonceB64, ctB64){
+  const claro = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: deB64(nonceB64) }, chave, deB64(ctB64));
+  return new TextDecoder().decode(claro);
+}
+
+/* ── envelopes ───────────────────────────────────────────────────────────── */
+async function envelopar(chaveDoCofre, senha, rotulo, tipo, usuarioId){
+  const bruta = await crypto.subtle.exportKey('raw', chaveDoCofre);
+  const sal = sortear(16);
+  const kek = await chaveDaSenha(senha, sal, ITERACOES);
+  const nonce = sortear(12);
+  const cifrada = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, kek, bruta);
+
+  const r = await fetch('/api/financeiro/cofre', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      rotulo, tipo, usuarioId: usuarioId || null,
+      iteracoes: ITERACOES, sal: b64(sal), nonce: b64(nonce), cofreCifrado: b64(cifrada),
+    }),
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).erro || 'não deu para gravar a chave');
+}
+
+async function abrirEnvelope(env, senha){
+  const kek = await chaveDaSenha(senha, deB64(env.sal), env.iteracoes);
+  const bruta = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: deB64(env.nonce) }, kek, deB64(env.cofre_cifrado));
+  return crypto.subtle.importKey('raw', bruta, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
+}
+
+/* ── o pacote que vai e volta do servidor ────────────────────────────────── */
+const ehPacoteCifrado = o => !!(o && o.fam_cofre === 1 && o.nonce && o.ct);
+
+async function empacotar(objeto){
+  const { nonce, ct } = await cifrar(COFRE.chave, JSON.stringify(objeto));
+  return { fam_cofre: 1, nonce, ct };
+}
+async function desempacotar(pacote){
+  return JSON.parse(await decifrar(COFRE.chave, pacote.nonce, pacote.ct));
+}
+
+/* Na trilha, o QUE e o QUANDO ficam legíveis; o conteúdo, não. É o que dá ao
+   Marco a responsabilidade e o histórico que ele pediu, sem lhe dar os valores.
+   Sem chave, os campos cifrados aparecem como um aviso, nunca como base64 cru. */
+const CAMPOS_SIGILO = ['onde', 'de', 'para', 'detalhe'];
+
+async function cifrarRegistro(reg){
+  if (!COFRE.aberto) return reg;
+  const saida = { ...reg };
+  for (const c of CAMPOS_SIGILO) {
+    if (!reg[c]) { saida[c] = ''; continue; }
+    const { nonce, ct } = await cifrar(COFRE.chave, String(reg[c]));
+    saida[c] = 'cof:' + nonce + ':' + ct;
+  }
+  return saida;
+}
+async function decifrarRegistro(reg){
+  const saida = { ...reg };
+  for (const c of CAMPOS_SIGILO) {
+    const v = reg[c];
+    if (typeof v !== 'string' || !v.startsWith('cof:')) continue;
+    if (!COFRE.aberto) { saida[c] = '🔒'; continue; }
+    const [, nonce, ct] = v.split(':');
+    try { saida[c] = await decifrar(COFRE.chave, nonce, ct); }
+    catch(e) { saida[c] = '🔒'; }
+  }
+  return saida;
+}
+
+/* ── a tela de destrancar ──────────────────────────────────────────────────
+   SOBREPOSIÇÃO, não substituição. A primeira versão disto trocava o innerHTML
+   do body e depois recarregava a página · mas a chave do cofre só existe na
+   memória, e recarregar a perderia, voltando para a mesma tela de senha em
+   laço. Cobrindo por cima, o sistema continua inteiro embaixo e a partida
+   segue de onde parou assim que o cofre abre. */
+let _resolverCofre = null;
+const esperarCofre = () => new Promise(r => { _resolverCofre = r; });
+
+function telaCofre(html){
+  let o = document.getElementById('cofre-overlay');
+  if (!o) {
+    o = document.createElement('div');
+    o.id = 'cofre-overlay';
+    o.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;' +
+      "padding:24px;font-family:'Calibri','Segoe UI',sans-serif;background:#e8eef5";
+    document.body.appendChild(o);
+  }
+  o.innerHTML =
+    '<div style="background:#fff;border:1px solid #c5d5e8;border-radius:12px;padding:26px 30px;max-width:520px;width:100%;' +
+    'box-shadow:0 6px 16px rgba(30,64,128,.12)">' + html + '</div>';
+}
+
+function fecharTelaCofre(){
+  const o = document.getElementById('cofre-overlay');
+  if (o) o.remove();
+}
+
+function pedirSenha(erro){
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:6px">🔒 Cofre do Financeiro</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:16px">' +
+    'O caixa está cifrado neste navegador. Sem a senha, nem o servidor nem quem administra o CRM conseguem abrir.</div>' +
+    (erro ? '<div style="background:#fbeaea;border-left:4px solid #d64545;color:#7a1a1a;padding:9px 12px;border-radius:6px;' +
+            'font-size:13px;margin-bottom:12px">' + erro + '</div>' : '') +
+    '<input id="cofre-senha" type="password" class="fam-input" placeholder="sua senha do cofre" ' +
+    'style="width:100%;font-size:16px;padding:10px 12px;border:1.5px solid #c5d5e8;border-radius:7px;margin-bottom:12px" ' +
+    'onkeydown="if(event.key===\'Enter\')destrancar()">' +
+    '<button class="btn-primary" style="width:100%" onclick="destrancar()">Abrir o cofre</button>' +
+    '<div style="font-size:12px;color:#6080a0;margin-top:14px;line-height:1.6">' +
+    'Esqueceu? A chave de recuperação lacrada abre. Ninguém mais consegue · nem o Marco, nem o programador.</div>');
+  const c = document.getElementById('cofre-senha'); if (c) c.focus();
+}
+
+async function destrancar(){
+  const el = document.getElementById('cofre-senha');
+  const senha = el ? el.value : '';
+  if (!senha) return pedirSenha('Escreva a senha.');
+
+  /* tenta o envelope da pessoa e, depois, os de recuperação · quem digitar a
+     chave de recuperação entra por ela sem precisar escolher nada na tela */
+  const meus = COFRE.envelopes.filter(e => e.tipo === 'senha' && e.usuario_id === COFRE.eu);
+  const convites = COFRE.envelopes.filter(e => e.tipo === 'senha' && !e.usuario_id);
+  const recup = COFRE.envelopes.filter(e => e.tipo === 'recuperacao');
+
+  for (const env of [...meus, ...convites, ...recup]) {
+    try {
+      COFRE.chave = await abrirEnvelope(env, senha);
+      COFRE.aberto = true;
+      fecharTelaCofre();
+      /* Entrou por um código de convite: troca por senha própria AGORA, senão o
+         código continuaria valendo por aí depois de já ter cumprido o papel. */
+      if (env.tipo === 'senha' && !env.usuario_id) await trocarPorSenhaPropria(env);
+      if (_resolverCofre) _resolverCofre('aberto');   // a partida continua daqui
+      return;
+    } catch(e) { /* envelope errado: tenta o próximo */ }
+  }
+  pedirSenha('Senha não confere com nenhuma chave deste cofre.');
+}
+
+/* ── primeira vez: cria a senha e a chave de recuperação ─────────────────── */
+function telaPrimeiraVez(){
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:6px">🔐 Criar o cofre do Financeiro</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:16px">' +
+    'A partir daqui o caixa passa a ser cifrado neste navegador. <b>Ninguém sem senha abre</b>: ' +
+    'nem o servidor, nem o dono do CRM, nem quem programou.</div>' +
+    '<input id="c1" type="password" placeholder="crie a sua senha" style="width:100%;font-size:16px;padding:10px 12px;' +
+    'border:1.5px solid #c5d5e8;border-radius:7px;margin-bottom:9px">' +
+    '<input id="c2" type="password" placeholder="repita a senha" style="width:100%;font-size:16px;padding:10px 12px;' +
+    'border:1.5px solid #c5d5e8;border-radius:7px;margin-bottom:12px">' +
+    '<div style="background:#fdf8e6;border-left:4px solid #e8b84b;color:#7a5c10;padding:10px 12px;border-radius:6px;' +
+    'font-size:13px;line-height:1.6;margin-bottom:14px">Vou gerar também uma <b>chave de recuperação</b>. ' +
+    'Ela aparece <b>uma única vez</b>: imprima e guarde lacrada com a pessoa combinada. ' +
+    'Perder as duas apaga o histórico para sempre.</div>' +
+    '<button class="btn-primary" style="width:100%" onclick="criarCofre()">Criar o cofre</button>');
+}
+
+async function criarCofre(){
+  const s1 = document.getElementById('c1').value, s2 = document.getElementById('c2').value;
+  if (s1.length < 10) { alert('Use pelo menos 10 caracteres: esta senha é a única porta.'); return; }
+  if (s1 !== s2) { alert('As duas senhas não são iguais.'); return; }
+
+  const chave = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  /* a chave de recuperação é sorteada, não escolhida: senha inventada por
+     gente é o elo fraco justamente na porta que quase nunca se usa */
+  const recup = b64(sortear(24)).replace(/[+/=]/g, '').slice(0, 28).replace(/(.{7})(?=.)/g, '$1-');
+
+  try {
+    await envelopar(chave, s1, (window.FAM_SESSAO || {}).nome || 'senha pessoal', 'senha', (window.FAM_SESSAO || {}).usuarioId);
+    await envelopar(chave, recup, 'chave de recuperação lacrada', 'recuperacao', null);
+  } catch(e) { alert('Não deu para criar o cofre: ' + e.message); return; }
+
+  COFRE.chave = chave; COFRE.aberto = true;
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:10px">🔑 A chave de recuperação</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+    'Ela <b>não aparece de novo</b>. Imprima, lacre e entregue à pessoa combinada.</div>' +
+    '<div style="font-family:Consolas,monospace;font-size:21px;font-weight:700;letter-spacing:2px;color:#102040;' +
+    'background:#f2f7fd;border:2px dashed #3070c8;border-radius:9px;padding:18px;text-align:center;margin-bottom:14px;' +
+    'user-select:all">' + recup + '</div>' +
+    '<button class="btn-clear" style="width:100%;margin-bottom:8px" onclick="window.print()">🖨️ Imprimir esta folha</button>' +
+    '<label style="display:flex;gap:8px;font-size:13.5px;color:#3a4a5a;margin:12px 0"><input type="checkbox" id="c-ok">' +
+    'Guardei a chave de recuperação num lugar seguro.</label>' +
+    '<button class="btn-primary" style="width:100%" onclick="entrarDepoisDeGuardar()">Entrar no Financeiro</button>');
+}
+
+function entrarDepoisDeGuardar(){
+  if (!document.getElementById('c-ok').checked) { alert('Marque a caixa depois de guardar a chave.'); return; }
+  fecharTelaCofre();
+  if (_resolverCofre) _resolverCofre('criado');
+}
+
+/* ══════════════ DAR A CHAVE A ALGUÉM, SEM SABER A SENHA DELE ══════════════
+   O Aldeir não pode escolher a senha do Marco. Então ele gera um código de uso
+   único, embrulha a chave do cofre com ele e passa o código por fora do sistema
+   (WhatsApp, na mão). Quem recebe entra com o código e TROCA na hora por uma
+   senha própria · o código é revogado no mesmo ato.
+
+   O código nunca passa por este servidor em claro: o que sobe é o envelope já
+   fechado por ele. Quem só olhasse o banco veria mais um envelope ilegível. */
+async function convidarParaOCofre(){
+  if (!COFRE.aberto) { alert('Abra o cofre antes de convidar alguém.'); return; }
+  const codigo = b64(sortear(24)).replace(/[+/=]/g, '').slice(0, 24).replace(/(.{6})(?=.)/g, '$1-');
+  const nome = prompt('Para quem é esta chave? (só para você reconhecer depois na lista)');
+  if (nome === null) return;
+
+  try { await envelopar(COFRE.chave, codigo, 'convite · ' + (nome || 'sem nome'), 'senha', null); }
+  catch(e) { alert('Não deu para gerar o convite: ' + e.message); return; }
+
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:10px">🎟️ Código de uso único</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+    'Passe este código <b>por fora do sistema</b>. Quem receber entra com ele e escolhe a própria senha na hora. ' +
+    'Ele não aparece de novo.</div>' +
+    '<div style="font-family:Consolas,monospace;font-size:20px;font-weight:700;letter-spacing:2px;color:#102040;' +
+    'background:#f2f7fd;border:2px dashed #3070c8;border-radius:9px;padding:16px;text-align:center;margin-bottom:14px;' +
+    'user-select:all">' + codigo + '</div>' +
+    '<button class="btn-primary" style="width:100%" onclick="fecharTelaCofre()">Fechar</button>');
+}
+
+/* Quem entrou com um código de convite troca por senha própria imediatamente.
+   Sem isso, o código andaria por aí valendo para sempre. */
+async function trocarPorSenhaPropria(envelopeUsado){
+  const s1 = prompt('Você entrou com um código de convite. Crie agora a SUA senha (mínimo 10 caracteres):');
+  if (!s1) return;
+  if (s1.length < 10) { alert('Use pelo menos 10 caracteres.'); return; }
+  const s2 = prompt('Repita a sua senha:');
+  if (s1 !== s2) { alert('As senhas não são iguais. O convite continua valendo, tente de novo.'); return; }
+
+  try {
+    await envelopar(COFRE.chave, s1, (window.FAM_SESSAO || {}).nome || 'senha pessoal', 'senha', (window.FAM_SESSAO || {}).usuarioId);
+    await fetch('/api/financeiro/cofre', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ envelopeId: envelopeUsado.id }),
+    });
+    flash('Pronto: a sua senha vale a partir de agora e o código de convite foi queimado.');
+  } catch(e) {
+    alert('Criei a sua senha, mas não consegui queimar o convite: ' + e.message +
+          ' · avise o dono do cofre para revogar o convite na mão.');
+  }
+}
+
+/* ══════════════ A PORTA · decide o que fazer antes de tudo ════════════════
+   Três caminhos: cofre virgem (cria), cofre com envelope meu (pede a senha),
+   ou entrei na sala sem chave (manutenção). Devolve 'aberto', 'criado' ou
+   'manutencao'; a partida em _p5 espera esta resposta. */
+async function cofreIniciar(){
+  const r = await fetch('/api/financeiro/cofre', { cache: 'no-store' });
+  if (!r.ok) throw new Error('cofre ' + r.status);
+  const j = await r.json();
+
+  COFRE.envelopes = j.envelopes || [];
+  COFRE.eu = j.eu;
+  COFRE.virgem = !!j.virgem;
+
+  if (COFRE.virgem) {
+    if (!nuvemPodeEditar()) { COFRE.semChave = true; return 'manutencao'; }
+    telaPrimeiraVez();
+    return esperarCofre();
+  }
+
+  const tenhoEnvelope = COFRE.envelopes.some(e => e.tipo === 'senha' && e.usuario_id === COFRE.eu);
+  /* Sem envelope meu, ainda dá para entrar pela chave de recuperação · quem a
+     tem, tem. Mas não empurro a tela de senha para quem não tem nada: para o
+     Marco, que é dono do acesso e não é leitor, isso seria uma parede toda vez.
+     Ele cai no modo manutenção, que é onde ele consegue trabalhar. */
+  if (!tenhoEnvelope) { COFRE.semChave = true; return 'manutencao'; }
+
+  pedirSenha();
+  return esperarCofre();
+}
+
+/* ── modo manutenção: quem entrou sem chave ──────────────────────────────────
+   Números sorteados AQUI, nesta aba. O caixa cifrado nem chega a ser aberto,
+   porque não há como abri-lo. A forma é a real (as naturezas do plano, as
+   colunas, o drill-down); os valores não têm nada a ver com a FAM. */
+function baseDeManutencao(){
+  /* gerador com semente fixa: a mesma tela em duas aberturas, senão comparar
+     um defeito entre duas sessões vira perseguir número que mudou sozinho */
+  let s = 20260829;
+  const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const entre = (a, b) => Math.round((a + rnd() * (b - a)) * 100) / 100;
+
+  const cps = ['ALFA COMERCIO', 'BETA SERVICOS', 'GAMA LOGISTICA', 'DELTA CONSULTORIA', 'EPSILON TEC'];
+  /* Nomes inventados, NÃO os do plano de contas do Aldeir. Derivar de JULHO
+     seria entregar a estrutura do caixa dele para quem não tem chave · e, com o
+     cofre em pé, o servidor manda JULHO vazio de qualquer jeito, então derivar
+     dali daria uma tela sem nenhuma linha. */
+  const naturezas = [
+    ['Receita de demonstração A', false], ['Receita de demonstração B', false],
+    ['Despesa de demonstração A', true], ['Despesa de demonstração B', true],
+    ['Despesa de demonstração C', true], ['Despesa de demonstração D', true],
+  ];
+  const meses = ['2026-07', '2026-08'];
+  const db = { versao: 1, carga: CARGA, meses: {} };
+
+  for (const mk of meses) {
+    const lanc = [];
+    naturezas.forEach(([nat, saida], i) => {
+      for (let k = 0; k < 2; k++) {
+        const v = entre(500, 60000) * (saida ? -1 : 1);
+        lanc.push({
+          id: 'M' + mk + '-' + i + '-' + k,
+          data: mk + '-' + String(3 + ((i + k) % 25)).padStart(2, '0'),
+          natureza: nat, contraparte: cps[(i + k) % cps.length],
+          descritivo: 'Lançamento de demonstração ' + (i + 1) + '.' + (k + 1),
+          valor: Math.round(v * 100) / 100, obs: '',
+        });
+      }
+    });
+    const soma = lanc.reduce((t, l) => t + l.valor, 0);
+    db.meses[mk] = {
+      rotulo: rotuloMes(mk), origem: 'dados de demonstração · não são da FAM',
+      saldoInicial: 10000, saldoFinalBancario: Math.round((10000 + soma) * 100) / 100,
+      simulado: false, lancamentos: lanc,
+    };
+  }
+  return { versao: 2, principal: db, cenarios: [] };
+}
+
+function faixaManutencao(){
+  const el = document.createElement('div');
+  el.style.cssText = 'position:sticky;top:0;z-index:950;background:#efe9fa;border-bottom:2px solid #6f4fc0;' +
+    'color:#4a2d7a;padding:11px 16px;font-size:13.5px;line-height:1.6';
+  el.innerHTML = '<b>🧪 Modo manutenção.</b> Você entrou na tela mas não tem a chave do cofre, então ' +
+    'estes números são <b>inventados aqui no seu navegador</b> · o caixa de verdade não foi aberto e nem chegou até aqui. ' +
+    'Nada do que você fizer nesta tela é gravado.';
+  document.body.insertBefore(el, document.body.firstChild);
+}
+
+/* ── Trocar a minha senha do cofre ─────────────────────────────────────────
+   Ele mesmo faz, com a senha atual ou entrando pela chave de recuperacao. O
+   Marco NAO consegue trocar a senha dele: nao tem a chave. O que o Marco pode
+   e zerar o cofre, perdendo o conteudo · repor acesso, nunca recuperar dado.
+
+   O envelope novo e calculado ANTES de encostar no banco. So ha um envelope de
+   senha vivo por pessoa, entao a ordem e revogar e criar; deixando o calculo
+   pronto de antemao, a janela de risco vira uma chamada de rede. Se ela falhar,
+   a chave de recuperacao continua abrindo. */
+async function trocarMinhaSenha(){
+  if (!COFRE.aberto) { alert('Abra o cofre antes de trocar a senha.'); return; }
+  const s1 = prompt('Nova senha do cofre (minimo 10 caracteres):');
+  if (!s1) return;
+  if (s1.length < 10) { alert('Use pelo menos 10 caracteres.'); return; }
+  if (prompt('Repita a nova senha:') !== s1) { alert('As senhas nao sao iguais. Nada foi trocado.'); return; }
+
+  const eu = (window.FAM_SESSAO || {}).usuarioId;
+  const antigo = COFRE.envelopes.find(e => e.tipo === 'senha' && e.usuario_id === eu);
+
+  try {
+    if (antigo) {
+      const r = await fetch('/api/financeiro/cofre', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ envelopeId: antigo.id }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).erro || 'nao deu para revogar a senha antiga');
+    }
+    await envelopar(COFRE.chave, s1, (window.FAM_SESSAO || {}).nome || 'senha pessoal', 'senha', eu);
+  } catch (e) {
+    alert('Falhou no meio da troca: ' + e.message +
+          ' · se voce nao conseguir entrar da proxima vez, use a CHAVE DE RECUPERACAO e crie a senha de novo.');
+    return;
+  }
+  flash('Senha trocada. A antiga nao abre mais.');
+}
+
+/* os dois botoes so existem para quem esta com o cofre aberto */
+function mostrarBotoesDoCofre(){
+  document.querySelectorAll('.cofre-so').forEach(b => { b.style.display = COFRE.aberto ? '' : 'none'; });
+}
+</script>

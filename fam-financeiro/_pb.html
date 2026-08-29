@@ -1,0 +1,223 @@
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   A NUVEM · o mesmo caixa para o Marco e para o Aldeir
+
+   O sistema inteiro continua gravando em localStorage, como sempre gravou. As
+   23 chamadas de gravar() e as 26 de auditar() não mudaram de forma. O que este
+   arquivo faz é pendurar um envio ao servidor DEPOIS que a gravação local
+   aconteceu · assim o sistema segue funcionando na hora, mesmo com a rede ruim,
+   e a nuvem corre atrás.
+
+   Fora do CRM (abrindo o dashboard.html direto no navegador) nada disto liga:
+   window.FAM_SESSAO só existe quando a página foi servida por
+   /api/financeiro/pagina, que confere a sessão antes de entregar. Então o
+   arquivo solto continua sendo o protótipo de sempre.
+
+   A TRAVA DE VERSÃO. Toda gravação manda a versão que esta tela leu. Se o outro
+   gravou no meio, o servidor devolve 409 com o estado novo, e aqui aparece uma
+   faixa pedindo para recarregar. NUNCA sobrescrevemos por cima em silêncio: no
+   caixa, o pior defeito possível é alguém perder lançamento sem saber.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const NUVEM = {
+  ligada: false,
+  versao: 0,          // a versão do estado que ESTA tela está editando
+  enviando: false,
+  pendente: false,    // mudou de novo enquanto o envio anterior estava no ar
+  travada: false,     // deu conflito: para de enviar até a pessoa resolver
+  filaAud: [],        // registros de auditoria ainda não confirmados
+  ultimoErro: '',
+};
+
+const ESPERA_ENVIO = 1200;   // junta rajada de digitação num envio só
+let _nuvemT = null;
+
+function nuvemLigada(){ return NUVEM.ligada; }
+function nuvemPodeEditar(){ return !NUVEM.ligada || !!(window.FAM_SESSAO && window.FAM_SESSAO.edita); }
+
+/* ── partida ───────────────────────────────────────────────────────────────
+   Puxa o estado do servidor e o deixa no localStorage ANTES de carregar()
+   rodar. Assim carregar() continua exatamente como está: ele lê do lugar de
+   sempre, sem saber que o conteúdo veio de fora. */
+async function nuvemIniciar(){
+  if (!window.FAM_SESSAO) return false;      // arquivo solto: segue como protótipo
+  NUVEM.ligada = true;
+
+  /* Dentro do CRM o topo encolhe (a marca da FAM já está no cabeçalho de cima)
+     e o canto direito passa a dizer QUEM está usando. Estava escrito
+     "CFO: ALDEIR" no HTML, chumbado · agora que a tela é de mais de uma pessoa,
+     esse texto fixo estaria mentindo para todo mundo menos para o Aldeir. */
+  document.body.classList.add('no-crm');
+  const cfo = document.querySelector('.topo .cfo');
+  if (cfo) cfo.textContent = window.FAM_SESSAO.nome +
+    (window.FAM_SESSAO.edita ? '' : ' · só leitura');
+
+  /* A PORTA DO COFRE vem antes de qualquer dado. Três saídas: criar o cofre,
+     abrir com senha, ou entrar em manutenção sem chave nenhuma. */
+  let porta = 'sem-cofre';
+  try { porta = await cofreIniciar(); }
+  catch (e) {
+    nuvemFaixa('erro', 'Não consegui conferir o cofre. Nada será enviado enquanto isto não voltar.');
+    NUVEM.travada = true;
+    return true;
+  }
+
+  /* Sem chave: os números da tela são sorteados aqui e o envio fica DESLIGADO.
+     Não é a tela escondendo o caixa · o caixa cifrado nem chega a ser aberto,
+     porque não há como abri-lo. */
+  if (porta === 'manutencao') {
+    NUVEM.travada = true;
+    NUVEM.manutencao = true;
+    try { localStorage.setItem(CHAVE, JSON.stringify(baseDeManutencao())); } catch(e) {}
+    faixaManutencao();
+    return true;
+  }
+
+  try {
+    const r = await fetch('/api/financeiro/estado', { cache: 'no-store' });
+    if (!r.ok) throw new Error('estado ' + r.status);
+    const j = await r.json();
+    NUVEM.versao = j.versao || 0;
+
+    if (j.db && ehPacoteCifrado(j.db)) {
+      /* veio do cofre: só existe em claro daqui para dentro, nesta aba */
+      const claro = await desempacotar(j.db);
+      try { localStorage.setItem(CHAVE, JSON.stringify(claro)); } catch(e) {}
+    } else if (j.db) {
+      try { localStorage.setItem(CHAVE, JSON.stringify(j.db)); } catch(e) {}
+    } else {
+      /* servidor vazio: esta tela vai subir a carga de fábrica e a primeira
+         gravação cria a linha lá. O que estiver no navegador desta pessoa não
+         pode virar a verdade dos dois sem passar pelo servidor. */
+      try { localStorage.removeItem(CHAVE); } catch(e) {}
+    }
+  } catch (e) {
+    NUVEM.ultimoErro = String(e && e.message || e);
+    nuvemFaixa('erro', 'Não consegui falar com o servidor. Você está vendo a última cópia deste navegador, e nada será enviado enquanto isto não voltar.');
+    return true;
+  }
+
+  await nuvemPuxarTrilha();
+  return true;
+}
+
+/* A trilha do servidor entra junto com a local: juntarAuditoria() já sabe não
+   duplicar (mesmo id, mesmo registro). */
+async function nuvemPuxarTrilha(){
+  try {
+    const r = await fetch('/api/financeiro/auditoria', { cache: 'no-store' });
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!Array.isArray(j.registros) || !j.registros.length) return;
+    /* o que veio cifrado volta a ser texto aqui; sem chave, vira 🔒 na tela,
+       nunca base64 cru · quem lê a trilha não precisa ver o embrulho */
+    juntarAuditoria(await Promise.all(j.registros.map(decifrarRegistro)));
+  } catch(e) {}
+}
+
+/* ── envio, com espera para não mandar a cada tecla ───────────────────────── */
+function nuvemAgendarEnvio(){
+  if (!NUVEM.ligada || NUVEM.travada) return;
+  if (_nuvemT) clearTimeout(_nuvemT);
+  _nuvemT = setTimeout(nuvemEnviar, ESPERA_ENVIO);
+}
+
+async function nuvemEnviar(){
+  if (!NUVEM.ligada || NUVEM.travada) return;
+  if (NUVEM.enviando) { NUVEM.pendente = true; return; }
+  NUVEM.enviando = true;
+
+  try {
+    /* Com o cofre aberto, o que sobe é o pacote fechado. O servidor guarda
+       ruído · esta é a linha que faz o sigilo ser verdade e não promessa. */
+    const carga = COFRE.aberto ? await empacotar(RAIZ) : RAIZ;
+    const corpo = JSON.stringify({ db: carga, versaoBase: NUVEM.versao });
+    const r = await fetch('/api/financeiro/estado', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: corpo,
+    });
+
+    if (r.status === 409) {
+      const j = await r.json().catch(() => ({}));
+      NUVEM.travada = true;
+      nuvemConflito(j);
+      return;
+    }
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      nuvemFaixa('erro', 'O servidor recusou a gravação: ' + (j.erro || r.status) +
+        ' · o que você fez está salvo neste navegador, mas ainda não chegou ao outro.');
+      return;
+    }
+
+    const j = await r.json();
+    NUVEM.versao = j.versao;
+    nuvemFaixaLimpa();
+    await nuvemEnviarTrilha();
+  } catch (e) {
+    nuvemFaixa('erro', 'Sem conexão com o servidor. O que você fez está salvo aqui e sobe sozinho quando a rede voltar.');
+  } finally {
+    NUVEM.enviando = false;
+    if (NUVEM.pendente && !NUVEM.travada) { NUVEM.pendente = false; nuvemAgendarEnvio(); }
+  }
+}
+
+/* A trilha vai separada do estado: ela é só-inserção no banco, então reenviar
+   não estraga nada · o mesmo id chega uma vez só. */
+async function nuvemEnviarTrilha(){
+  if (!NUVEM.filaAud.length) return;
+  const lote = NUVEM.filaAud.slice(0, 500);
+  try {
+    /* Com o cofre aberto, o CONTEÚDO da trilha sobe cifrado e o resto sobe em
+       claro: quem mexeu, quando e que tipo de ação foi. É o que dá ao Marco a
+       responsabilidade e o histórico que ele pediu, sem lhe dar os valores. */
+    const prontos = COFRE.aberto ? await Promise.all(lote.map(cifrarRegistro)) : lote;
+    const r = await fetch('/api/financeiro/auditoria', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ registros: prontos }),
+    });
+    if (r.ok) NUVEM.filaAud = NUVEM.filaAud.slice(lote.length);
+  } catch(e) {}
+}
+
+/* chamado de dentro do auditar(), depois que o registro já existe localmente */
+function nuvemEnfileirarAuditoria(reg){
+  if (!NUVEM.ligada) return;
+  NUVEM.filaAud.push(reg);
+  if (NUVEM.filaAud.length > 2000) NUVEM.filaAud.splice(0, NUVEM.filaAud.length - 2000);
+}
+
+/* ── a faixa que fala com a pessoa ─────────────────────────────────────────── */
+function nuvemCaixa(){
+  let el = document.getElementById('faixa-nuvem');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'faixa-nuvem';
+    el.style.cssText = 'position:sticky;top:0;z-index:900;padding:11px 16px;font-size:13.5px;line-height:1.6;' +
+                       'display:flex;align-items:center;gap:12px;flex-wrap:wrap';
+    document.body.insertBefore(el, document.body.firstChild);
+  }
+  return el;
+}
+function nuvemFaixaLimpa(){ const el = document.getElementById('faixa-nuvem'); if (el) el.remove(); }
+
+function nuvemFaixa(tipo, texto, botao){
+  const el = nuvemCaixa();
+  const cor = tipo === 'erro'
+    ? 'background:#fbeaea;border-bottom:2px solid #d64545;color:#7a1a1a'
+    : 'background:#fdf8e6;border-bottom:2px solid #e8b84b;color:#7a5c10';
+  el.style.cssText = el.style.cssText.replace(/background:[^;]*;?|border-bottom:[^;]*;?|color:[^;]*;?/g, '') + cor;
+  el.innerHTML = '<span>' + texto + '</span>' + (botao || '');
+}
+
+/* O conflito não se resolve sozinho: quem chegou depois decide. Recarregar
+   traz o estado do outro; a cópia de segurança guarda o que esta tela tinha,
+   para nada se perder no caminho. */
+function nuvemConflito(j){
+  const quem = j.atualizadoPor ? ' por <b>' + j.atualizadoPor + '</b>' : '';
+  nuvemFaixa('erro',
+    '<b>Alguém gravou enquanto você editava</b>' + quem + '. Para não apagar o trabalho de ninguém, parei de enviar o seu. ' +
+    'Baixe a sua cópia antes de recarregar, se você digitou algo agora.',
+    '<button class="btn-clear" onclick="baixarBackup()">💾 Baixar a minha cópia</button>' +
+    '<button class="btn-primary" onclick="location.reload()">Recarregar com o que está no servidor</button>');
+}
+</script>

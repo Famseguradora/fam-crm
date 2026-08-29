@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { quemFinanceiro } from '@/lib/financeiro/acesso'
 import DashboardShell from './DashboardShell'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -15,6 +16,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
         emailUsuario="sandbox@fam.local"
         userId="sandbox-user"
         dataInicio={null}
+        /* O Financeiro não aparece no sandbox: as rotas dele falam com o
+           Supabase de verdade e, sem sessão real, responderiam 403. Menu que
+           leva a uma tela recusada é pior que menu que não existe. */
+        veFinanceiro={false}
       >
         {children}
       </DashboardShell>
@@ -45,6 +50,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     .eq('chave', 'data_inicio_calculos')
     .single()
 
+  // O Financeiro tem lista própria de acesso, que não olha `perfil`: admin do
+  // CRM não entra, e o Aldeir entra sendo "leitura". Quem não está na lista não
+  // vê nem o item no menu.
+  const financeiro = await quemFinanceiro()
+
   return (
     <DashboardShell
       nomeUsuario={usuarioDb?.nome ?? user.email ?? ''}
@@ -54,6 +64,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       emailUsuario={user.email ?? ''}
       userId={user.id}
       dataInicio={config?.valor ?? null}
+      veFinanceiro={financeiro.ve}
     >
       {children}
     </DashboardShell>

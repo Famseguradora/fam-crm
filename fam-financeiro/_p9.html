@@ -1,0 +1,606 @@
+
+<script>
+/* ══════════════ HP-12C ══════════════
+   O CFO tem uma HP-12C de verdade na mesa. Esta é a mesma máquina: o mesmo
+   teclado de 4 linhas por 10 colunas, na mesma ordem, com as legendas douradas
+   do "f" em cima e as azuis do "g" embaixo, o mesmo visor de cristal líquido e
+   os mesmos avisos (f, g, BEGIN) no rodapé dele.
+
+   É RPN: primeiro o número, depois a tecla. Pilha de quatro registradores
+   (X Y Z T), LAST X, STO/RCL de 0 a 9.
+
+   As cinco financeiras seguem a regra do aparelho: digitou um número e apertou
+   a tecla, ela GUARDA; apertou a tecla sem digitar, ela CALCULA a partir das
+   outras quatro.
+
+   A janela se ARRASTA pela barra de cima. Ela nasceu presa no canto e o canto
+   é justamente onde ficam as últimas linhas da tabela · calculadora que tapa o
+   número que se está conferindo não serve para nada. Onde ela for largada,
+   fica: a posição é gravada no navegador.
+
+   O que esta HP não faz: fluxo de caixa (NPV, IRR, CFj), datas, amortização,
+   programação e EEX. Essas teclas estão no teclado porque a máquina real as
+   tem, e quando apertadas dizem, com todas as letras, que não fazem nada aqui.
+   Tecla que finge que calculou é pior que tecla que falta.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+let calcAberta = false;
+
+const hpZerada = () => ({
+  x: 0, y: 0, z: 0, t: 0, lastx: 0,
+  digitando: false, ent: '', lift: false, prefixo: null, pendente: null,
+  n: 0, i: 0, pv: 0, pmt: 0, fv: 0, begin: false, casas: 2,
+  regs: {}, ultimo: '',
+});
+let hp = hpZerada();
+
+const calcFmt = (v, casas) => isFinite(v)
+  ? v.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas })
+  : 'Error 0';
+/* o que está sendo digitado aparece como foi digitado · formatar no meio da
+   digitação é o que faz o dígito pular de lugar embaixo do dedo */
+const hpVisor = () => hp.digitando ? (hp.ent || '0') : calcFmt(hp.x, hp.casas);
+
+/* ═══════════════ ARRASTAR ═══════════════
+   Vale para a janela da HP E para o botão que a abre: os dois moram por cima
+   da tabela, e onde eles estiverem parados é justamente onde alguém vai querer
+   ler um número. Um mecanismo só serve aos dois, e cada um lembra o lugar onde
+   foi largado.
+
+   O botão é o caso delicado: ele é botão E é arrastável. A regra é a distância
+   · saiu menos de 4px do lugar, foi clique; passou disso, foi arrasto, e aí o
+   clique que o navegador dispara em seguida é engolido. Sem isso, mover o
+   ícone abriria a calculadora toda vez. */
+const LUGARES = { hp12c: 'fam-financeiro-hp12c-lugar', 'btn-calc': 'fam-financeiro-hp12c-botao' };
+
+function lugarGravado(id){
+  let o = null;
+  try { o = JSON.parse(localStorage.getItem(LUGARES[id]) || 'null'); } catch(e) {}
+  return o && Number.isFinite(o.x) && Number.isFinite(o.y) ? o : null;
+}
+
+/* nunca deixar a peça sair da tela: o que some pela borda não volta mais,
+   porque o que se arrasta é justamente o que sumiu */
+function porNaTela(el, x, y){
+  const l = el.getBoundingClientRect();
+  const maxX = Math.max(0, window.innerWidth - l.width);
+  const maxY = Math.max(0, window.innerHeight - Math.min(l.height, 44));
+  el.style.left = Math.min(Math.max(0, x), maxX) + 'px';
+  el.style.top = Math.min(Math.max(0, y), maxY) + 'px';
+  el.style.right = 'auto';
+  el.style.bottom = 'auto';
+}
+
+function restaurarLugar(id, padrao){
+  const el = document.getElementById(id);
+  const g = lugarGravado(id);
+  const p = g || padrao(el);
+  porNaTela(el, p.x, p.y);
+}
+
+let _arrastou = false;
+
+document.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || !e.target.closest) return;
+  const pega = e.target.closest('[data-arrasta]');
+  if (!pega) return;
+  /* Botão DENTRO da barra de arrastar (o × de fechar) não pode virar arrasto:
+     a captura de ponteiro leva o clique para quem capturou, e o × deixava de
+     fechar a janela. O próprio ícone é a exceção · lá o botão É a alça. */
+  const dentro = e.target.closest('button,a,input,select,textarea');
+  if (dentro && dentro !== pega) return;
+  const el = document.getElementById(pega.dataset.arrasta);
+  if (!el) return;
+
+  const l = el.getBoundingClientRect();
+  const dx = e.clientX - l.left, dy = e.clientY - l.top;
+  const x0 = e.clientX, y0 = e.clientY;
+  _arrastou = false;
+  document.body.classList.add('arrastando-calc');
+  try { pega.setPointerCapture(e.pointerId); } catch(err) {}
+
+  const mover = ev => {
+    if (!_arrastou && Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 4) return;
+    _arrastou = true;
+    porNaTela(el, ev.clientX - dx, ev.clientY - dy);
+  };
+  const soltar = () => {
+    pega.removeEventListener('pointermove', mover);
+    pega.removeEventListener('pointerup', soltar);
+    pega.removeEventListener('pointercancel', soltar);
+    document.body.classList.remove('arrastando-calc');
+    if (!_arrastou) return;
+    const f = el.getBoundingClientRect();
+    try { localStorage.setItem(LUGARES[el.id], JSON.stringify({ x: Math.round(f.left), y: Math.round(f.top) })); } catch(err) {}
+  };
+  pega.addEventListener('pointermove', mover);
+  pega.addEventListener('pointerup', soltar);
+  pega.addEventListener('pointercancel', soltar);
+}, true);
+
+/* o clique que o navegador dispara no fim de um arrasto não é um clique */
+document.addEventListener('click', e => {
+  if (!_arrastou) return;
+  if (e.target.closest && e.target.closest('[data-arrasta]')) { e.preventDefault(); e.stopPropagation(); }
+  _arrastou = false;
+}, true);
+
+/* janela menor, ou tela girada: as duas peças voltam para dentro */
+window.addEventListener('resize', () => {
+  for (const id of ['hp12c', 'btn-calc']) {
+    const el = document.getElementById(id);
+    if (!el || !el.style.left) continue;
+    const l = el.getBoundingClientRect();
+    porNaTela(el, l.left, l.top);
+  }
+});
+
+/* ═══════════════ ABRIR E FECHAR ═══════════════ */
+function alternarCalc(){ calcAberta ? fecharCalc() : abrirCalc(); }
+
+function abrirCalc(){
+  calcAberta = true;
+  document.body.classList.add('calc-aberta');
+  document.getElementById('hp12c').classList.add('aberta');
+  desenharCalc();
+  /* na primeira vez ela nasce longe do rodapé e das colunas congeladas da
+     direita: é o canto que menos tapa número */
+  restaurarLugar('hp12c', el => ({ x: Math.max(12, window.innerWidth - el.getBoundingClientRect().width - 26), y: 92 }));
+}
+
+function fecharCalc(){
+  calcAberta = false;
+  document.body.classList.remove('calc-aberta');
+  document.getElementById('hp12c').classList.remove('aberta');
+}
+
+/* ═══════════════ O TECLADO, TECLA POR TECLA ═══════════════
+   A máquina de verdade: quatro fileiras de dez teclas, todas pretas (só o f é
+   laranja e o g é azul). O que muda de cor é a LEGENDA:
+
+   · laranja, ACIMA da tecla, impressa no corpo preto · são as funções do f
+   · branca, na tecla · a função direta
+   · azul, na parte de baixo da tecla · são as funções do g
+
+   E três arcos laranja amarram grupos de teclas: BOND sobre PRICE e YTM,
+   DEPRECIATION sobre SL, SOYD e DB, CLEAR sobre Σ, PRGM, FIN, REG e PREFIX.
+   Cada fileira aqui traz os arcos, as legendas laranja e as teclas · as linhas
+   da grade saem daí, na ordem, e é por isso que o desenho fecha com a foto. */
+const FILEIRAS = [
+  {
+    fs: [[1,'AMORT'],[2,'INT'],[3,'NPV'],[4,'RND'],[5,'IRR']],
+    ks: [
+      { c:1,  t:'n',   g:'12x',  faz:"hpFin('n')" },
+      { c:2,  t:'i',   g:'12÷',  faz:"hpFin('i')" },
+      { c:3,  t:'PV',  g:'CFo',  faz:"hpFin('pv')" },
+      { c:4,  t:'PMT', g:'CFj',  faz:"hpFin('pmt')" },
+      { c:5,  t:'FV',  g:'Nj',   faz:"hpFin('fv')" },
+      { c:6,  t:'CHS', g:'DATE', faz:'hpChs()' },
+      { c:7,  t:'7',   g:'BEG',  faz:"hpDigito('7')" },
+      { c:8,  t:'8',   g:'END',  faz:"hpDigito('8')" },
+      { c:9,  t:'9',   g:'MEM',  faz:"hpDigito('9')" },
+      { c:10, t:'÷',   grande:1, faz:"hpOperar('/')" },
+    ],
+  },
+  {
+    cintas: [[1,2,'BOND'],[3,5,'DEPRECIATION']],
+    fs: [[1,'PRICE'],[2,'YTM'],[3,'SL'],[4,'SOYD'],[5,'DB']],
+    ks: [
+      { c:1,  t:'y<i>x</i>', g:'√x',   faz:"hpFuncao('pot')" },
+      { c:2,  t:'1/<i>x</i>',g:'e<sup>x</sup>', faz:"hpFuncao('inv')" },
+      { c:3,  t:'%T',  g:'LN',    faz:"hpFuncao('pctt')" },
+      { c:4,  t:'Δ%',  g:'FRAC',  faz:"hpFuncao('dpct')" },
+      { c:5,  t:'%',   g:'INTG',  faz:"hpFuncao('pct')" },
+      { c:6,  t:'EEX', g:'ΔDYS',  faz:"hpNaoTem('EEX')" },
+      { c:7,  t:'4',   g:'D.MY',  faz:"hpDigito('4')" },
+      { c:8,  t:'5',   g:'M.DY',  faz:"hpDigito('5')" },
+      { c:9,  t:'6',   g:'x̄w',    faz:"hpDigito('6')" },
+      { c:10, t:'×',   grande:1,  faz:"hpOperar('*')" },
+    ],
+  },
+  {
+    cintas: [[2,6,'CLEAR']],
+    fs: [[1,'P/R'],[2,'Σ'],[3,'PRGM'],[4,'FIN'],[5,'REG'],[6,'PREFIX']],
+    ks: [
+      { c:1,  t:'R/S',  g:'PSE',   faz:"hpNaoTem('R/S')" },
+      { c:2,  t:'SST',  g:'BST',   faz:"hpNaoTem('SST')" },
+      { c:3,  t:'R↓',   g:'GTO',   faz:'hpRolar()' },
+      { c:4,  t:'x≷y',  g:'x≤y',   faz:'hpTrocaXY()' },
+      { c:5,  t:'CL<i>x</i>', g:'x=0', faz:'hpClx()' },
+      { c:6,  t:'ENTER', g:'LST x', alto:1, faz:'hpEnter()' },
+      { c:7,  t:'1',    g:'x̂,r',   faz:"hpDigito('1')" },
+      { c:8,  t:'2',    g:'ŷ,r',   faz:"hpDigito('2')" },
+      { c:9,  t:'3',    g:'n!',    faz:"hpDigito('3')" },
+      { c:10, t:'-',    grande:1,  faz:"hpOperar('-')" },
+    ],
+  },
+  {
+    ks: [
+      { c:1,  t:'ON',  faz:'fecharCalc()', dica:'desliga a máquina e fecha esta janela' },
+      { c:2,  t:'f',   pf:1, faz:"hpPrefixo('f')" },
+      { c:3,  t:'g',   pg:1, faz:"hpPrefixo('g')" },
+      { c:4,  t:'STO', g:'(',  faz:"hpPendente('sto')" },
+      { c:5,  t:'RCL', g:')',  faz:"hpPendente('rcl')" },
+      { c:7,  t:'0',   g:'x̄',  faz:"hpDigito('0')" },
+      { c:8,  t:'.',   g:'s',  faz:'hpVirgula()' },
+      { c:9,  t:'Σ+',  g:'Σ-', faz:'hpSoma(1)' },
+      { c:10, t:'+',   grande:1, faz:"hpOperar('+')" },
+    ],
+  },
+];
+
+function tecladoHTML(){
+  let r = 0, h = '';
+  for (const fi of FILEIRAS) {
+    if (fi.cintas) {
+      r++;
+      for (const [de, ate, t] of fi.cintas)
+        h += `<span class="hp-cinta" style="grid-row:${r};grid-column:${de}/${ate + 1}">${t}</span>`;
+    }
+    if (fi.fs) {
+      r++;
+      for (const [c, t] of fi.fs)
+        h += `<span class="hp-lf" style="grid-row:${r};grid-column:${c}">${t}</span>`;
+    }
+    r++;
+    for (const k of fi.ks)
+      h += `<button type="button" class="hp-tecla${k.pf ? ' pf' : ''}${k.pg ? ' pg' : ''}${k.alto ? ' alto' : ''}${k.grande ? ' grande' : ''}${hp.prefixo === k.t ? ' ligada' : ''}"
+        style="grid-row:${r}${k.alto ? ' / span 2' : ''};grid-column:${k.c}"
+        onclick="${k.faz}"${k.dica ? ' title="' + k.dica + '"' : ''}>
+        <span class="tx">${k.t}</span>${k.g ? `<span class="lg">${k.g}</span>` : ''}</button>`;
+  }
+  return h;
+}
+
+function desenharCalc(){
+  const p = hp.prefixo;
+  const aviso = (t, on) => `<i class="${on ? 'on' : ''}">${t}</i>`;
+  const reg = (r, v) => `<span>${r}<b>${calcFmt(v, hp.casas)}</b></span>`;
+
+  document.getElementById('hp-x').innerHTML = hpVisor();
+  document.getElementById('hp-flags').innerHTML =
+    aviso('f', p === 'f') + aviso('g', p === 'g') + aviso('BEGIN', hp.begin) +
+    aviso((hp.pendente || '').toUpperCase(), !!hp.pendente) +
+    `<span class="hp-eco">${esc(hp.ultimo || '')}</span>`;
+  document.getElementById('hp-teclado').innerHTML = tecladoHTML();
+
+  /* A máquina de verdade mostra um número por vez. A pilha e os cinco
+     registradores ficam aqui embaixo, FORA do corpo dela: quem confere um
+     número precisa ver de onde ele veio, e isso não podia virar enfeite
+     desenhado por cima da HP. */
+  document.getElementById('hp-espia').innerHTML =
+    `<div class="hp-pilha">${['y','z','t'].map(k => `<span>${k.toUpperCase()}<b>${calcFmt(hp[k], hp.casas)}</b></span>`).join('')}` +
+    `<span>LST x<b>${calcFmt(hp.lastx, hp.casas)}</b></span></div>` +
+    `<div class="hp-regs">${reg('n ', hp.n)}${reg('i ', hp.i)}${reg('PV ', hp.pv)}${reg('PMT ', hp.pmt)}${reg('FV ', hp.fv)}` +
+    `<button class="btn-mini" onclick="hpExemplo()">Exemplo</button>` +
+    `<button class="btn-mini" onclick="copiarDaCalc()">Copiar</button></div>`;
+}
+
+/* ═══════════════ PILHA ═══════════════ */
+function hpFechaEntrada(){
+  if (hp.digitando) { hp.x = Number(hp.ent.replace(',', '.')) || 0; hp.digitando = false; hp.ent = ''; }
+}
+function hpSubir(){ hp.t = hp.z; hp.z = hp.y; hp.y = hp.x; }
+function hpDescer(){ hp.y = hp.z; hp.z = hp.t; }
+
+function hpDigito(d){
+  /* f seguido de um dígito muda as casas decimais, como no aparelho */
+  if (hp.prefixo === 'f') return hpCasas(Number(d));
+  if (hp.prefixo === 'g') {
+    hp.prefixo = null;
+    if (d === '7') { hp.begin = true;  hp.ultimo = 'BEGIN'; return desenharCalc(); }
+    if (d === '8') { hp.begin = false; hp.ultimo = 'END';   return desenharCalc(); }
+    if (d === '3') return hpFatorial();
+    if (d === '0') return hpMedia();
+    if (d === '9') return hpNaoTem('g MEM');
+    return hpNaoTem('g ' + d);
+  }
+  hp.prefixo = null;
+  if (hp.pendente) return hpRegistrador(d);
+  if (!hp.digitando) { if (hp.lift) hpSubir(); hp.digitando = true; hp.ent = ''; hp.lift = true; }
+  if (hp.ent.replace(/[-,]/g, '').length < 14) hp.ent += d;
+  desenharCalc();
+}
+
+function hpVirgula(){
+  if (hp.prefixo === 'g') { hp.prefixo = null; return hpDesvio(); }
+  hp.prefixo = null;
+  if (!hp.digitando) { if (hp.lift) hpSubir(); hp.digitando = true; hp.ent = '0'; hp.lift = true; }
+  if (!hp.ent.includes(',')) hp.ent += ',';
+  desenharCalc();
+}
+
+function hpChs(){
+  if (hp.prefixo === 'g') { hp.prefixo = null; return hpNaoTem('g DATE'); }
+  hp.prefixo = null;
+  if (hp.digitando) hp.ent = hp.ent.startsWith('-') ? hp.ent.slice(1) : '-' + hp.ent;
+  else hp.x = -hp.x;
+  desenharCalc();
+}
+
+function hpEnter(){
+  if (hp.prefixo === 'f') { hp.prefixo = null; hp.ultimo = 'PREFIX cancelado'; return desenharCalc(); }
+  if (hp.prefixo === 'g') { hp.prefixo = null; hp.x = hp.lastx; hp.digitando = false; hp.lift = true; hp.ultimo = 'LST x'; return desenharCalc(); }
+  hpFechaEntrada();
+  hpSubir();
+  hp.lift = false;               // depois do ENTER o próximo dígito NÃO levanta a pilha
+  hp.ultimo = 'ENTER';
+  desenharCalc();
+}
+
+function hpClx(){
+  if (hp.prefixo === 'f') { hp.prefixo = null; return hpLimparTudo(); }     // f REG
+  if (hp.prefixo === 'g') { hp.prefixo = null; return hpNaoTem('g x=0'); }
+  hp.prefixo = null;
+  hp.x = 0; hp.digitando = false; hp.ent = ''; hp.lift = false; hp.ultimo = 'CLx';
+  desenharCalc();
+}
+
+function hpTrocaXY(){
+  if (hp.prefixo === 'f') { hp.prefixo = null; return hpLimparFin(); }      // f FIN
+  if (hp.prefixo === 'g') { hp.prefixo = null; return hpNaoTem('g x≤y'); }
+  hpFechaEntrada();
+  const t = hp.x; hp.x = hp.y; hp.y = t;
+  hp.lift = true; hp.ultimo = 'x≷y';
+  desenharCalc();
+}
+
+function hpRolar(){
+  if (hp.prefixo === 'f') { hp.prefixo = null; return hpNaoTem('f PRGM'); }
+  if (hp.prefixo === 'g') { hp.prefixo = null; return hpNaoTem('g GTO'); }
+  hpFechaEntrada();
+  const x = hp.x; hp.x = hp.y; hp.y = hp.z; hp.z = hp.t; hp.t = x;
+  hp.lift = true; hp.ultimo = 'R↓';
+  desenharCalc();
+}
+
+function hpCasas(c){ hp.prefixo = null; hp.casas = Math.max(0, Math.min(9, c)); hp.ultimo = c + ' casas'; desenharCalc(); }
+function hpPrefixo(p){ hp.prefixo = hp.prefixo === p ? null : p; desenharCalc(); }
+function hpPendente(p){
+  if (hp.prefixo === 'g') { hp.prefixo = null; return hpNaoTem(p === 'sto' ? 'g (' : 'g )'); }
+  hp.prefixo = null; hpFechaEntrada(); hp.pendente = p; desenharCalc();
+}
+
+function hpRegistrador(d){
+  const p = hp.pendente; hp.pendente = null;
+  if (p === 'sto') { hp.regs[d] = hp.x; hp.ultimo = 'STO ' + d; }
+  else { if (hp.lift) hpSubir(); hp.x = hp.regs[d] || 0; hp.lift = true; hp.ultimo = 'RCL ' + d; }
+  hp.digitando = false;
+  desenharCalc();
+}
+
+const SINAL = { '+': '+', '-': '-', '*': '×', '/': '÷' };
+
+function hpOperar(op){
+  hp.prefixo = null;
+  hpFechaEntrada();
+  hp.lastx = hp.x;
+  const a = hp.y, b = hp.x;
+  const r = op === '+' ? a + b : op === '-' ? a - b : op === '*' ? a * b : (b === 0 ? NaN : a / b);
+  hp.x = isFinite(r) ? r : 0;
+  hp.ultimo = calcFmt(a, hp.casas) + ' ' + SINAL[op] + ' ' + calcFmt(b, hp.casas) + (isFinite(r) ? '' : ' · Error 0');
+  hpDescer();
+  hp.lift = true;
+  desenharCalc();
+}
+
+function hpFuncao(f){
+  const g = hp.prefixo === 'g';
+  if (hp.prefixo === 'f') { hp.prefixo = null; return hpNaoTem('f nesta tecla'); }
+  hp.prefixo = null;
+  hpFechaEntrada();
+  hp.lastx = hp.x;
+  const x = hp.x, y = hp.y;
+  let r = null, rot = '';
+  if (f === 'pot')       { if (g) { r = Math.sqrt(x); rot = '√x'; } else { r = Math.pow(y, x); rot = 'yˣ'; hpDescer(); } }
+  else if (f === 'inv')  { if (g) { r = Math.exp(x); rot = 'eˣ'; } else { r = x === 0 ? NaN : 1 / x; rot = '1/x'; } }
+  else if (f === 'pctt') { if (g) { r = x > 0 ? Math.log(x) : NaN; rot = 'LN'; } else { r = y === 0 ? NaN : x / y * 100; rot = 'x é % de y'; } }
+  else if (f === 'dpct') { if (g) { r = x - Math.trunc(x); rot = 'FRAC'; } else { r = y === 0 ? NaN : (x - y) / y * 100; rot = 'Δ% de y para x'; } }
+  else if (f === 'pct')  { if (g) { r = Math.trunc(x); rot = 'INTG'; } else { r = y * x / 100; rot = calcFmt(x, hp.casas) + '% de ' + calcFmt(y, hp.casas); } }
+  hp.x = isFinite(r) ? r : 0;
+  hp.ultimo = rot + (isFinite(r) ? '' : ' · Error 0');
+  hp.lift = true;
+  desenharCalc();
+}
+
+function hpFatorial(){
+  hpFechaEntrada();
+  hp.lastx = hp.x;
+  const n = Math.round(hp.x);
+  if (n < 0 || n > 170 || Math.abs(hp.x - n) > 1e-9) { hp.ultimo = 'n! · Error 0'; hp.x = 0; return desenharCalc(); }
+  let r = 1;
+  for (let k = 2; k <= n; k++) r *= k;
+  hp.x = r; hp.ultimo = n + '!'; hp.lift = true;
+  desenharCalc();
+}
+
+/* ═══════════════ ESTATÍSTICA · Σ+ Σ- x̄ s ═══════════════
+   Como no aparelho: R1 guarda a contagem, R2 a soma e R3 a soma dos quadrados.
+   É o que permite tirar média e desvio de uma coluna de valores sem sair daqui. */
+function hpSoma(sinal){
+  if (hp.prefixo === 'g') { hp.prefixo = null; sinal = -1; }
+  else if (hp.prefixo === 'f') { hp.prefixo = null; return hpNaoTem('f nesta tecla'); }
+  hpFechaEntrada();
+  hp.lastx = hp.x;
+  hp.regs['1'] = (hp.regs['1'] || 0) + sinal;
+  hp.regs['2'] = (hp.regs['2'] || 0) + sinal * hp.x;
+  hp.regs['3'] = (hp.regs['3'] || 0) + sinal * hp.x * hp.x;
+  hp.ultimo = (sinal > 0 ? 'Σ+' : 'Σ-') + ' · n = ' + hp.regs['1'];
+  hp.x = hp.regs['1'];
+  hp.lift = true;
+  desenharCalc();
+}
+
+function hpMedia(){
+  const n = hp.regs['1'] || 0;
+  if (n <= 0) { hp.ultimo = 'x̄ · nada somado ainda'; return desenharCalc(); }
+  if (hp.lift) hpSubir();
+  hp.x = hp.regs['2'] / n;
+  hp.ultimo = 'x̄ de ' + n + ' valores';
+  hp.lift = true;
+  desenharCalc();
+}
+
+function hpDesvio(){
+  const n = hp.regs['1'] || 0, s2 = hp.regs['2'] || 0, s3 = hp.regs['3'] || 0;
+  if (n < 2) { hp.ultimo = 's · precisa de pelo menos 2 valores'; return desenharCalc(); }
+  if (hp.lift) hpSubir();
+  hp.x = Math.sqrt(Math.max(0, (n * s3 - s2 * s2) / (n * (n - 1))));
+  hp.ultimo = 's de ' + n + ' valores';
+  hp.lift = true;
+  desenharCalc();
+}
+
+/* Tecla que a máquina real tem e esta não faz. Ela diz isso e não mexe em
+   nada · o pior erro possível aqui seria devolver um número inventado. */
+function hpNaoTem(nome){
+  hp.prefixo = null;
+  hp.ultimo = nome + ' não existe nesta HP';
+  desenharCalc();
+  flash('A tecla ' + nome + ' da HP-12C não está implementada aqui. Fluxo de caixa (NPV, IRR, CFj), datas, amortização e programação ficaram de fora.');
+}
+
+/* ═══════════════ AS CINCO FINANCEIRAS ═══════════════
+   PV + PMT·k·(1-(1+i)^-n)/i + FV·(1+i)^-n = 0, com k = (1+i) no BEGIN e 1 no
+   END. É o único caminho: guardar e calcular leem a mesma equação. */
+function tvmF(n, i, pv, pmt, fv, begin){
+  if (Math.abs(i) < 1e-12) return pv + pmt * n + fv;
+  const k = begin ? (1 + i) : 1;
+  const d = Math.pow(1 + i, -n);
+  return pv + pmt * k * (1 - d) / i + fv * d;
+}
+
+function tvmResolver(alvo){
+  const i = hp.i / 100, n = hp.n, pv = hp.pv, pmt = hp.pmt, fv = hp.fv;
+  const zero = Math.abs(i) < 1e-12;
+  const k = hp.begin ? (1 + i) : 1;
+  const d = zero ? 1 : Math.pow(1 + i, -n);
+  const anui = zero ? n : k * (1 - d) / i;
+
+  if (alvo === 'fv')  return zero ? -(pv + pmt * n) : -(pv + pmt * anui) / d;
+  if (alvo === 'pv')  return -(pmt * anui + fv * d);
+  if (alvo === 'pmt') return anui === 0 ? NaN : -(pv + fv * d) / anui;
+  if (alvo === 'n') {
+    if (zero) return pmt === 0 ? NaN : -(pv + fv) / pmt;
+    const c = pmt * k / i;
+    const num = -pv - c, den = fv - c;
+    if (den === 0 || num / den <= 0) return NaN;
+    return -Math.log(num / den) / Math.log(1 + i);
+  }
+  if (alvo === 'i') {
+    /* juros não se isola: acha-se. Varre o intervalo procurando a troca de
+       sinal e fecha por bisseção · é lento para um computador e exato para
+       quem vai assinar embaixo do número. */
+    const f = t => tvmF(n, t, pv, pmt, fv, hp.begin);
+    let a = null, b = null, fa = 0, ant = -0.9999, fant = f(-0.9999);
+    for (let s = 1; s <= 3000; s++) {
+      const t = -0.9999 + s * (11 / 3000);
+      const ft = f(t);
+      if (isFinite(ft) && isFinite(fant) && fant * ft <= 0) { a = ant; b = t; fa = fant; break; }
+      ant = t; fant = ft;
+    }
+    if (a === null) return NaN;
+    for (let s = 0; s < 200; s++) {
+      const m = (a + b) / 2, fm = f(m);
+      if (fa * fm <= 0) { b = m; } else { a = m; fa = fm; }
+    }
+    return (a + b) / 2 * 100;
+  }
+  return NaN;
+}
+
+const ROT_FIN = { n: 'n', i: 'i', pv: 'PV', pmt: 'PMT', fv: 'FV' };
+const F_DOURADO = { n: 'f AMORT', i: 'f INT', pv: 'f NPV', pmt: 'f RND', fv: 'f IRR' };
+
+function hpFin(campo){
+  /* dourado: amortização, juros simples, fluxo de caixa · nada disso aqui */
+  if (hp.prefixo === 'f') { hp.prefixo = null; return hpNaoTem(F_DOURADO[campo]); }
+
+  /* azul: g n = 12x (anos para meses), g i = 12÷ (taxa ao ano para ao mês).
+     CF0, CFj e Nj são fluxo de caixa e ficaram de fora. */
+  if (hp.prefixo === 'g') {
+    hp.prefixo = null;
+    if (campo === 'pv' || campo === 'pmt' || campo === 'fv')
+      return hpNaoTem('g ' + { pv: 'CF0', pmt: 'CFj', fv: 'Nj' }[campo]);
+    hpFechaEntrada();
+    if (campo === 'n') { hp.n = hp.x * 12; hp.x = hp.n; hp.ultimo = 'n = x · 12'; }
+    else               { hp.i = hp.x / 12; hp.x = hp.i; hp.ultimo = 'i = x ÷ 12'; }
+    hp.lift = true;
+    return desenharCalc();
+  }
+
+  const guardar = hp.digitando;
+  hpFechaEntrada();
+
+  if (guardar) {
+    hp[campo] = hp.x;
+    hp.ultimo = ROT_FIN[campo] + ' guardado';
+  } else {
+    const r = tvmResolver(campo);
+    if (!isFinite(r)) { hp.ultimo = ROT_FIN[campo] + ' não sai com esses números'; return desenharCalc(); }
+    hp[campo] = r;
+    if (hp.lift) hpSubir();
+    hp.x = r;
+    hp.ultimo = ROT_FIN[campo] + ' calculado';
+  }
+  hp.lift = true;
+  desenharCalc();
+}
+
+function hpLimparFin(){
+  hp.prefixo = null;
+  hp.n = 0; hp.i = 0; hp.pv = 0; hp.pmt = 0; hp.fv = 0;
+  hp.ultimo = 'f CLEAR FIN';
+  desenharCalc();
+}
+
+function hpLimparTudo(){
+  const casas = hp.casas, begin = hp.begin;
+  hp = hpZerada();
+  hp.casas = casas; hp.begin = begin;
+  hp.ultimo = 'f CLEAR REG';
+  desenharCalc();
+}
+
+/* Um caso que o CFO reconhece na hora: financiar R$ 100.000 em 24 meses a 1,5%
+   ao mês. Serve de teste vivo · se a prestação sair diferente, a conta quebrou. */
+function hpExemplo(){
+  const casas = hp.casas;
+  hp = hpZerada();
+  hp.casas = casas;
+  hp.n = 24; hp.i = 1.5; hp.pv = 100000; hp.fv = 0;
+  hp.pmt = tvmResolver('pmt');
+  hp.x = hp.pmt;
+  hp.ultimo = 'R$ 100.000 em 24x a 1,5% ao mês';
+  hp.lift = true;
+  desenharCalc();
+}
+
+/* ═══════════════ LEVAR O NÚMERO EMBORA ═══════════════ */
+const calcValorAtual = () => hp.digitando ? (Number(hp.ent.replace(',', '.')) || 0) : hp.x;
+function copiarDaCalc(){
+  const v = calcValorAtual();
+  copiar(valorExcel(v), 'Copiado: ' + fmt(v) + '. Cole no campo de valor ou no Excel.');
+}
+
+/* ═══════════════ TECLADO DO COMPUTADOR ═══════════════
+   Só vale com a HP aberta e fora de campo de digitação: senão a tecla "7"
+   digitada num lançamento iria parar na calculadora. */
+document.addEventListener('keydown', e => {
+  if (!calcAberta) return;
+  const alvo = e.target;
+  if (alvo && (alvo.tagName === 'INPUT' || alvo.tagName === 'TEXTAREA' || alvo.tagName === 'SELECT' || alvo.isContentEditable)) return;
+  const k = e.key;
+  if (/^[0-9]$/.test(k)) { e.preventDefault(); hpDigito(k); return; }
+  if (k === ',' || k === '.') { e.preventDefault(); hpVirgula(); return; }
+  if (k === '+' || k === '-' || k === '*' || k === '/') { e.preventDefault(); hpOperar(k); return; }
+  if (k === 'Enter') { e.preventDefault(); hpEnter(); return; }
+  if (k === 'Backspace') { e.preventDefault(); hpClx(); return; }
+  if (k === 'Escape') { e.preventDefault(); fecharCalc(); return; }
+  if (k === '%') { e.preventDefault(); hpFuncao('pct'); }
+});
+
+/* o botão volta para onde foi largado da última vez · enquanto ninguém o
+   arrastar, ele fica no canto onde o CSS o colocou */
+if (lugarGravado('btn-calc')) restaurarLugar('btn-calc', () => ({ x: 0, y: 0 }));
+</script>

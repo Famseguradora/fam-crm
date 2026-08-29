@@ -1,0 +1,448 @@
+
+<script>
+/* ═══════════════ SIMULADOR ═══════════════
+   O CFO senta na reunião e pergunta "e se a folha subir 20%?". O simulador
+   responde criando um mês inteiro a partir de outro · lançamento por
+   lançamento, para o drill-down continuar funcionando no mês simulado. */
+
+let simRegras = [];
+let simBase = '2026-07';
+let simDestino = '2026-08';
+
+const proximoMes = mk => { let [a,m] = mk.split('-').map(Number); m++; if (m>12){m=1;a++;} return a + '-' + String(m).padStart(2,'0'); };
+const diasNoMes = mk => { const [a,m] = mk.split('-').map(Number); return new Date(a, m, 0).getDate(); };
+
+const OPS = {
+  subir:  { rotulo: 'Aumentar %',        precisaValor: true  },
+  reduzir:{ rotulo: 'Reduzir %',         precisaValor: true  },
+  fixo:   { rotulo: 'Definir total R$',  precisaValor: true  },
+  zerar:  { rotulo: 'Zerar (não ocorre)',precisaValor: false },
+};
+
+function alvosDisponiveis(mk){
+  const a = apurar(mk);
+  return [
+    { v: 'despesas', t: 'Todas as despesas' },
+    { v: 'receitas', t: 'Todas as receitas' },
+    ...a.porNatureza.map(n => ({ v: 'nat:' + n.natureza, t: n.natureza + '  (' + fmt(n.total) + ')' })),
+  ];
+}
+
+/* Resolve as regras em um plano: natureza → o que fazer.
+   Regra escrita depois manda na anterior para a mesma natureza. */
+function planoDeSimulacao(baseMk, regras){
+  const a = apurar(baseMk);
+  const plano = new Map();
+  for (const r of regras) {
+    let alvo = [];
+    if (r.alvo === 'despesas') alvo = a.porNatureza.filter(n => n.tipo === 'saida').map(n => n.natureza);
+    else if (r.alvo === 'receitas') alvo = a.porNatureza.filter(n => n.tipo === 'entrada').map(n => n.natureza);
+    else alvo = [r.alvo.slice(4)];
+    for (const nat of alvo) plano.set(nat, r);
+  }
+  return plano;
+}
+
+function simular(baseMk, destinoMk, regras){
+  const base = DB.meses[baseMk];
+  const a = apurar(baseMk);
+  const plano = planoDeSimulacao(baseMk, regras);
+  const totalNat = new Map(a.porNatureza.map(n => [n.natureza, n.total]));
+  const dias = diasNoMes(destinoMk);
+  const saida = [];
+  let k = 0;
+  for (const l of base.lancamentos) {
+    const r = plano.get(l.natureza);
+    let valor = l.valor;
+    if (r) {
+      if (r.op === 'zerar') continue;
+      else if (r.op === 'subir')   valor = l.valor * (1 + Number(r.valor)/100);
+      else if (r.op === 'reduzir') valor = l.valor * (1 - Number(r.valor)/100);
+      else if (r.op === 'fixo') {
+        const tb = totalNat.get(l.natureza) || 0;
+        if (!tb) continue;
+        const alvoTotal = Math.abs(Number(r.valor)) * (tb < 0 ? -1 : 1);
+        valor = l.valor * (alvoTotal / tb);
+      }
+    }
+    valor = Number(valor.toFixed(2));
+    if (valor === 0) continue;
+    const dia = Math.min(Number(l.data.slice(8,10)), dias);
+    saida.push({
+      id: 'S' + (++k) + '-' + destinoMk,
+      data: destinoMk + '-' + String(dia).padStart(2,'0'),
+      natureza: l.natureza, contraparte: l.contraparte, descritivo: l.descritivo,
+      valor, obs: l.obs || '',
+    });
+  }
+  return saida;
+}
+
+function gerarAgostoPadrao(){
+  const regras = [
+    { alvo: 'nat:Taxa fiscalização SUSEP', op: 'zerar', valor: 0 },
+    { alvo: 'nat:Premio recebido',    op: 'subir', valor: 15 },
+    { alvo: 'nat:Comissão Corretoras',op: 'subir', valor: 15 },
+    { alvo: 'nat:Fornecedores',       op: 'subir', valor: 3  },
+  ];
+  aplicarSimulacaoEm('2026-07', '2026-08', regras, 'Cenário base · agosto');
+}
+
+function aplicarSimulacaoEm(baseMk, destinoMk, regras, nome){
+  const lanc = simular(baseMk, destinoMk, regras);
+  const a = apurar(baseMk);
+  const resultado = lanc.reduce((s,l) => s + l.valor, 0);
+  DB.meses[destinoMk] = {
+    rotulo: rotuloMes(destinoMk),
+    saldoInicial: Number(a.saldoApurado.toFixed(2)),
+    saldoFinalBancario: Number((a.saldoApurado + resultado).toFixed(2)),
+    simulado: true, cenario: nome, baseSimulacao: baseMk, regras: regras.map(r => ({...r})),
+    lancamentos: lanc,
+  };
+}
+
+function abrirSimulador(){
+  simBase = DB.meses[mesAtual] && !DB.meses[mesAtual].simulado ? mesAtual : mesesOrdenados().find(mk => !DB.meses[mk].simulado) || mesAtual;
+  simDestino = proximoMes(simBase);
+  const m = DB.meses[simDestino];
+  simRegras = m && m.simulado && m.regras ? m.regras.map(r => ({...r})) : [];
+  abrirModal(`
+    <div class="modal-header">
+      <div class="modal-title">🧪 Simulador de cenário<small>“E se…?” · cria um mês inteiro a partir de outro, lançamento por lançamento</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button>
+    </div>
+    <div class="filter-row" style="margin-bottom:14px">
+      <div class="filter-group" style="min-width:180px">
+        <label class="filter-label">Mês base (o real)</label>
+        <select id="s-base" class="fam-input" onchange="simBase=this.value;simDestino=proximoMes(simBase);document.getElementById('s-dest').value=simDestino;montarRegras();previewSim()"></select>
+      </div>
+      <div class="filter-group" style="min-width:150px">
+        <label class="filter-label">Mês simulado</label>
+        <input type="month" id="s-dest" class="fam-input" value="${simDestino}" onchange="simDestino=this.value;previewSim()">
+      </div>
+      <div class="filter-group" style="flex:1;min-width:200px">
+        <label class="filter-label">Nome do cenário</label>
+        <input id="s-nome" class="fam-input" value="Cenário ${new Date().toLocaleDateString('pt-BR')}">
+      </div>
+    </div>
+    <div class="presets">
+      <button class="preset" onclick="addRegra('despesas','subir',10)">Subir 10% em todas as despesas</button>
+      <button class="preset" onclick="addRegra('nat:Remuneração Time FAM','subir',20)">Subir 20% na folha</button>
+      <button class="preset" onclick="addRegra('despesas','reduzir',15)">Reduzir 15% nas despesas</button>
+      <button class="preset" onclick="addRegra('receitas','subir',10)">Subir 10% nas receitas</button>
+      <button class="preset" onclick="addRegra('nat:Taxa fiscalização SUSEP','zerar',0)">Zerar SUSEP (trimestral)</button>
+    </div>
+    <div id="s-regras"></div>
+    <button class="btn-secondary" style="margin-bottom:14px" onclick="addRegra('despesas','subir',10)">＋ Nova regra</button>
+    <div class="aviso" style="margin-bottom:14px">
+      As regras valem <b>em ordem</b>: uma regra específica escrita depois manda na regra ampla escrita antes.
+      “Subir 10% em todas as despesas” seguido de “Subir 20% na folha” deixa a folha em +20%, não em +32%.
+    </div>
+    <div id="s-preview"></div>
+    <div class="modal-rodape">
+      <button class="btn-clear" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" onclick="aplicarSimulacao()">Gerar mês simulado</button>
+    </div>`, true);
+  document.getElementById('s-base').innerHTML = mesesOrdenados().filter(mk => !DB.meses[mk].simulado)
+    .map(mk => `<option value="${mk}"${mk===simBase?' selected':''}>${rotuloMes(mk)}</option>`).join('');
+  montarRegras(); previewSim();
+}
+
+function addRegra(alvo, op, valor){ simRegras.push({ alvo, op, valor: valor == null ? 0 : valor }); montarRegras(); previewSim(); }
+function removerRegra(i){ simRegras.splice(i,1); montarRegras(); previewSim(); }
+function mudarRegra(i, campo, v){ simRegras[i][campo] = v; montarRegras(); previewSim(); }
+
+function montarRegras(){
+  const alvos = alvosDisponiveis(simBase);
+  const el = document.getElementById('s-regras');
+  if (!el) return;
+  el.innerHTML = simRegras.map((r,i) => `
+    <div class="regra">
+      <div class="form-field">
+        <label class="form-label">Sobre o quê</label>
+        <select class="fam-input" onchange="mudarRegra(${i},'alvo',this.value)">
+          ${alvos.map(a => `<option value="${esc(a.v)}"${a.v===r.alvo?' selected':''}>${esc(a.t)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label class="form-label">O que fazer</label>
+        <select class="fam-input" onchange="mudarRegra(${i},'op',this.value)">
+          ${Object.keys(OPS).map(k => `<option value="${k}"${k===r.op?' selected':''}>${OPS[k].rotulo}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-field">
+        <label class="form-label">${r.op==='fixo'?'R$':'%'}</label>
+        <input class="fam-input" inputmode="decimal" ${r.op === 'fixo' ? 'data-dinheiro' : ''}
+               value="${r.op === 'fixo' ? valorEditavel(Math.abs(Number(r.valor) || 0)) : (r.valor == null ? 0 : r.valor)}"
+               ${OPS[r.op].precisaValor?'':'disabled'} onchange="mudarRegra(${i},'valor',lerValor(this.value)||0)">
+      </div>
+      <button class="btn-mini del" onclick="removerRegra(${i})" style="height:38px">Remover</button>
+    </div>`).join('') || '<div class="vazio" style="margin-bottom:10px">Nenhuma regra: o mês simulado sai igual ao mês base.</div>';
+}
+
+function previewSim(){
+  const el = document.getElementById('s-preview');
+  if (!el) return;
+  const base = apurar(simBase);
+  const lanc = simular(simBase, simDestino || proximoMes(simBase), simRegras);
+  const mapa = new Map();
+  for (const l of lanc) mapa.set(l.natureza, (mapa.get(l.natureza) || 0) + l.valor);
+  let entS = 0, saiS = 0;
+  for (const v of mapa.values()) { if (v > 0) entS += v; else saiS += v; }
+  const linhas = base.porNatureza.map(n => {
+    const vb = mapa.get(n.natureza) || 0;
+    const v = variacao(n.total, vb, n.tipo);
+    return `<tr>
+      <td>${esc(n.natureza)}</td>
+      <td class="num">${fmt(n.total)}</td>
+      <td class="num">${vb ? fmt(vb) : '<span style="color:var(--soft)">zerado</span>'}</td>
+      <td><span class="badge ${v.classe}">${v.texto}</span></td>
+    </tr>`;
+  }).join('');
+  const resB = base.resultado, resS = entS + saiS;
+  const vr = variacao(resB, resS, 'entrada');
+  el.innerHTML = `
+    <div class="section-title" style="margin-top:4px"><span class="dot"></span> Prévia · ${rotuloMes(simBase)} → ${rotuloMes(simDestino||proximoMes(simBase))}</div>
+    <div class="fam-table-wrap" style="max-height:280px;overflow-y:auto">
+      <table class="fam-table">
+        <thead><tr><th>Natureza</th><th class="num" style="width:150px">Base</th><th class="num" style="width:150px">Simulado</th><th style="width:110px">Δ%</th></tr></thead>
+        <tbody>${linhas}
+          <tr class="subtotal"><td>TOTAL ENTRADAS</td><td class="num">${fmt(base.entradas)}</td><td class="num">${fmt(entS)}</td><td></td></tr>
+          <tr class="subtotal"><td>TOTAL SAÍDAS</td><td class="num">${fmt(base.saidas)}</td><td class="num">${fmt(saiS)}</td><td></td></tr>
+          <tr class="subtotal"><td>RESULTADO DO MÊS</td><td class="num">${fmt(resB)}</td><td class="num">${fmt(resS)}</td><td><span class="badge ${vr.classe}">${vr.texto}</span></td></tr>
+          <tr class="subtotal"><td>SALDO FINAL PROJETADO</td><td class="num">${fmt(base.saldoApurado)}</td><td class="num">${fmt(base.saldoApurado + resS)}</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function aplicarSimulacao(){
+  const destino = document.getElementById('s-dest').value;
+  const nome = document.getElementById('s-nome').value.trim() || 'Cenário sem nome';
+  if (!destino) { alert('Escolha o mês simulado.'); return; }
+  if (destino === simBase) { alert('O mês simulado precisa ser diferente do mês base.'); return; }
+  const jaExiste = DB.meses[destino];
+  if (jaExiste && !jaExiste.simulado) { alert('Não dá para simular por cima de ' + rotuloMes(destino) + ': esse mês tem lançamentos reais.'); return; }
+  if (jaExiste && !confirm(rotuloMes(destino) + ' já é um mês simulado. Substituir pelo cenário novo?')) return;
+  aplicarSimulacaoEm(simBase, destino, simRegras, nome);
+  auditar('inclusao', 'Simulação aplicada a um mês', {
+    onde: rotuloMes(destino), de: 'base ' + rotuloMes(simBase),
+    para: nome + ' · ' + simRegras.length + ' regra(s)',
+    detalhe: simRegras.map(r => r.alvo.replace('nat:', '') + ' ' + r.op + ' ' + r.valor).join(' · ') });
+  gravar(); fecharModal();
+  garantirMesNaTela([simBase, destino]);
+  mesAtual = destino;
+  compA = simBase; compB = destino; parFixado = true;
+  recolherTudo();
+}
+
+/* ═══════════════ CÓPIA DE SEGURANÇA · o sistema vive neste computador ═══════════════
+   Não há Supabase, não há nuvem, não há servidor. Os dados ficam no navegador
+   deste computador. Por isso o backup em arquivo não é enfeite: é o único jeito
+   de levar os dados para outra máquina, ou de voltar atrás. */
+function baixarBackup(){
+  const pacote = { arquivo: 'FAM Financeiro', versao: 2, gravadoEm: new Date().toISOString(),
+                   db: RAIZ, postits, auditoria: AUDITORIA, visaoMeses };
+  auditar('sistema', 'Cópia de segurança gerada', { detalhe: mesesOrdenados().length + ' mês(es) · ' + AUDITORIA.length + ' registros de auditoria' });
+  const blob = new Blob([JSON.stringify(pacote, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  const d = new Date();
+  const carimbo = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0') +
+                  '-' + String(d.getHours()).padStart(2,'0') + String(d.getMinutes()).padStart(2,'0');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'fam-financeiro-' + carimbo + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+function escolherBackup(){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.json';
+  inp.onchange = () => {
+    const f = inp.files[0]; if (!f) return;
+    const fr = new FileReader();
+    fr.onload = () => {
+      try {
+        const o = JSON.parse(fr.result);
+        const bruto = o && o.db ? o.db : o;
+        /* O backup de hoje traz a RAIZ inteira (a Principal e as abas de
+           simulação); o antigo trazia só o bloco de meses. Ler os dois é o que
+           faz o sistema conseguir restaurar o próprio arquivo · antes daqui ele
+           só sabia ler o formato velho, e recusava o que ele mesmo tinha
+           acabado de gerar. */
+        const raiz = bruto && bruto.versao === 2 && bruto.principal ? bruto
+                   : (bruto && bruto.meses ? { versao: 2, principal: bruto, cenarios: [] } : null);
+        if (!raiz) throw new Error('não é um backup do FAM Financeiro');
+        raiz.cenarios = raiz.cenarios || [];
+        const quantos = Object.keys(raiz.principal.meses || {}).length;
+        if (!confirm('Isto substitui os dados deste computador pelos do arquivo: '
+          + quantos + ' mês(es) e ' + raiz.cenarios.length + ' simulação(ões).\n\n'
+          + 'Dá para voltar atrás com Ctrl+Z. Confirma?')) return;
+        RAIZ = raiz;
+        abaAtual = 'principal';
+        DB = RAIZ.principal;
+        document.body.classList.remove('simulando');
+        if (o.postits) { postits = o.postits; gravarPostits(); }
+        /* A trilha do arquivo entra JUNTO da que já existe aqui, sem apagar
+           nada: auditoria que some ao restaurar backup não é auditoria. */
+        if (Array.isArray(o.auditoria)) juntarAuditoria(o.auditoria);
+        auditar('sistema', 'Backup restaurado de arquivo',
+          { detalhe: (o.gravadoEm || '').slice(0,10) + ' · ' + quantos + ' mês(es) · ' + raiz.cenarios.length + ' simulação(ões)' });
+        mesAtual = mesesOrdenados()[0]; compA = null; compB = null; parFixado = false;
+        abertasComp.clear(); abertasCP.clear();
+        gravar(); fecharModal(); render(); desenharPostits();
+        alert('Backup restaurado: ' + mesesOrdenados().length + ' mês(es).');
+      } catch(e) {
+        alert('Não consegui ler esse arquivo como backup do FAM Financeiro.');
+      }
+    };
+    fr.readAsText(f);
+  };
+  inp.click();
+}
+
+/* ═══════════════ LEMBRETES (post-its de revisão) · só do protótipo ═══════════════ */
+const CHAVE_POSTIT = 'fam-financeiro-tela1-postits';
+let revisao = false, postits = [];
+
+function carregarPostits(){ try { postits = JSON.parse(localStorage.getItem(CHAVE_POSTIT) || '[]'); } catch(e) { postits = []; } desenharPostits(); }
+function gravarPostits(){ try { localStorage.setItem(CHAVE_POSTIT, JSON.stringify(postits)); } catch(e) {} }
+
+function alternarRevisao(){
+  revisao = !revisao;
+  document.body.classList.toggle('revisao', revisao);
+  const b = document.getElementById('btn-rev');
+  b.classList.toggle('on', revisao);
+  b.textContent = revisao ? '📌 Clique na tela · sair' : '📌 Lembretes';
+}
+
+/* Apagar um post-it funciona sempre · com o modo revisão ligado ou desligado.
+   Fica fora do desenho porque o botão é recriado a cada redesenho. */
+function apagarPostit(i){
+  postits.splice(i, 1);
+  postits.forEach((q, j) => q.n = j + 1);
+  gravarPostits();
+  desenharPostits();
+}
+
+document.addEventListener('click', e => {
+  if (!revisao) return;
+  if (e.target.closest('.postit') || e.target.closest('#btn-rev') || e.target.closest('#btn-fin') ||
+      e.target.closest('.modal-overlay') || e.target.closest('.gaveta-lateral') || e.target.closest('.gl-fundo')) return;
+  const wrap = document.querySelector('.wrap');
+  const r = wrap.getBoundingClientRect();
+  const x = Math.max(0, Math.min(e.clientX - r.left, wrap.clientWidth - 215));
+  const y = e.clientY - r.top;
+  postits.push({ n: postits.length + 1, x, y, tela: 'Dashboard', texto: '' });
+  gravarPostits(); desenharPostits();
+  setTimeout(() => { const t = document.querySelector('.postit:last-of-type textarea'); if (t) t.focus(); }, 30);
+});
+
+function desenharPostits(){
+  const wrap = document.querySelector('.wrap');
+  if (!wrap) return;
+  wrap.querySelectorAll('.postit').forEach(p => p.remove());
+  wrap.style.position = 'relative';
+  postits.forEach((p, i) => {
+    const d = document.createElement('div');
+    d.className = 'postit';
+    d.style.left = p.x + 'px'; d.style.top = p.y + 'px';
+    d.innerHTML = `<div class="cab"><span class="pega" title="arraste para mover">✥ #${p.n} · ${esc(p.tela)}</span>
+        <button class="x" type="button" title="apagar este lembrete">apagar ✕</button></div>
+      <textarea placeholder="o que mudar aqui...">${esc(p.texto)}</textarea>`;
+    d.querySelector('textarea').addEventListener('input', ev => { postits[i].texto = ev.target.value; gravarPostits(); });
+    d.querySelector('.x').addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); apagarPostit(i); });
+    d.querySelector('.x').addEventListener('mousedown', ev => ev.stopPropagation());
+    d.querySelector('.pega').addEventListener('mousedown', ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      const r0 = wrap.getBoundingClientRect();
+      const mover = m => {
+        postits[i].x = Math.max(0, Math.min(m.clientX - r0.left - 100, wrap.clientWidth - 215));
+        postits[i].y = m.clientY - r0.top;
+        d.style.left = postits[i].x + 'px'; d.style.top = postits[i].y + 'px';
+      };
+      const soltar = () => { document.removeEventListener('mousemove', mover); document.removeEventListener('mouseup', soltar); gravarPostits(); };
+      document.addEventListener('mousemove', mover); document.addEventListener('mouseup', soltar);
+    });
+    wrap.appendChild(d);
+  });
+}
+
+function mostrarListaPostits(){
+  if (!postits.length) { alert('Nenhum lembrete ainda. Clique em "📌 Lembretes" e depois em qualquer ponto da tela.'); return; }
+  const txt = postits.map(p => `#${p.n} · Tela: ${p.tela}\n${p.texto || '(sem texto)'}`).join('\n\n');
+  abrirModal(`
+    <div class="modal-header"><div class="modal-title">📌 Lembretes desta revisão<small>Copie e mande para o Claude</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button></div>
+    <textarea class="fam-input" style="min-height:280px;font-size:13px" onclick="this.select()">${esc(txt)}</textarea>
+    <div style="margin-top:12px;font-size:12.5px;color:var(--soft)">Para apagar um lembrete, clique em <b>apagar ✕</b> no próprio bilhete, na tela.</div>
+    <div class="modal-rodape">
+      <button class="btn-danger esq" onclick="if(confirm('Apagar TODOS os lembretes?')){postits=[];gravarPostits();desenharPostits();fecharModal()}">Apagar todos</button>
+      <button class="btn-clear" onclick="fecharModal()">Fechar</button>
+    </div>`);
+}
+
+/* ═══════════════ INÍCIO ═══════════════
+   Dentro do CRM o estado vem do servidor ANTES de carregar() rodar: a nuvem
+   deixa o conteúdo no lugar de sempre e carregar() nem fica sabendo. Fora do
+   CRM, nuvemIniciar() volta na hora e a partida é a de sempre. */
+async function iniciar(){
+  await nuvemIniciar();
+
+  carregarAuditoria();
+  carregarVisao();
+  carregar();
+  render();
+
+  /* PONTO SEM VOLTA · o cofre acabou de nascer e o que está gravado no servidor
+     ainda está em claro. Recifrar na hora é o que impede a versão legível de
+     ficar para trás no banco · sigilo com a cópia antiga esquecida ao lado não
+     é sigilo, é aparência. Só depois disto a tela fica utilizável. */
+  if (COFRE.aberto && COFRE.virgem) {
+    auditar('sistema', 'Cofre criado · o caixa passou a ser cifrado', {
+      detalhe: 'A partir daqui só quem tem chave lê. Quem administra o CRM controla o acesso, não o conteúdo.',
+    });
+    await nuvemEnviar();
+    COFRE.virgem = false;
+    flash('Cofre criado. O caixa agora está cifrado: sem a senha, ninguém abre.');
+  }
+  carregarPostits();
+  montarChips();
+  perguntarFIN('Qual o saldo?');
+  document.getElementById('btn-rev').addEventListener('contextmenu', e => { e.preventDefault(); mostrarListaPostits(); });
+
+  /* Quem só tem leitura no Financeiro vê tudo e não grava nada. A trava de
+     verdade é a RLS no banco; isto aqui é para a pessoa não descobrir que não
+     podia depois de digitar. */
+  mostrarBotoesDoCofre();
+  if (nuvemLigada() && !nuvemPodeEditar()) {
+    document.body.classList.add('so-leitura');
+    nuvemFaixa('aviso', 'Seu acesso ao Financeiro é de <b>leitura</b>: dá para abrir, conferir e gerar o PDF, mas não para lançar.');
+  }
+}
+
+iniciar();
+</script>
+
+<footer style="max-width:1380px;margin:0 auto;padding:0 20px 30px;font-size:12px;color:var(--soft);line-height:1.7">
+  <div style="margin-bottom:8px">
+    <button class="btn-clear" onclick="baixarBackup()">💾 Salvar cópia dos dados</button>
+    <button class="btn-clear" data-escreve onclick="escolherBackup()">📂 Restaurar de um arquivo</button>
+    <button class="btn-clear" onclick="abrirAuditoria()">🧾 Trilha de auditoria</button>
+    <button class="btn-clear cofre-so" style="display:none" onclick="trocarMinhaSenha()">🔑 Trocar a minha senha do cofre</button>
+    <button class="btn-clear cofre-so" style="display:none" onclick="convidarParaOCofre()">🎟️ Dar a chave a alguém</button>
+    <button class="btn-clear" onclick="mostrarListaPostits()">📌 Ver lembretes</button>
+    <button class="btn-clear" onclick="imprimirTela()">🖨️ Gerar PDF da tela</button>
+    <button class="btn-clear" data-escreve onclick="restaurar()">↺ Zerar e voltar à planilha Matriz</button>
+  </div>
+  <b>Este sistema não tem nuvem, não tem banco de dados e não manda nada para a internet.</b>
+  Tudo fica neste computador, no navegador deste usuário · por isso a cópia de segurança em arquivo
+  é a forma de levar os dados para outra máquina ou de voltar atrás. ·
+  Tela 1 de <b>FAM Financeiro</b>. A carga de fábrica é a planilha Matriz
+  <i>2026.07 - Santander - Recebimentos e Pagamentos New</i> (julho/2026, 93 lançamentos, 14 naturezas).
+</footer>
+
+<div class="credito"><span class="linha">Desenvolvido por: <b>Marco Aurélio Dragone</b></span></div>
+<div class="credito-papel">Desenvolvido por: <b>Marco Aurélio Dragone</b> · FAM Seguradora</div>
+</body>
+</html>

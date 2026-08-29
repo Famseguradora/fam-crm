@@ -1,0 +1,614 @@
+
+<script>
+/* ══════════════ JEITO EXCEL · o botão direito manda na linha ══════════════
+   O CFO e o CEO passam o dia no Excel. Lá, mexer numa linha é botão direito:
+   inserir acima, inserir abaixo, excluir, copiar. Esta parte traz essa mesma
+   gramática para a tela de Acompanhamento mensal, com os verbos daqui.
+   Como a tela mostra dois meses ao mesmo tempo, toda ação que mexe em
+   lançamento diz em qual dos dois ela está mexendo · nada é adivinhado.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════ LARGURA DAS COLUNAS ═══════════════
+   Como no Excel: a borda direita do título é uma alça. O que o Aldeir arrasta
+   fica gravado no navegador, separado dos dados · dois cliques na alça devolve
+   a coluna ao tamanho de fábrica. A mesma medida serve ao quadro resumo, à
+   tabela e às gavetas, senão a coluna deixaria de ser uma coluna só. */
+/* Uma largura por PAPEL de coluna, não por mês: M vale para todo mês na tela,
+   T para todo total de trimestre. Com o ano inteiro à vista, largura por mês
+   viraria doze ajustes para a mesma coisa. */
+const COLS_PADRAO = { M: 120, T: 128, D: 132, V: 100 };
+const COL_MIN = 72, COL_MAX = 420;
+const CHAVE_COLS = 'fam-financeiro-colunas';
+let _cols = null;
+
+function colunas(){
+  if (_cols) return _cols;
+  _cols = { ...COLS_PADRAO };
+  let o = null;
+  try { o = JSON.parse(localStorage.getItem(CHAVE_COLS) || 'null'); } catch(e) {}
+  if (o) for (const k of Object.keys(COLS_PADRAO))
+    if (Number.isFinite(o[k])) _cols[k] = Math.max(COL_MIN, Math.min(COL_MAX, o[k]));
+  return _cols;
+}
+function gravarColunas(){ try { localStorage.setItem(CHAVE_COLS, JSON.stringify(colunas())); } catch(e) {} }
+
+/* A largura de cada coluna vira variável CSS, e a mesma lista monta a grade do
+   quadro escuro (--cols) e a largura mínima do quadro · com muitos meses a
+   tabela passa a rolar de lado em vez de espremer o nome da conta. */
+const estiloColunas = cols => {
+  const c = colunas();
+  const larg = t => t === 'mes' ? c.M : t === 'tot' ? c.T : t === 'dif' ? c.D : c.V;
+  const tpl = 'minmax(0,1fr) ' + cols.map(x => 'var(--c' + letraCol(x) + ')').join(' ');
+  const min = 260 + cols.reduce((s, x) => s + larg(x.tipo), 0);
+  return `--cM:${c.M}px;--cT:${c.T}px;--cD:${c.D}px;--cV:${c.V}px;--cols:${tpl};--minw:${min}px`;
+};
+const TITULO_PUXA = {
+  M: 'Arraste para mudar a largura de TODOS os meses de uma vez · dois cliques volta ao padrão',
+  T: 'Arraste para mudar a largura das colunas de total de trimestre · dois cliques volta ao padrão',
+  D: 'Arraste para mudar a largura · dois cliques volta ao padrão',
+  V: 'Arraste para mudar a largura · dois cliques volta ao padrão',
+};
+const puxador = col => '<span class="puxador" data-col="' + col + '" title="' + TITULO_PUXA[col] + '"></span>';
+
+/* Ponteiro com captura, não mouse solto: uma vez agarrada, a alça continua
+   recebendo o movimento mesmo se o cursor sair da tabela ou passar por cima de
+   outra coisa · era por aí que o arrasto escapava no meio do caminho. */
+document.addEventListener('pointerdown', e => {
+  const alca = e.target.closest ? e.target.closest('.puxador') : null;
+  if (!alca || e.button !== 0) return;
+  e.preventDefault();
+  const col = alca.dataset.col;
+  const quadro = alca.closest('.comp-quadro');
+  if (!quadro) return;
+  const larg0 = colunas()[col], x0 = e.clientX;
+
+  /* Todos os meses dividem UMA largura. Mexer nela mexe em todas as colunas de
+     mês ao mesmo tempo, e a borda que a mão segura anda tantas vezes quanto o
+     número de colunas daquele tipo que ficam dali para a direita · dividir por
+     esse número é o que faz a linha andar junto com o mouse, e não na frente
+     dele. Com dois meses na tela a alça andava o dobro; era isso. */
+  const naLinha = [...alca.closest('tr').querySelectorAll('.puxador[data-col="' + col + '"]')];
+  const quantas = Math.max(1, naLinha.length - naLinha.indexOf(alca));
+
+  document.body.classList.add('redimensionando');
+  try { alca.setPointerCapture(e.pointerId); } catch(err) {}
+
+  const mover = ev => {
+    /* A alça está na borda ESQUERDA da coluna. Levar o mouse para a direita
+       leva essa borda para a direita, o que encolhe a coluna · o sinal
+       invertido é o que faz a linha andar junto com a mão, e não contra. */
+    colunas()[col] = Math.max(COL_MIN, Math.min(COL_MAX, Math.round(larg0 - (ev.clientX - x0) / quantas)));
+    quadro.style.setProperty('--c' + col, colunas()[col] + 'px');
+  };
+  const soltar = () => {
+    alca.removeEventListener('pointermove', mover);
+    alca.removeEventListener('pointerup', soltar);
+    alca.removeEventListener('pointercancel', soltar);
+    document.body.classList.remove('redimensionando');
+    gravarColunas();
+  };
+  alca.addEventListener('pointermove', mover);
+  alca.addEventListener('pointerup', soltar);
+  alca.addEventListener('pointercancel', soltar);
+});
+
+document.addEventListener('dblclick', e => {
+  const alca = e.target.closest ? e.target.closest('.puxador') : null;
+  if (!alca) return;
+  const col = alca.dataset.col;
+  if (!(col in COLS_PADRAO)) return;
+  colunas()[col] = COLS_PADRAO[col];
+  const quadro = document.querySelector('.comp-quadro');
+  if (quadro) quadro.style.setProperty('--c' + col, COLS_PADRAO[col] + 'px');
+  gravarColunas();
+  flash('Coluna de volta ao tamanho de fábrica.');
+});
+
+/* ═══════════════ ARRASTAR O MOUSE NÃO É CLICAR ═══════════════
+   Quem arrasta o mouse por cima de uma linha para selecionar um número está
+   lendo, não navegando. Se o botão for solto em outro lugar, o navegador ainda
+   assim dispara um clique no ancestral comum · e era isso que fechava a janela
+   ou recolhia a gaveta no meio da leitura. Aqui a tela pergunta duas coisas
+   antes de obedecer: o clique nasceu neste mesmo lugar? sobrou seleção? */
+let _alvoMousedown = null;
+document.addEventListener('mousedown', e => { _alvoMousedown = e.target; }, true);
+
+const cliqueNasceuEm = el => _alvoMousedown === el;
+
+function cliqueDeVerdade(){
+  const s = window.getSelection();
+  return !s || s.isCollapsed || String(s).trim() === '';
+}
+
+/* ═══════════════ MÁSCARA DE DINHEIRO ═══════════════
+   Campo de valor se escreve como no extrato do banco: "R$ 1.000,00" já pronto
+   enquanto se digita. Só os dígitos contam, e eles entram pela direita · quem
+   digita não precisa acertar ponto nem vírgula, e nunca fica com o cursor
+   preso no meio da máscara. Onde o sinal importa, a tecla "-" o inverte.
+   A ligação é por atributo (data-dinheiro), então campo que nasce depois, num
+   modal ou numa linha, já vem com a máscara sem ninguém ligar nada. */
+function formatarDinheiro(campo, moverCursor){
+  const podeNeg = campo.dataset.dinheiro === 'neg';
+  const bruto = String(campo.value || '');
+  const neg = podeNeg && bruto.includes('-');
+  const digitos = bruto.replace(/\D/g, '').slice(0, 13);
+  const n = digitos ? Number(digitos) / 100 : null;
+  const texto = n === null
+    ? (neg ? '-' : '')
+    : (neg ? '-' : '') + 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  /* Se o texto não muda, sair sem encostar na seleção. Mexer nela aqui quebrava
+     o "selecionar tudo e digitar por cima": a seleção morria no foco e o que
+     era para substituir virava dígito colado no fim do que já estava lá. */
+  if (texto === campo.value) return;
+  campo.value = texto;
+  if (moverCursor === false) return;
+  const fim = texto.length;
+  try { campo.setSelectionRange(fim, fim); } catch(err) {}
+}
+
+const ehDinheiro = el => el && el.matches && el.matches('input[data-dinheiro]');
+
+document.addEventListener('input', e => { if (ehDinheiro(e.target)) formatarDinheiro(e.target); });
+/* focus não sobe na árvore: a captura é o que faz a delegação funcionar aqui.
+   Ao focar só arruma o texto, nunca o cursor · quem entra no campo pode estar
+   entrando para selecionar tudo e trocar o valor inteiro. */
+document.addEventListener('focus', e => { if (ehDinheiro(e.target)) formatarDinheiro(e.target, false); }, true);
+document.addEventListener('keydown', e => {
+  if (!ehDinheiro(e.target) || e.target.dataset.dinheiro !== 'neg') return;
+  if (e.key !== '-') return;
+  e.preventDefault();
+  const c = e.target;
+  c.value = c.value.includes('-') ? c.value.replace('-', '') : '-' + c.value;
+  formatarDinheiro(c);
+  c.dispatchEvent(new Event('input', { bubbles: true }));   // quem escuta o campo recalcula
+});
+
+/* ═══════════════ EDITAR NA PRÓPRIA LINHA ═══════════════
+   Dois cliques na célula e ela vira campo, como no Excel. Enter grava, Esc
+   desiste, sair do campo grava. Percentual e diferença ninguém digita: quem
+   refaz os dois, e os totais, e o quadro de cima, é o render() de sempre. */
+let _editando = false;
+
+function editarCelula(td){
+  if (!td || _editando) return;
+  /* Acesso de leitura: o campo nem chega a abrir. Sem isto, a pessoa digitaria
+     o valor, apertaria Enter e só então o servidor recusaria · descobrir que
+     não podia DEPOIS de ter digitado é a pior hora de descobrir. */
+  if (typeof nuvemPodeEditar === 'function' && !nuvemPodeEditar()) {
+    flash('Seu acesso ao Financeiro é de leitura: dá para conferir, não para lançar.');
+    return;
+  }
+  _editando = true;
+  const tipo = td.dataset.edit;                  // valor · novo · desc
+  const ehValor = tipo === 'valor' || tipo === 'novo';
+  const antes = td.innerHTML;
+
+  const campo = document.createElement('input');
+  campo.className = 'edit-campo' + (ehValor ? ' num' : '');
+  /* a célula vazia abre em branco: não há valor anterior para corrigir, há um
+     lançamento para nascer */
+  campo.value = tipo === 'novo' ? '' : (ehValor ? valorEditavel(Number(td.dataset.valor)) : td.dataset.texto);
+  if (ehValor) { campo.inputMode = 'decimal'; campo.dataset.dinheiro = 'neg'; }
+  if (tipo === 'novo') campo.placeholder = 'R$ 0,00';
+  td.innerHTML = '';
+  td.appendChild(campo);
+  campo.focus();
+  campo.select();
+
+  let fim = false;
+  const desistir = () => { if (fim) return; fim = true; _editando = false; td.innerHTML = antes; };
+  const gravar   = () => { if (fim) return; fim = true; _editando = false; salvarCelula(td, campo.value); };
+
+  campo.addEventListener('keydown', e => {
+    e.stopPropagation();                       // Esc aqui não fecha modal nem menu
+    if (e.key === 'Enter')       { e.preventDefault(); gravar(); }
+    else if (e.key === 'Escape') { e.preventDefault(); desistir(); }
+  });
+  campo.addEventListener('blur', gravar);
+  campo.addEventListener('dblclick', e => e.stopPropagation());
+}
+
+function salvarCelula(td, texto){
+  /* ── a célula vazia: o lançamento nasce aqui ──
+     Tudo menos o valor vem da própria linha. O dia é o mesmo, preso ao último
+     dia do mês quando o mês novo é mais curto · dia 31 em mês de 30 nasceria
+     fora do próprio mês. O sinal segue o da linha: uma saída não vira entrada
+     porque foi lançada noutro mês. */
+  if (td.dataset.edit === 'novo') {
+    const v = lerValor(texto);
+    if (!isFinite(v) || Math.abs(v) < 0.005) return render();   // desistiu, e tudo bem
+    const mk = td.dataset.mk, m = DB.meses[mk];
+    if (!m) return render();
+    const dias = new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)), 0).getDate();
+    const dia = String(Math.min(Number(td.dataset.dia), dias)).padStart(2, '0');
+    const valor = Number((td.dataset.sinal === '-' ? -Math.abs(v) : Math.abs(v)).toFixed(2));
+    const novo = {
+      id: novoId(), data: mk + '-' + dia,
+      natureza: td.dataset.nat, contraparte: td.dataset.cp, descritivo: td.dataset.desc,
+      valor, obs: '', origem: 'digitado na linha',
+    };
+    m.lancamentos.push(novo);
+    auditar('inclusao', 'Lançamento digitado na linha', {
+      onde: rotuloCurto(mk) + ' · ' + novo.natureza + ' · ' + novo.contraparte,
+      de: rotuloMes(mk) + ' não tinha este lançamento',
+      para: fmtData(novo.data) + ' · ' + fmt(valor) + (novo.descritivo ? ' · ' + novo.descritivo : '') });
+    gravar(); render();
+    flash('Lançado em ' + rotuloMes(mk) + ': ' + fmt(valor) + '. Ctrl+Z desfaz.');
+    return;
+  }
+
+  if (td.dataset.edit === 'valor') {
+    const l = (DB.meses[td.dataset.mk].lancamentos || []).find(x => x.id === td.dataset.id);
+    if (!l) return render();
+    const v = lerValor(texto);
+    if (!isFinite(v) || Math.abs(v) < 0.005) { flash('Escreva um valor diferente de zero.'); return render(); }
+    if (Number(v.toFixed(2)) === l.valor) return render();
+    const antes = l.valor;
+    l.valor = Number(v.toFixed(2));
+    auditar('alteracao', 'Valor corrigido na linha', {
+      onde: rotuloCurto(td.dataset.mk) + ' · ' + l.natureza + ' · ' + l.contraparte,
+      de: fmt(antes), para: fmt(l.valor) });
+    gravar(); render();
+    flash('Valor corrigido para ' + fmt(l.valor) + '. Diferença e percentual refeitos.');
+    return;
+  }
+
+  const novo = texto.trim();
+  if (!novo) { flash('A descrição não pode ficar vazia.'); return render(); }
+  /* O descritivo é o que casa o lançamento de um mês com o do outro. Mudar só
+     de um lado desfaria o par na hora, então os dois andam juntos. */
+  const tr = td.closest('tr');
+  const alvos = String(tr.dataset.ids || '').split(';').filter(Boolean).map(p => p.split('|'));
+  let mexeu = 0, antes = '';
+  for (const [mk, id] of alvos) {
+    const l = DB.meses[mk] && DB.meses[mk].lancamentos.find(x => x.id === id);
+    if (l && l.descritivo !== novo) { antes = l.descritivo; l.descritivo = novo; mexeu++; }
+  }
+  if (!mexeu) return render();
+  auditar('alteracao', 'Descrição corrigida', { onde: alvos.map(a => rotuloCurto(a[0])).join(' · '), de: antes, para: novo });
+  gravar(); render();
+  flash(mexeu > 1 ? 'Descrição corrigida nos ' + mexeu + ' meses.' : 'Descrição corrigida.');
+}
+
+document.addEventListener('dblclick', e => {
+  const td = e.target.closest ? e.target.closest('td[data-edit]') : null;
+  if (!td) return;
+  e.preventDefault();
+  editarCelula(td);
+});
+
+/* ═══════════════ RECADO CURTO ═══════════════ */
+let _flashT = null;
+function flash(msg){
+  let el = document.getElementById('flash');
+  if (!el) { el = document.createElement('div'); el.id = 'flash'; el.className = 'aviso-flutua'; document.body.appendChild(el); }
+  el.textContent = msg;
+  requestAnimationFrame(() => el.classList.add('on'));
+  clearTimeout(_flashT);
+  _flashT = setTimeout(() => el.classList.remove('on'), 2400);
+}
+
+/* ═══════════════ COPIAR (para colar no Excel) ═══════════════
+   O sistema roda em arquivo local, onde a área de transferência moderna às
+   vezes não é liberada pelo navegador · por isso o caminho antigo continua
+   aqui atrás, senão "Copiar" simplesmente não faria nada. */
+function copiar(texto, recado){
+  const ok = () => flash(recado || 'Copiado. Cole no Excel com Ctrl+V.');
+  const antigo = () => {
+    const ta = document.createElement('textarea');
+    ta.value = texto;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta); ta.select();
+    let deu = false;
+    try { deu = document.execCommand('copy'); } catch(e) {}
+    ta.remove();
+    deu ? ok() : flash('O navegador não deixou copiar daqui.');
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(texto).then(ok, antigo);
+  else antigo();
+}
+
+/* valor no formato que o Excel em português entende sem pedir nada */
+const valorExcel = v => (v < 0 ? '-' : '') + fmtN(v);
+const linhaExcel = (l, mk) => [rotuloMes(mk), fmtData(l.data), l.natureza, l.contraparte, l.descritivo, valorExcel(l.valor)].join('\t');
+const CAB_EXCEL = ['Mês','Data','Natureza','Contraparte','Descritivo','Valor'].join('\t');
+
+/* os meses que estão na tela · é sobre eles que copiar e somar trabalham */
+const periodos = () => mesesNaTela();
+/* Menu com uma linha por mês fica impossível de ler com o ano inteiro à vista.
+   As ações que pedem um mês param nos 6 mais recentes, que são os que se mexe
+   de verdade · para os outros existe o botão direito na própria coluna. */
+const mesesDeAcao = () => { const ms = mesesNaTela(); return ms.length <= 6 ? ms : ms.slice(-6); };
+
+/* Toda ação de lançamento trabalha no mês corrente. Aqui a tela tem dois, então
+   a ação troca o mês corrente para aquele em que ela vai mexer, e o título do
+   modal mostra qual é · quem clicou vê em que mês está entrando. */
+function novoLanc(mk, nat, cp){
+  mesAtual = mk;
+  abrirLancamento(null, nat);
+  if (cp) { const el = document.getElementById('f-cp'); if (el) el.value = cp; }
+}
+
+/* ═══════════════ MENU DO BOTÃO DIREITO ═══════════════ */
+let _acoes = [];
+let _scrollAoAbrir = 0;
+
+function fecharCtx(){
+  const m = document.getElementById('ctx-menu');
+  if (m) m.remove();
+  document.querySelectorAll('.alvo-ctx').forEach(el => el.classList.remove('alvo-ctx'));
+  _acoes = [];
+}
+
+function abrirCtx(x, y, titulo, itens, alvo){
+  fecharCtx();
+  _scrollAoAbrir = window.scrollY;
+  /* o realce é sempre da linha: clicar numa célula seleciona a linha toda,
+     do jeito que o Excel faz */
+  if (alvo) (alvo.closest('tr') || alvo).classList.add('alvo-ctx');
+  const usaveis = itens.filter(it => it !== '-' && !it.off);
+  _acoes = usaveis.map(it => it.faz);
+  let i = -1;
+  const corpo = itens.map(it => {
+    if (it === '-') return '<div class="ctx-sep"></div>';
+    if (!it.off) i++;
+    return `<button type="button" class="ctx-item${it.perigo ? ' del' : ''}"${it.off ? ' disabled' : ` data-i="${i}"`}>`
+      + `<span class="ic">${it.ic || ''}</span><span class="tx">${esc(it.t)}</span>`
+      + (it.atalho ? `<span class="at">${esc(it.atalho)}</span>` : '')
+      + '</button>';
+  }).join('');
+
+  const el = document.createElement('div');
+  el.id = 'ctx-menu';
+  el.className = 'ctx-menu';
+  el.setAttribute('role', 'menu');
+  el.innerHTML = (titulo ? `<div class="ct">${esc(titulo)}</div><div class="ctx-sep"></div>` : '') + corpo;
+  document.body.appendChild(el);
+
+  /* o menu nunca pode vazar da janela: se não couber para a direita ou para
+     baixo, ele encosta na borda em vez de sumir metade fora da tela */
+  const r = el.getBoundingClientRect();
+  el.style.left = Math.max(6, Math.min(x, innerWidth  - r.width  - 6)) + 'px';
+  el.style.top  = Math.max(6, Math.min(y, innerHeight - r.height - 6)) + 'px';
+
+  el.addEventListener('click', ev => {
+    const b = ev.target.closest('.ctx-item[data-i]');
+    if (!b) return;
+    const faz = _acoes[+b.dataset.i];
+    fecharCtx();
+    if (faz) faz();
+  });
+}
+
+/* ── os menus, um por tipo de linha ── */
+
+/* nível 1 · a conta, nos dois meses */
+function ctxConta(tr, x, y){
+  const nat = tr.dataset.nat;
+  const aberta = abertasComp.has(nat);
+  const qtd = mk => DB.meses[mk].lancamentos.filter(l => l.natureza === nat).length;
+  const itens = [
+    { ic: aberta ? '▼' : '▶', t: aberta ? 'Recolher as contrapartes' : 'Abrir as contrapartes', faz: () => alternarComp(tr) },
+    '-',
+  ];
+  for (const mk of mesesDeAcao())
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat) });
+  itens.push('-',
+    { ic:'📋', t:'Copiar os lançamentos desta conta', atalho:'p/ o Excel', faz: () => copiarConta(nat) },
+    { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) },
+    '-');
+  const vazia = periodos().every(mk => qtd(mk) === 0);
+  if (vazia) itens.push({ ic:'🗑️', t:'Excluir esta natureza', perigo:true, faz: () => excluirNaturezaVazia(nat) });
+  else for (const mk of mesesDeAcao())
+    itens.push({ ic:'🗑️', t:'Excluir os ' + qtd(mk) + ' de ' + rotuloMes(mk), perigo:true, off: qtd(mk) === 0,
+                 faz: () => excluirContaNoMes(nat, mk) });
+  abrirCtx(x, y, nat, itens, tr);
+}
+
+/* nível 2 · a contraparte dentro da conta */
+function ctxContraparte(tr, x, y){
+  const nat = tr.dataset.nat, cp = tr.dataset.cp;
+  const nome = tr.querySelector('b').textContent;
+  const aberta = abertasCP.has(idCP(nat, cp));
+  const itens = [
+    { ic: aberta ? '▼' : '▶', t: aberta ? 'Recolher os lançamentos' : 'Abrir os lançamentos', faz: () => alternarCP(tr) },
+    '-',
+  ];
+  for (const mk of mesesDeAcao())
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, nome) });
+  itens.push('-',
+    { ic:'📋', t:'Copiar os lançamentos desta contraparte', atalho:'p/ o Excel', faz: () => copiarContraparte(nat, cp, nome) },
+    { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) });
+  abrirCtx(x, y, nat + ' · ' + nome, itens, tr);
+}
+
+/* nível 3 · o lançamento, que sabe de que mês é */
+function ctxLancamento(td, x, y){
+  const id = td.dataset.id, mk = td.dataset.mk;
+  const tr = td.closest('tr');
+  const m = DB.meses[mk];
+  const i = m.lancamentos.findIndex(z => z.id === id);
+  if (i < 0) return;
+  const l = m.lancamentos[i];
+  abrirCtx(x, y, rotuloCurto(mk) + ' · ' + fmtData(l.data) + ' · ' + l.contraparte + ' · ' + fmt(l.valor), [
+    { ic:'✏️', t:'Corrigir o valor aqui na linha', atalho:'2 cliques', faz: () => editarCelula(td) },
+    { ic:'🗂️', t:'Editar o lançamento inteiro', faz: () => { mesAtual = mk; abrirLancamento(id); } },
+    '-',
+    { ic:'⬆️', t:'Inserir lançamento acima',  faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i); } },
+    { ic:'⬇️', t:'Inserir lançamento abaixo', faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i + 1); } },
+    { ic:'📄', t:'Duplicar lançamento', faz: () => duplicarLancamento(id, mk) },
+    '-',
+    { ic:'📋', t:'Copiar a linha', atalho:'p/ o Excel', faz: () => copiar(linhaExcel(l, mk)) },
+    { ic:'🔢', t:'Copiar só o valor', faz: () => copiar(valorExcel(l.valor), 'Valor copiado: ' + fmt(l.valor)) },
+    '-',
+    { ic:'🗑️', t:'Excluir lançamento', perigo:true, faz: () => { mesAtual = mk; excluirLancamento(id); } },
+  ], tr);
+}
+
+/* a linha de lançamento fora da célula de valor · não dá para saber de que mês
+   o clique falava, então ela pergunta o mês em cada ação */
+function ctxLancamentoPar(tr, x, y){
+  const nat = tr.dataset.nat, cp = tr.dataset.cp;
+  const nome = tr.querySelector('b').textContent;
+  const itens = [];
+  for (const mk of mesesDeAcao())
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, cp) });
+  itens.unshift(
+    { ic:'✏️', t:'Corrigir a descrição aqui na linha', atalho:'2 cliques',
+      faz: () => editarCelula(tr.querySelector('td[data-edit="desc"]')) },
+    '-');
+  itens.push('-',
+    { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) },
+    { ic:'💡', t:'Para o valor, clique na coluna do mês', off: true });
+  abrirCtx(x, y, nome, itens, tr);
+}
+
+/* o espaço da tela, fora das linhas */
+function ctxTela(el, x, y){
+  const todas = linhasComparativo().length;
+  const itens = [];
+  if (pilhaDesfazer.length || pilhaRefazer.length) {
+    if (pilhaDesfazer.length) itens.push({ ic:'↶', t:'Desfazer: ' + oQueDesfazer(), atalho:'Ctrl+Z', faz: () => desfazer() });
+    if (pilhaRefazer.length)  itens.push({ ic:'↷', t:'Refazer: ' + oQueRefazer(),  atalho:'Ctrl+Y', faz: () => refazer() });
+    itens.push('-');
+  }
+  for (const mk of mesesDeAcao())
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk) });
+  itens.push(
+    { ic:'🏷️', t:'Nova natureza / conta', faz: () => abrirNovaNatureza() },
+    { ic:'📅', t:'Novo mês / período', faz: () => abrirNovoMes() },
+    { ic:'📥', t:'Importar extrato', faz: () => abrirImportacao() },
+    '-',
+    /* o que saiu da barra de cima para a tela ficar limpa · continua a um
+       clique, e nada teve que ser desprogramado */
+    { ic:'🗓️', t:'Escolher os meses da tela', atalho:'mês a mês', faz: () => abrirMesesDaTela() },
+    { ic:'📐', t:(totalTriLigado() ? 'Desligar' : 'Ligar') + ' o agrupamento por trimestre',
+      atalho: totalTriLigado() ? 'ligado' : '', faz: () => alternarTotalTri() },
+    { ic:'🧾', t:'Trilha de auditoria', faz: () => abrirAuditoria() },
+    '-',
+    { ic:'▼', t:'Expandir tudo', off: abertasComp.size === todas, faz: () => expandirTudo() },
+    { ic:'▶', t:'Recolher tudo', off: abertasComp.size === 0 && abertasCP.size === 0, faz: () => recolherTudo() },
+    { ic:'⇄', t:'Inverter os períodos', off: compA === compB, faz: () => inverterPeriodos() },
+    '-',
+    { ic:'📋', t:'Copiar a tabela', atalho:'p/ o Excel', faz: () => copiarTabela() },
+    { ic:'🖨️', t:'Gerar PDF da tela', faz: () => imprimirTela() });
+  abrirCtx(x, y, 'Acompanhamento mensal · ' + rotuloCurto(compA) + ' × ' + rotuloCurto(compB), itens, null);
+}
+
+/* ── o que os itens fazem ── */
+function duplicarLancamento(id, mk){
+  const m = DB.meses[mk];
+  const i = m.lancamentos.findIndex(z => z.id === id);
+  if (i < 0) return;
+  const copia = { ...m.lancamentos[i], id: novoId() };
+  m.lancamentos.splice(i + 1, 0, copia);          // a cópia nasce colada na original
+  auditar('inclusao', 'Lançamento duplicado', {
+    onde: rotuloCurto(mk) + ' · ' + copia.natureza + ' · ' + copia.contraparte,
+    de: 'cópia de ' + fmtData(copia.data) + ' · ' + fmt(copia.valor), para: fmt(copia.valor) });
+  abertasComp.add(copia.natureza);
+  gravar(); render();
+  flash('Lançamento duplicado em ' + rotuloMes(mk) + '. Abra a cópia e ajuste o que mudar.');
+}
+
+function excluirContaNoMes(nat, mk){
+  const m = DB.meses[mk];
+  const alvo = m.lancamentos.filter(l => l.natureza === nat);
+  if (!alvo.length) return;
+  const soma = alvo.reduce((s, l) => s + l.valor, 0);
+  if (!confirm('Excluir os ' + alvo.length + ' lançamentos de "' + nat + '" em ' + rotuloMes(mk) + '?\n'
+    + 'Isso tira ' + fmt(soma) + ' do mês e não tem como desfazer.')) return;
+  m.lancamentos = m.lancamentos.filter(l => l.natureza !== nat);
+  auditar('exclusao', 'Conta esvaziada no mês', { onde: rotuloMes(mk) + ' · ' + nat,
+    de: alvo.length + ' lançamento(s) · ' + fmt(soma), para: 'nenhum lançamento' });
+  gravar(); render();
+  flash(alvo.length + ' lançamentos de "' + nat + '" excluídos em ' + rotuloMes(mk) + '.');
+}
+
+/* copiar sempre traz os dois períodos: é para isso que a tela existe */
+function copiarLancamentos(filtro, recado){
+  const L = [];
+  for (const mk of periodos())
+    for (const l of DB.meses[mk].lancamentos) if (filtro(l)) L.push({ mk, l });
+  L.sort((a,b) => a.l.data.localeCompare(b.l.data));
+  copiar([CAB_EXCEL, ...L.map(({ mk, l }) => linhaExcel(l, mk))].join('\n'),
+    L.length + ' ' + recado + ' Cole no Excel com Ctrl+V.');
+}
+
+const copiarConta = nat => copiarLancamentos(l => l.natureza === nat, 'linhas copiadas.');
+const copiarContraparte = (nat, cp, nome) =>
+  copiarLancamentos(l => l.natureza === nat && normalizar(l.contraparte) === cp, 'linhas de ' + nome + ' copiadas.');
+
+/* a linha como ela está na tela, célula por célula */
+function copiarLinhaTela(tr){
+  const txt = [...tr.children].map(td => td.textContent.replace(/\s+/g, ' ').trim()).join('\t');
+  copiar(txt, 'Linha copiada.');
+}
+
+function copiarTabela(){
+  const linhas = [['Conta', rotuloMes(compA), rotuloMes(compB), 'Dif. R$', 'Var. %'].join('\t')];
+  const monta = ls => ls.map(l => {
+    const v = variacao(l.va, l.vb, l.tipo);
+    return [l.natureza, valorExcel(l.va), valorExcel(l.vb), valorExcel(v.dif), v.texto].join('\t');
+  });
+  const todas = linhasComparativo();
+  const A = apurar(compA), B = apurar(compB);
+  linhas.push('ENTRADAS', ...monta(todas.filter(l => l.tipo === 'entrada')));
+  linhas.push(['TOTAL ENTRADAS', valorExcel(A.entradas), valorExcel(B.entradas), valorExcel(B.entradas - A.entradas), ''].join('\t'));
+  linhas.push('SAÍDAS', ...monta(todas.filter(l => l.tipo === 'saida')));
+  linhas.push(['TOTAL SAÍDAS', valorExcel(A.saidas), valorExcel(B.saidas), valorExcel(B.saidas - A.saidas), ''].join('\t'));
+  copiar(linhas.join('\n'), 'Tabela copiada. Cole no Excel com Ctrl+V.');
+}
+
+/* ── quem chama quem ── */
+function menuDe(el, x, y){
+  const tipo = el.dataset.ctx;
+  if (tipo === 'lanc')    return ctxLancamento(el, x, y);
+  if (tipo === 'lancpar') return ctxLancamentoPar(el, x, y);
+  if (tipo === 'cpcomp')  return ctxContraparte(el, x, y);
+  if (tipo === 'natcomp') return ctxConta(el, x, y);
+  if (tipo === 'tabela')  return ctxTela(el, x, y);
+}
+
+document.addEventListener('contextmenu', e => {
+  const alvo = e.target.closest ? e.target.closest('[data-ctx]') : null;
+  /* fora dos alvos o menu do próprio navegador continua valendo · quem quiser
+     copiar um texto qualquer da tela não perde o caminho de sempre */
+  if (!alvo) { fecharCtx(); return; }
+  e.preventDefault();
+  menuDe(alvo, e.clientX, e.clientY);
+});
+
+document.addEventListener('mousedown', e => {
+  if (!e.target.closest || !e.target.closest('#ctx-menu')) fecharCtx();
+});
+/* Rolar a tela fecha o menu, senão ele fica boiando longe da linha. Só que o
+   navegador rola a linha para dentro da tela ANTES do clique, e esse scroll
+   chega aqui depois do menu já ter aberto · se a página não saiu do lugar em
+   que estava quando o menu abriu, o evento é esse eco e não um scroll de gente. */
+document.addEventListener('scroll', e => {
+  if (!document.getElementById('ctx-menu')) return;
+  const t = e.target;
+  const daPagina = t === document || t === document.documentElement || t === document.body;
+  if (daPagina && Math.abs(window.scrollY - _scrollAoAbrir) < 2) return;
+  fecharCtx();
+}, true);
+window.addEventListener('resize', fecharCtx);
+
+/* teclado no menu aberto · captura primeiro para o Esc daqui não fechar o modal de trás */
+document.addEventListener('keydown', e => {
+  const m = document.getElementById('ctx-menu');
+  if (!m) return;
+  const itens = [...m.querySelectorAll('.ctx-item[data-i]')];
+  if (!itens.length) return;
+  const atual = m.querySelector('.ctx-item.sel');
+  let k = itens.indexOf(atual);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); fecharCtx(); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopPropagation();
+    k = e.key === 'ArrowDown' ? (k + 1) % itens.length : (k <= 0 ? itens.length - 1 : k - 1);
+    itens.forEach(b => b.classList.remove('sel'));
+    itens[k].classList.add('sel');
+  } else if (e.key === 'Enter' && atual) { e.preventDefault(); e.stopPropagation(); atual.click(); }
+}, true);
+</script>
