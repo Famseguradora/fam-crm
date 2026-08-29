@@ -170,8 +170,17 @@ document.addEventListener('keydown', e => {
    refaz os dois, e os totais, e o quadro de cima, é o render() de sempre. */
 let _editando = false;
 
+/* No celular o sistema e so de leitura · lancar dinheiro com o polegar num
+   extrato de 93 linhas e como o erro entra. Esconder os botoes no CSS nao
+   bastaria: dois toques numa celula ainda abririam o campo. */
+const soVisualizacao = () => window.matchMedia('(max-width:768px)').matches;
+
 function editarCelula(td){
   if (!td || _editando) return;
+  if (soVisualizacao()) {
+    flash('No celular o Financeiro e so para conferir. Para lancar, abra no computador.');
+    return;
+  }
   /* Acesso de leitura: o campo nem chega a abrir. Sem isto, a pessoa digitaria
      o valor, apertaria Enter e só então o servidor recusaria · descobrir que
      não podia DEPOIS de ter digitado é a pior hora de descobrir. */
@@ -342,6 +351,9 @@ function fecharCtx(){
 }
 
 function abrirCtx(x, y, titulo, itens, alvo){
+  /* O menu do botao direito e o "jeito Excel", pensado para mouse. No celular
+     ele nasce de um toque longo e oferece justamente o que ali nao se faz. */
+  if (soVisualizacao()) return;
   fecharCtx();
   _scrollAoAbrir = window.scrollY;
   /* o realce é sempre da linha: clicar numa célula seleciona a linha toda,

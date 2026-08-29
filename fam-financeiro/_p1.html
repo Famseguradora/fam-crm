@@ -743,6 +743,22 @@ body.arrastando-calc .hp-placa{cursor:grabbing}
   .preset{padding:9px 15px;font-size:13px}
   .chip-mes,.fin-chip{padding:9px 14px;font-size:13px}
 
+  /* ── NO CELULAR, SO SE OLHA ──
+     Lancar dinheiro com o polegar, num extrato de 93 linhas, e como o erro
+     entra. O telefone serve para CONFERIR: abrir a conta, ver a contraparte,
+     olhar a diferenca do mes, perguntar ao Robo. Editar e no computador.
+
+     Some tudo que escreve · a mesma marca data-escreve que ja governa o acesso
+     de leitura, entao a lista e uma so e nao ha como esquecer um botao novo.
+     A HP e os lembretes tambem saem: a calculadora tem 470px e nao cabe, e o
+     telefone ja tem a dele. */
+  [data-escreve],#btn-calc,#btn-rev,.hp-janela{display:none!important}
+  /* a celula deixa de parecer editavel: sem cursor de digitar, sem contorno */
+  td[data-edit],td.vazia{cursor:default!important}
+  td[data-edit]:hover{outline:none!important}
+  td.vazia:hover{background:none!important;box-shadow:none!important}
+  td.vazia:hover::after{content:none!important}
+
   /* ── 16px OU O IPHONE DA ZOOM SOZINHO ──
      Campo com fonte menor que 16px faz o Safari do iOS aproximar a tela ao
      focar, e a pagina "pula" na cara de quem ia digitar. Nao e preferencia:

@@ -58,7 +58,39 @@ const ok = (t, c, extra) => {
         .map(e => (e.textContent || '').trim().slice(0, 22) + ' ' + Math.round(e.getBoundingClientRect().height) + 'px'));
     ok('botoes com altura de dedo (>=36px)', pequenos.length === 0, pequenos.slice(0, 3).join(' | '));
 
-    // modal: no celular ele PODE ocupar a tela toda · e o desenho certo la
+    /* ── SO VISUALIZACAO ──
+       No celular o sistema e para conferir. Lancar dinheiro com o polegar num
+       extrato de 93 linhas e como o erro entra. */
+    const escrita = await p.evaluate(() =>
+      [...document.querySelectorAll('[data-escreve]')]
+        .filter(e => e.getClientRects().length)
+        .map(e => (e.textContent || '').trim().slice(0, 24)));
+    ok('nenhum botao que ESCREVE aparece', escrita.length === 0, escrita.join(' | '));
+
+    const ferramentas = await p.evaluate(() => ({
+      hp: !!document.getElementById('btn-calc')?.getClientRects().length,
+      lembretes: !!document.getElementById('btn-rev')?.getClientRects().length,
+      robo: !!document.getElementById('btn-fin')?.getClientRects().length,
+      pdf: [...document.querySelectorAll('.acoes-tela button')]
+        .some(e => e.getClientRects().length && /PDF/.test(e.textContent || '')),
+    }));
+    ok('a HP some (nao cabe, e o telefone ja tem a dele)', !ferramentas.hp);
+    ok('os lembretes somem', !ferramentas.lembretes);
+    ok('o Robo Caixa FICA · e o basico que o Marco pediu', ferramentas.robo);
+    ok('o PDF fica, que e visualizacao', ferramentas.pdf);
+
+    // dois toques numa celula nao podem abrir campo: esconder botao nao basta
+    const abriuCampo = await p.evaluate(() => {
+      const td = document.querySelector('#comp-corpo td[data-edit]') ||
+                 document.querySelector('#comp-corpo td.num');
+      if (!td) return 'sem celula';
+      editarCelula(td);
+      return !!document.querySelector('.edit-campo');
+    });
+    ok('dois toques na celula NAO abrem campo de edicao', abriuCampo === false, String(abriuCampo));
+
+    // modal: no celular ele PODE ocupar a tela toda · e o desenho certo la.
+    // Chamado direto, por baixo da tela, so para conferir o desenho do formulario.
     await p.evaluate(() => novoLancamentoNaTela());
     await p.waitForTimeout(600);
     const modal = await p.evaluate(() => {
