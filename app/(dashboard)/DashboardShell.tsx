@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fmtDataExtenso } from '@/lib/utils'
@@ -32,11 +32,18 @@ interface Tab {
   href: string
   adminOnly?: boolean
   disabled?: boolean
+  /** Subitens que aparecem ao passar o mouse na aba. */
+  sub?: { label: string; href: string }[]
 }
 
 const TABS: Tab[] = [
   { label: '📊 Dashboard',  href: '/' },
-  { label: '👥 Tomadores',  href: '/tomadores' },
+  /* A análise de crédito é um subitem de Tomadores: passa o mouse, aparece.
+     É a porta de entrada da frente 1 (a análise dentro do CRM). */
+  { label: '👥 Tomadores',  href: '/tomadores', sub: [
+    { label: '🔎 Análise de crédito', href: '/tomadores/analise-credito' },
+    { label: '⚖️ Conferência', href: '/tomadores/conferencia' },
+  ] },
   { label: '📋 Operações',  href: '/operacoes' },
   { label: '🏢 Corretoras', href: '/corretoras', adminOnly: true },
   { label: '📦 Produtos',   href: '/produtos',   adminOnly: true },
@@ -45,7 +52,7 @@ const TABS: Tab[] = [
 /* Telas sem a moldura clara da área de conteúdo: elas são painéis inteiros e
    usam a janela toda. Uma lista só, para o próximo caso não virar mais um
    ternário aninhado aqui dentro. */
-const TELA_CHEIA = ['/corretoras', '/financeiro']
+const TELA_CHEIA = ['/corretoras', '/financeiro', '/tomadores/analise-credito']
 
 // Telas que aparecem no menu do app no celular (as demais ficam só no desktop).
 // Corretoras entra no mobile (respeitando adminOnly); o cockpit é responsivo.
@@ -117,6 +124,39 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
   const sidebarW = sidebarOpen ? 220 : 52
 
   const [toast, setToast] = useState<string | null>(null)
+  /* Submenu aberto ao passar o mouse numa aba (o href da aba). Ancorado no
+     próprio botão: posição fixa medida uma vez ficava no lugar errado quando
+     o ticker carregava e empurrava a barra. */
+  const [subAberto, setSubAberto] = useState<string | null>(null)
+
+  /* ── a altura do topo, MEDIDA ────────────────────────────────────────────
+     Nada aqui é número escrito à mão. A zona fixa (barra + ticker de mercado +
+     ticker de notícias) e as abas mudam de altura sozinhas: o ticker de
+     notícias tem um X que o fecha, e a barra das abas quebra em duas linhas em
+     tela estreita. O 118px que estava aqui errava por 49px, e esses 49px eram
+     a segunda barra de rolagem do CRM. */
+  const zonaFixa = useRef<HTMLDivElement>(null)
+  const menuLateral = useRef<HTMLDivElement>(null)
+  const [medidas, setMedidas] = useState({ grude: 118, doTopo: 118 })
+
+  useEffect(() => {
+    if (isMobile) return
+    const medir = () => {
+      const grude = Math.round(zonaFixa.current?.getBoundingClientRect().height ?? 118)
+      const el = menuLateral.current
+      const doTopo = el ? Math.round(el.getBoundingClientRect().top + window.scrollY) : grude
+      // O guarda de 1px é o que impede o laço: mudar a altura do menu muda a
+      // altura do corpo, o observador dispara de novo, e sem ele isso não pararia.
+      setMedidas(m => (Math.abs(m.grude - grude) < 1 && Math.abs(m.doTopo - doTopo) < 1)
+        ? m : { grude, doTopo })
+    }
+    medir()
+    const ro = new ResizeObserver(medir)
+    ro.observe(document.body)
+    if (zonaFixa.current) ro.observe(zonaFixa.current)
+    window.addEventListener('resize', medir)
+    return () => { ro.disconnect(); window.removeEventListener('resize', medir) }
+  }, [isMobile])
 
   function showToast(msg: string) {
     setToast(msg)
@@ -194,7 +234,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
 
       {/* ── Sticky zone: header + news ticker ── */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 100, flexShrink: 0 }}>
+      <div ref={zonaFixa} style={{ position: 'sticky', top: 0, zIndex: 100, flexShrink: 0 }}>
 
       {/* ── Header ── */}
       <div style={{
@@ -312,16 +352,23 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
         display: isMobile ? 'none' : 'flex',
         gap: 4,
         borderBottom: '2px solid #1e4080',
-        overflowX: 'auto',
+        /* visível, e não auto: o submenu de Tomadores desce por baixo da barra.
+           Com 6 abas ela cabe em qualquer desktop; no celular nem aparece. */
+        overflow: 'visible',
         flexShrink: 0,
       }}>
         {tabsVisiveis.map((tab) => {
           const isActive = !tab.disabled && (
             tab.href === '/' ? pathname === '/' : pathname.startsWith(tab.href)
           )
+          const temSub = !!tab.sub?.length
           return (
-            <button
+            <div
               key={tab.href}
+              style={{ position: 'relative' }}
+              onMouseLeave={() => { if (temSub) setSubAberto(null) }}
+            >
+            <button
               onClick={() => {
                 if (tab.disabled) {
                   showToast(`🚧 "${tab.label.replace(/^\S+\s/, '')}" está em construção`)
@@ -351,6 +398,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
                   e.currentTarget.style.color = 'white'
                   e.currentTarget.style.background = 'rgba(255,255,255,.05)'
                 }
+                if (temSub) setSubAberto(tab.href)
               }}
               onMouseLeave={(e) => {
                 if (!isActive && !tab.disabled) {
@@ -360,12 +408,50 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
               }}
             >
               {tab.label}
+              {temSub && <span style={{ fontSize: 9, opacity: .7 }}>▾</span>}
               {tab.disabled && (
                 <span style={{ fontSize: 9, color: '#e8b84b', fontWeight: 700, letterSpacing: '0.5px' }}>
                   EM BREVE
                 </span>
               )}
             </button>
+
+            {/* O submenu: colado no pé do botão (sem vão, senão o mouse "sai"
+                no caminho e ele fecha). */}
+            {temSub && subAberto === tab.href && (
+              <div style={{
+                position: 'absolute', left: 0, top: '100%', zIndex: 150,
+                paddingTop: 2,
+              }}>
+                <div style={{
+                  background: '#0d1e3a', border: '1px solid #1e4080', borderRadius: 10,
+                  boxShadow: '0 12px 28px rgba(0,0,0,.55)', padding: 6, minWidth: 200,
+                }}>
+                  {tab.sub!.map((s) => {
+                    const ativo = pathname.startsWith(s.href)
+                    return (
+                      <button
+                        key={s.href}
+                        onClick={() => { setSubAberto(null); router.push(s.href) }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                          padding: '9px 12px', borderRadius: 7, border: 'none', textAlign: 'left',
+                          background: ativo ? 'rgba(232,184,75,.10)' : 'transparent',
+                          color: ativo ? 'white' : '#a0c0e8',
+                          fontFamily: "'Calibri','Segoe UI',sans-serif", fontSize: 14, fontWeight: 600,
+                          cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all .15s',
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = 'white'; e.currentTarget.style.background = 'rgba(255,255,255,.06)' }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = ativo ? 'white' : '#a0c0e8'; e.currentTarget.style.background = ativo ? 'rgba(232,184,75,.10)' : 'transparent' }}
+                      >
+                        {s.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            </div>
           )
         })}
       </div>
@@ -402,7 +488,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
 
         {/* ── Sidebar (desktop) ── */}
         {!isMobile && (
-        <div style={{
+        <div ref={menuLateral} style={{
           width: sidebarW,
           minWidth: sidebarW,
           background: '#0d1e3a',
@@ -413,12 +499,21 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
           overflowY: 'auto',
           overflowX: 'hidden',
           flexShrink: 0,
-          // Menu lateral SEMPRE visível: gruda abaixo do topo fixo do app
-          // (header + tickers ≈ 118px) e não acompanha a rolagem da página.
+          // Menu lateral SEMPRE visível: gruda abaixo do topo fixo do app e não
+          // acompanha a rolagem da página.
+          //
+          // OS DOIS NÚMEROS SÃO MEDIDOS, e não escritos (consertado em 29/08/2026).
+          // Eram 118px fixos nos dois lugares, e o menu NASCE em 167 (barra + os dois
+          // tickers + as abas). Resultado: ele terminava 49px abaixo da janela, e o CRM
+          // inteiro ganhava uma segunda barra de rolagem que deslocava o layout.
+          //
+          // `grude` é onde ele para ao rolar (a altura da zona fixa). `doTopo` é onde ele
+          // COMEÇA, e é dele que sai a altura: assim o pé do menu encosta no pé da janela
+          // e não passa. Os dois mudam quando o ticker de notícias é fechado no X.
           position: 'sticky',
-          top: 118,
+          top: medidas.grude,
           alignSelf: 'flex-start',
-          height: 'calc(100vh - 118px)',
+          height: `calc(100vh - ${medidas.doTopo}px)`,
         }}>
 
           {/* Performance — com a seta de recolher na mesma linha do título

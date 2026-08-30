@@ -79,3 +79,6 @@ fam-financeiro/build.cjs
 # PDF na maquina, nao vao para o deploy.
 fam-financeiro/gerar-extrato-exemplo.cjs
 fam-financeiro/extrato-exemplo-agosto.pdf
+
+# Saida da carga das analises: e regerado a cada execucao, nao e fonte.
+scripts/_carga-relatorio.json

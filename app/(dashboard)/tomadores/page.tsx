@@ -10,6 +10,7 @@ import { useDateRange } from '@/lib/context/date-range-context'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import AnexosSection from '@/components/AnexosSection'
 import OrganogramaModal from '@/components/OrganogramaModal'
+import AnaliseDoTomadorSection from '@/components/AnaliseDoTomadorSection'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -986,6 +987,10 @@ export default function TomadoresPage() {
 
                 {editando && (
                   <>
+                    <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
+                    {/* O que a análise de crédito apurou sobre este CNPJ. Só
+                        leitura, e some sozinho se não houver análise. */}
+                    <AnaliseDoTomadorSection cnpj={editando.cnpj} />
                     <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
                     <AnexosSection entidadeTipo="tomador" entidadeId={editando.id} />
                   </>
