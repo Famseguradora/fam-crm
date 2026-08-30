@@ -3,6 +3,7 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
@@ -71,6 +72,7 @@ const CORES_RAPIDAS = [
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function TomadoresPage() {
+  const router = useRouter()
   const { somenteLeitura } = usePermissoes()
   const { dataInicio, isFiltered } = useDateRange()
   const [aba, setAba] = useState<'tomadores' | 'status'>('tomadores')
@@ -747,20 +749,6 @@ export default function TomadoresPage() {
       {/* ══════════ ABA TOMADORES ══════════ */}
       {aba === 'tomadores' && (
         <>
-          {/* Badge filtro global */}
-          {isFiltered && (
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-              background: 'rgba(48,112,200,.06)', border: '1px solid #3070c8',
-              borderRadius: 8, padding: '7px 14px', marginBottom: 16,
-              fontSize: 13, color: '#3070c8', fontWeight: 600,
-            }}>
-              <span>📅</span>
-              <span>Exibindo tomadores a partir de <strong>{fmtData(dataInicio)}</strong></span>
-              <span style={{ fontSize: 12, color: '#6080a0', fontWeight: 400 }}>— configurado em Configurações › Sistema</span>
-            </div>
-          )}
-
           {/* KPIs */}
           <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
             <div className="kpi-card highlight" style={{ flex: '1 1 150px' }}>
@@ -1081,19 +1069,26 @@ export default function TomadoresPage() {
                   <th style={thSort} onClick={() => handleSort('limite')}>Limite{sortIcon('limite')}</th>
                   <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
                   <th style={thSort} onClick={() => handleSort('data_entrada')}>Data Entrada{sortIcon('data_entrada')}</th>
+                  {/* O clique na LINHA abre a Mesa. A edição do cadastro ficou
+                      aqui, no lápis, para não disputar o mesmo gesto. */}
+                  <th style={{ width: 90 }} />
                 </tr>
               </thead>
               <tbody>
                 {carregando ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : tomadoresFiltrados.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                     {busca || filtroStatus || filtroEstado || filtroCorretora
                       ? 'Nenhum tomador encontrado para os filtros selecionados.'
                       : 'Nenhum tomador cadastrado ainda.'}
                   </td></tr>
                 ) : tomadoresFiltrados.map((t, i) => (
-                  <tr key={t.id} onClick={() => abrirEditar(t)} style={{ cursor: 'pointer' }}>
+                  // Clicar na linha abre a MESA DO TOMADOR, que é a tela cheia.
+                  // Era a edição antes; ele pediu em 30/08 que o clique no
+                  // tomador abrisse a ficha direto. A edição virou o lápis, na
+                  // última coluna.
+                  <tr key={t.id} onClick={() => router.push(`/tomadores/${t.id}`)} style={{ cursor: 'pointer' }}>
                     <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
                     <td>
                       <div style={{ fontWeight: 600 }}>{t.razao_social}</div>
@@ -1117,6 +1112,20 @@ export default function TomadoresPage() {
                     </td>
                     <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
                       {t.data_entrada ? fmtData(t.data_entrada) : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); abrirEditar(t) }}
+                        title="Editar o cadastro deste tomador"
+                        style={{
+                          padding: '3px 9px', borderRadius: 7, cursor: 'pointer',
+                          border: '1px solid #dbe6f3', background: '#fff', color: '#3070c8',
+                          fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', fontFamily: 'inherit',
+                        }}
+                      >
+                        ✏️ Editar
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -1241,9 +1250,9 @@ export default function TomadoresPage() {
               </thead>
               <tbody>
                 {carregandoStatus ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : statusLista.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Nenhum status cadastrado.</td></tr>
+                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Nenhum status cadastrado.</td></tr>
                 ) : statusLista.map((s) => (
                   <tr key={s.id}>
                     <td style={{ color: '#6080a0', fontSize: 13 }}>{s.ordem}</td>

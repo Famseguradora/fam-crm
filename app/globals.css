@@ -903,3 +903,342 @@ ul.org-tree > li.org-subtree::after { display: none; }
   .ckp-shell { padding: 12px; }
   .ckp-select { font-size: 16px; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MESA DO TOMADOR (.mt-*) — a tela única do tomador, em /tomadores/<id>.
+
+   O layout é o que o Marco desenhou e mandou em 30/08/2026: cabeçalho com
+   três números à direita, a faixa de comprometimento do limite ao lado de
+   quatro cartões-resumo, e embaixo o rail de navegação à esquerda com o
+   painel largo à direita.
+
+   As cores são as do CRM (--blue-600, --green, --accent, --border). O desenho
+   dele usa um azul mais claro e um laranja; aqui eles viram o azul da casa e
+   o dourado --accent, para a tela não destoar do resto do sistema.
+
+   Prefixo `mt-` em tudo: esta folha é grande e não pode colidir com
+   .card-panel, .section-title nem com o cockpit (.ckp-*).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.mt-shell { display: flex; flex-direction: column; gap: 14px; }
+
+/* ── peça base: o cartão branco ── */
+.mt-card {
+  background: #fff; border: 1px solid #e3ebf5; border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16,32,64,.04), 0 8px 22px -14px rgba(16,32,64,.18);
+}
+.mt-lab {
+  font-size: 10.5px; font-weight: 700; color: #6080a0;
+  text-transform: uppercase; letter-spacing: .9px;
+}
+.mt-num { font-variant-numeric: tabular-nums; }
+
+/* ══════════ 1. CABEÇALHO ══════════ */
+.mt-topo {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 20px; flex-wrap: wrap; padding: 20px 22px;
+}
+.mt-ident { display: flex; align-items: flex-start; gap: 15px; flex: 1 1 380px; min-width: 0; }
+.mt-brasao {
+  width: 54px; height: 54px; border-radius: 13px; flex-shrink: 0;
+  background: linear-gradient(160deg, #2a55a0, #1e4080);
+  color: #fff; display: grid; place-items: center;
+  font-size: 19px; font-weight: 700; letter-spacing: .5px;
+}
+.mt-nome { font-size: 21px; font-weight: 700; color: #0a1628; line-height: 1.15; letter-spacing: -.3px; }
+.mt-sub { font-size: 12.5px; color: #6080a0; margin-top: 5px; }
+/* Os chips do cabecalho ficam TODOS na mesma linha, alinhados pelo meio: a
+   corretora caia sozinha numa segunda linha, e ele mandou perfilar (30/08). */
+.mt-chips { display: flex; align-items: center; gap: 7px; flex-wrap: nowrap; margin-top: 12px; min-width: 0; overflow: hidden; }
+.mt-chip {
+  font-size: 11.5px; font-weight: 600; padding: 5px 12px; border-radius: 8px;
+  border: 1px solid #dbe6f3; background: #f2f7fd; color: #1e4080; white-space: nowrap;
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.mt-chip.n { background: #fff; color: #6080a0; }
+/* a corretora é o vínculo comercial: cor própria, mas perfilada na mesma
+   linha dos outros nomes, e não jogada para baixo */
+.mt-chip.co {
+  background: #fff; border-color: #c5d5e8; color: #1a2a3a; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.mt-chip.co svg { color: #e8b84b; flex-shrink: 0; }
+
+/* os três números do canto direito */
+.mt-kpis { display: flex; gap: 12px; flex-wrap: wrap; }
+.mt-kpi {
+  border: 1px solid #e3ebf5; border-radius: 12px; padding: 12px 20px;
+  min-width: 168px; background: #fff;
+}
+.mt-kpi .v { font-size: 18px; font-weight: 700; margin-top: 5px; font-variant-numeric: tabular-nums; }
+.mt-kpi.az .v { color: #1e4080; }
+.mt-kpi.vd .v { color: #1a7a50; }
+.mt-kpi.ou .v { color: #a07b1e; }
+.mt-kpi.ou { background: linear-gradient(180deg, #fffdf5, #fdf9ec); border-color: #ecdfb4; }
+
+/* ══════════ 2. FAIXA DO LIMITE + CARTÕES-RESUMO ══════════ */
+.mt-faixa { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.mt-limite { padding: 18px 20px; display: flex; flex-direction: column; }
+
+.mt-barra {
+  height: 12px; border-radius: 999px; background: #e6ecf4;
+  display: flex; overflow: hidden; margin: 12px 0 18px;
+}
+.mt-barra i { display: block; height: 100%; }
+.mt-b-emit { background: #27a96c; }
+.mt-b-aprov {
+  background: repeating-linear-gradient(135deg,
+    #e8b84b, #e8b84b 5px, #f2d68f 5px, #f2d68f 10px);
+}
+
+.mt-limite-corpo { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.mt-pct { flex-shrink: 0; }
+.mt-pct .n { font-size: 31px; font-weight: 700; color: #1a7a50; line-height: 1; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
+.mt-pct .t { font-size: 11.5px; color: #6080a0; margin-top: 3px; }
+.mt-risca { width: 1px; align-self: stretch; background: #e6ecf4; flex-shrink: 0; }
+
+.mt-legenda { display: flex; flex-direction: column; gap: 7px; flex: 1 1 260px; min-width: 0; }
+.mt-leg { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.mt-leg .pt { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.mt-leg .nm { color: #1a2a3a; flex: 1 1 auto; min-width: 0; }
+.mt-leg .vl { color: #6080a0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.mt-total { text-align: right; flex-shrink: 0; }
+.mt-total .a { font-size: 15px; font-weight: 700; color: #0a1628; font-variant-numeric: tabular-nums; }
+.mt-total .b { font-size: 11.5px; color: #6080a0; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+/* os quatro cartões com ícone: uma linha só, como no desenho dele. `auto-fit`
+   com largura mínima quebrava em 3 + 1, que fica torto ao lado da faixa. */
+/* 2x2, e nao 4 numa fila: em fila os cartoes esticavam para acompanhar a
+   altura da faixa do limite e ficavam ocos embaixo (queixa dele em 30/08). */
+.mt-resumos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 12px; }
+.mt-resumo {
+  padding: 12px 14px; display: flex; flex-direction: row; align-items: center; gap: 11px;
+  min-width: 0;
+}
+.mt-resumo > div { min-width: 0; }
+.mt-ico {
+  width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+  background: #eef4fb; color: #3070c8; flex-shrink: 0;
+}
+.mt-ico.vd { background: #e9f8f1; color: #1a7a50; }
+.mt-ico.ou { background: #fdf6e6; color: #a07b1e; }
+.mt-resumo .v { font-size: 18px; font-weight: 700; color: #0a1628; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.mt-resumo .v.data { font-size: 15px; color: #1e4080; }
+.mt-resumo .t { font-size: 11.5px; color: #1a2a3a; }
+.mt-resumo .s { font-size: 11px; color: #6080a0; font-variant-numeric: tabular-nums; }
+
+/* ══════════ 3. RAIL + PAINEL ══════════ */
+.mt-corpo { display: grid; grid-template-columns: minmax(0, 250px) minmax(0, 1fr); gap: 14px; align-items: start; }
+/* `min-width: 0` nos dois filhos não é enfeite: sem ele, o item de grid usa
+   min-width auto, o rail virado em linha no celular cresce com o conteúdo
+   (medido: 926 px dentro de 366) e a PÁGINA INTEIRA passa a rolar de lado. */
+.mt-rail { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 78px; min-width: 0; }
+.mt-menu { padding: 8px; display: flex; flex-direction: column; gap: 2px; max-width: 100%; }
+
+.mt-item {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  background: transparent; border: 1px solid transparent; border-radius: 10px;
+  padding: 10px 11px; cursor: pointer; font-family: inherit; color: #1a2a3a;
+  transition: background .13s, border-color .13s;
+}
+.mt-item:hover { background: #f5f9fd; }
+.mt-item:focus-visible { outline: 2px solid #3070c8; outline-offset: 1px; }
+.mt-item[aria-selected="true"] { background: #eef5fd; border-color: #b9d4f0; }
+.mt-item[aria-selected="true"] .mt-item-nome,
+.mt-item[aria-selected="true"] .mt-item-ico { color: #1e4080; }
+.mt-item-ico { color: #8ba3c0; flex-shrink: 0; display: grid; place-items: center; }
+.mt-item-nome { font-size: 13px; font-weight: 600; flex: 1 1 auto; min-width: 0; }
+.mt-item-meta { font-size: 11px; color: #8ba3c0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mt-item-badge {
+  font-size: 11.5px; font-weight: 700; color: #1e4080; background: #e8f0fa;
+  border-radius: 7px; padding: 2px 8px; font-variant-numeric: tabular-nums;
+}
+
+/* "Precisa de você", o cartão de baixo */
+.mt-pend { padding: 8px; }
+.mt-pend-cab {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 11px; font-size: 13px; font-weight: 600; color: #1a2a3a;
+}
+.mt-pend-n {
+  font-size: 11.5px; font-weight: 700; color: #fff; background: #3070c8;
+  border-radius: 7px; padding: 2px 9px; font-variant-numeric: tabular-nums;
+}
+.mt-pend-item {
+  display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left;
+  background: transparent; border: 1px solid transparent; border-radius: 9px;
+  padding: 8px 11px; cursor: pointer; font-family: inherit;
+  font-size: 11.5px; line-height: 1.4; color: #6080a0; transition: background .13s;
+}
+.mt-pend-item:hover { background: #f5f9fd; color: #1a2a3a; }
+.mt-pend-item:focus-visible { outline: 2px solid #3070c8; outline-offset: 1px; }
+.mt-pend-item b { color: #1a2a3a; font-weight: 700; }
+.mt-pend-pt { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+
+/* ══════════ O PAINEL ══════════ */
+.mt-painel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.mt-bloco { padding: 0; overflow: hidden; }
+.mt-bloco-cab {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 15px 20px; border-bottom: 1px solid #eef3f9;
+}
+.mt-bloco-cab .pt { width: 9px; height: 9px; border-radius: 50%; background: #3070c8; flex-shrink: 0; }
+.mt-bloco-tit {
+  font-size: 12px; font-weight: 700; color: #0a1628;
+  text-transform: uppercase; letter-spacing: .9px;
+}
+.mt-bloco-acao {
+  margin-left: auto; font-size: 12.5px; font-weight: 700; color: #3070c8;
+  background: none; border: none; cursor: pointer; font-family: inherit; padding: 2px 4px;
+  white-space: nowrap;
+}
+.mt-bloco-acao:hover { text-decoration: underline; }
+.mt-bloco-acao:focus-visible { outline: 2px solid #3070c8; outline-offset: 2px; border-radius: 4px; }
+.mt-bloco-corpo { padding: 16px 20px 18px; }
+
+/* a tabela do painel */
+.mt-tab-wrap { overflow-x: auto; }
+/* Todas as operacoes cabem na tela sem empurrar a pagina: a lista rola dentro
+   do proprio cartao quando passa de uma dezena de linhas. */
+.mt-rolagem { max-height: 430px; overflow-y: auto; }
+.mt-tab { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mt-tab th {
+  text-align: left; font-size: 10.5px; font-weight: 700; color: #8ba3c0;
+  text-transform: uppercase; letter-spacing: .8px; padding: 11px 14px; white-space: nowrap;
+  border-bottom: 1px solid #eef3f9; background: #fbfdff;
+}
+.mt-tab td { padding: 10px 14px; border-bottom: 1px solid #f2f6fb; color: #1a2a3a; }
+.mt-tab tbody tr:last-child td { border-bottom: none; }
+.mt-tab td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mt-tab td.dim { color: #6080a0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mt-tab .seta { color: #b9c8da; font-size: 15px; }
+.mt-tab tbody tr:hover td { background: #fbfdff; }
+
+.mt-pill {
+  display: inline-block; font-size: 11.5px; font-weight: 700; padding: 3px 10px;
+  border-radius: 7px; white-space: nowrap;
+}
+.mt-pill.vd { background: #e9f8f1; color: #1a7a50; }
+.mt-pill.ou { background: #fdf6e6; color: #a07b1e; }
+.mt-pill.az { background: #eaf2fc; color: #1e4080; }
+.mt-pill.cz { background: #f0f3f7; color: #607080; }
+
+.mt-rodape-tab {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 11px 20px; border-top: 1px solid #eef3f9; font-size: 12.5px; color: #6080a0;
+}
+.mt-pag { display: flex; gap: 6px; }
+.mt-pag button {
+  width: 28px; height: 26px; border: 1px solid #dbe6f3; background: #fff; color: #3070c8;
+  border-radius: 7px; cursor: pointer; font-family: inherit; font-size: 12px; line-height: 1;
+}
+.mt-pag button:disabled { color: #c5d5e8; cursor: default; }
+.mt-pag button:not(:disabled):hover { background: #f2f7fd; }
+
+/* a faixa de leitura: o aviso + os três números */
+.mt-leitura { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 0; }
+.mt-aviso { display: flex; gap: 12px; padding: 16px 20px; }
+.mt-aviso-ico {
+  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0; display: grid; place-items: center;
+  background: #eaf2fc; color: #3070c8;
+}
+.mt-aviso-tit { font-size: 12.5px; font-weight: 700; color: #1e4080; }
+.mt-aviso-txt { font-size: 11.5px; color: #6080a0; line-height: 1.5; margin-top: 3px; }
+.mt-tres {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 14px;
+  padding: 16px 20px; border-left: 1px solid #eef3f9; background: #fbfdff;
+}
+.mt-tres-i { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mt-tres-i .v { font-size: 14px; font-weight: 700; color: #0a1628; font-variant-numeric: tabular-nums; }
+.mt-tres-i .t { font-size: 11.5px; color: #6080a0; margin-top: 1px; }
+
+/* o topo da gaveta do Serasa: o score grande e a ficha ao lado */
+.mt-serasa-topo { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.mt-serasa-score { flex: 0 0 auto; min-width: 132px; }
+.mt-serasa-score .n { font-size: 40px; font-weight: 700; line-height: 1; letter-spacing: -1px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.mt-serasa-score .t { font-size: 12px; color: #6080a0; margin-top: 5px; }
+
+/* ficha de campos, dentro das gavetas */
+.mt-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0 20px; }
+.mt-campo { display: flex; flex-direction: column; gap: 3px; padding: 9px 0; border-bottom: 1px solid #eef3f9; min-width: 0; }
+.mt-campo.largo { grid-column: 1 / -1; }
+.mt-campo .v { font-size: 12.5px; color: #0a1628; font-weight: 500; overflow-wrap: break-word; line-height: 1.4; }
+.mt-campo .v.forte { font-weight: 700; }
+.mt-campo .v.vd { color: #1a7a50; font-weight: 700; }
+.mt-campo .v.az { color: #1e4080; font-weight: 700; }
+.mt-campo .v.ou { color: #a07b1e; font-weight: 600; font-size: 12.5px; }
+
+.mt-sub { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #1e4080; margin: 18px 0 3px; }
+.mt-sub:first-child { margin-top: 0; }
+.mt-sub .pt { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+.mt-nota {
+  margin-top: 14px; padding: 11px 13px; border-radius: 9px; font-size: 11.5px; line-height: 1.5;
+  border: 1px solid #dbe6f3; background: #f7fafd; color: #6080a0;
+}
+.mt-nota b { color: #1a2a3a; }
+.mt-nota.at { border-color: #ecdfb4; background: #fdf9ec; color: #8a6410; }
+.mt-nota.at b { color: #6b4d0a; }
+
+.mt-vazio { padding: 26px 20px; text-align: center; color: #8ba3c0; font-size: 12.5px; }
+
+/* o confronto de limites: o que impede a sobrescrita calada */
+.mt-confronto { margin-top: 16px; border: 1px solid #ecdfb4; border-radius: 11px; background: #fdf9ec; padding: 14px 16px; }
+.mt-conf-cab { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700; color: #8a6410; margin-bottom: 12px; }
+.mt-conf-lados { display: flex; align-items: stretch; gap: 12px; flex-wrap: wrap; }
+.mt-lado { flex: 1 1 190px; min-width: 0; background: #fff; border: 1px solid #e3ebf5; border-radius: 10px; padding: 11px 13px; }
+.mt-lado.novo { border-color: #3070c8; box-shadow: 0 0 0 2px #e8f0fa; }
+.mt-lado .lv { font-size: 15.5px; font-weight: 700; color: #0a1628; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.mt-lado.novo .lv { color: #1e4080; }
+.mt-lado .lq { font-size: 11.5px; color: #6080a0; margin-top: 4px; line-height: 1.4; }
+.mt-conf-acoes { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 12px; }
+.mt-conf-obs { font-size: 12px; color: #8a6410; font-weight: 600; }
+
+.mt-btn {
+  font-family: inherit; font-size: 12.5px; font-weight: 700; padding: 7px 14px;
+  border-radius: 8px; cursor: pointer; border: 1px solid #dbe6f3; background: #fff; color: #1a2a3a;
+  transition: .13s; white-space: nowrap;
+}
+.mt-btn:hover { border-color: #3070c8; color: #1e4080; }
+.mt-btn:focus-visible { outline: 2px solid #3070c8; outline-offset: 1px; }
+.mt-btn.pri { background: #1e4080; border-color: #1e4080; color: #fff; }
+.mt-btn.pri:hover { background: #2a55a0; color: #fff; }
+.mt-btn:disabled { opacity: .55; cursor: default; }
+
+/* a volta para a lista */
+.mt-voltar {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600;
+  color: #3070c8; background: none; border: none; cursor: pointer; font-family: inherit;
+  padding: 4px 2px; margin-bottom: 2px;
+}
+.mt-voltar:hover { text-decoration: underline; }
+
+/* ══════════ CELULAR ══════════ */
+@media (max-width: 1000px) {
+  .mt-faixa { grid-template-columns: 1fr; }
+  .mt-resumos { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); grid-auto-rows: auto; }
+  /* no estreito, perfilar numa linha so cortaria nome de corretora */
+  .mt-chips { flex-wrap: wrap; overflow: visible; }
+  .mt-corpo { grid-template-columns: 1fr; }
+  .mt-rail { position: static; min-width: 0; }
+  .mt-menu { flex-direction: row; overflow-x: auto; gap: 6px; width: 100%; scrollbar-width: thin; }
+  .mt-item { width: auto; flex: 0 0 auto; }
+  .mt-item-meta, .mt-item-badge { display: none; }
+  .mt-leitura { grid-template-columns: 1fr; }
+  .mt-tres { border-left: none; border-top: 1px solid #eef3f9; }
+}
+@media (max-width: 700px) {
+  .mt-topo { padding: 16px; gap: 14px; }
+  .mt-nome { font-size: 18px; }
+  .mt-brasao { width: 44px; height: 44px; font-size: 16px; border-radius: 11px; }
+  .mt-kpis { width: 100%; }
+  .mt-kpi { flex: 1 1 140px; min-width: 0; padding: 11px 14px; }
+  .mt-kpi .v { font-size: 16px; }
+  .mt-pct .n { font-size: 26px; }
+  .mt-limite-corpo { gap: 14px; }
+  .mt-risca { display: none; }
+  .mt-total { text-align: left; }
+  .mt-serasa-score .n { font-size: 32px; }
+  .mt-rolagem { max-height: none; }
+}

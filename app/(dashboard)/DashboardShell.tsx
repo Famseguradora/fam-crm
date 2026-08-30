@@ -60,9 +60,10 @@ const MOBILE_NAV_HREFS = ['/', '/operacoes', '/tomadores', '/corretoras']
 
 const SUBSCRICAO_ITEMS: { label: string; href: string; icon: string; disabled?: boolean }[] = []
 
-const PERFORMANCE_ITEMS = [
-  { label: 'Performance', href: '/performance', icon: '📊', disabled: true },
-]
+/* Vazia por ordem do Marco (30/08/2026): o item "Performance" estava desativado
+   desde sempre e o título da seção só ocupava altura no menu. A lista fica no
+   lugar, e não o `map` sumindo do JSX, para o dia em que houver o que pôr aqui. */
+const PERFORMANCE_ITEMS: { label: string; href: string; icon: string; disabled?: boolean }[] = []
 
 const CONFIG_ITEMS: {
   label: string; href: string; icon: string;
@@ -84,7 +85,10 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
   const somenteLeitura = perfilUsuario === 'leitura'
   const veTelasGerenciais = isAdmin || somenteLeitura
   const hoje = fmtDataExtenso()
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // NASCE ENCOLHIDO, por ordem dele em 30/08/2026: "deixa ele encolhido, para
+  // visualizar tem que clicar na setinha. Isso ajuda na hora de abrir o
+  // sistema." A seta ▶ continua no mesmo lugar para expandir.
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -516,24 +520,17 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
           height: `calc(100vh - ${medidas.doTopo}px)`,
         }}>
 
-          {/* Performance — com a seta de recolher na mesma linha do título
-              (evita a linha vazia que a seta ocupava sozinha). */}
+          {/* A seta de recolher, sozinha na linha. O título "Performance" saiu
+              a pedido dele: não dizia nada e comia altura do menu. Com a seta
+              sozinha, `flex-end` mantém ela encostada à direita como antes,
+              onde a mão dele já procura. */}
           <div style={{ paddingTop: 10 }}>
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              justifyContent: sidebarOpen ? 'space-between' : 'center',
+              justifyContent: sidebarOpen ? 'flex-end' : 'center',
               padding: sidebarOpen ? '0 10px 8px 16px' : '0 0 8px',
             }}>
-              {sidebarOpen && (
-                <span style={{
-                  fontSize: 10, fontWeight: 700, color: '#4a7ab5',
-                  letterSpacing: '1.5px', textTransform: 'uppercase',
-                  whiteSpace: 'nowrap',
-                }}>
-                  Performance
-                </span>
-              )}
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 title={sidebarOpen ? 'Recolher menu' : 'Expandir menu'}
