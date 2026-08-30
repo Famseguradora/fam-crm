@@ -14,7 +14,14 @@ import { NextResponse, type NextRequest } from 'next/server'
 // comparação em tempo constante em lib/axi/core.ts. Estar nesta lista significa
 // "não exige cookie de login", NÃO significa "aberta": sem o token correto toda
 // rota /api/axi/* responde 401/403. Todas são somente GET.
-const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi']
+//
+// '/api/analise/evento' é o motor da análise avisando que começou uma análise.
+// Ele é um processo Node na máquina do Marco, sem navegador e sem cookie de
+// login: por isso não passa pelo gate de sessão. Vale aqui a mesma ressalva do
+// /api/axi — "não exige cookie" NÃO é "aberta". A rota confere o segredo
+// combinado (`x-analise-token`) e, se a variável de ambiente não existir, ela
+// responde 503 em vez de aceitar: trava ausente fecha, não abre.
+const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi', '/api/analise/evento']
 
 export async function proxy(request: NextRequest) {
   // MODO SANDBOX: não há sessão Supabase, então o gate de login abaixo

@@ -48,6 +48,28 @@ Nenhum destes se perde mais: cada um virou arquivo de memória, e não só conve
       HTML **fica**, porque ele manda o arquivo para a equipe. Já está feito na Mesa: um arquivo
       só, com tudo aberto, sem script nenhum dentro.
 
+## Acesso, decidido em 30/08/2026
+
+A análise de crédito tem **um analista só**. Todo mundo vê (ele quer a equipe
+acompanhando o trabalho acontecer, e a Conferência atualiza ao vivo); ninguém
+além dele edita. A marca é `usuarios.analista_credito`, e a trava é a RLS
+`fam_e_analista()` — não é `perfil`, os 7 admins não passam.
+
+- [ ] **Liberar as tais "algumas pessoas"** quando ele decidir quem. Não precisa de
+      código nem de migration, é uma linha:
+      `update usuarios set analista_credito = true where email = '…';`
+- [ ] **Trocar a url do `_crm.json` no dia do deploy.** O motor avisa o CRM que uma
+      análise começou (aviso no canto inferior direito, para a equipe toda). Hoje aponta
+      para `http://localhost:3000`, que é o único endereço que existe. O arquivo está em
+      `_sistema/estado/_crm.json` e o segredo dele tem que continuar igual ao
+      `ANALISE_EVENTO_TOKEN` do `.env.local`. Sem isso o aviso simplesmente não sai, e
+      a análise roda igual (de propósito: aviso nunca derruba análise).
+- [ ] **O pipeline de e-mail nasce trancado.** Hoje o e-mail dele não está exposto
+      porque o servidor local só escuta em `127.0.0.1`. No dia em que o corpo do
+      e-mail subir vetorizado para o Supabase, ele passa a morar num banco
+      compartilhado: a tabela `emails` precisa nascer com RLS de dono, no mesmo
+      movimento em que for criada. Não depois.
+
 ## Com data marcada
 
 - [ ] **22/09/2026** — vence a primeira apólice (Usina Termelétrica de Lins, R$ 21.045.420). É o

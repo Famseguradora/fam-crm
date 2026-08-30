@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtDataExtenso } from '@/lib/utils'
 import { DateRangeProvider } from '@/lib/context/date-range-context'
 import { PermissoesProvider } from '@/lib/context/permissoes-context'
+import AvisosAoVivo from './AvisosAoVivo'
 import InstallPrompt from './InstallPrompt'
 import NewsTicker from './NewsTicker'
 import MarketTicker from './MarketTicker'
@@ -24,6 +25,11 @@ interface Props {
      não se decide por ser admin: quem não está na lista do Financeiro não vê
      nem o item. Quem decide são o Marco e o Aldeir, na própria tela. */
   veFinanceiro?: boolean
+  /* Vem de `usuarios.analista_credito`, NÃO de `perfil`. A análise de crédito
+     tem um analista só. Todos VEEM a tela — ele quer a equipe acompanhando —,
+     e o que este sinal governa é só se os botões de decidir aparecem. A trava
+     de verdade é a RLS `fam_e_analista()`. */
+  editaAnalise?: boolean
   children: React.ReactNode
 }
 
@@ -74,7 +80,7 @@ const CONFIG_ITEMS: {
   { label: 'Sistema',      href: '/configuracoes/sistema', icon: '⚙️', proprietarioOnly: true },
 ]
 
-export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, podePublicarAvisos, emailUsuario, userId, dataInicio, veFinanceiro = false, children }: Props) {
+export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, podePublicarAvisos, emailUsuario, userId, dataInicio, veFinanceiro = false, editaAnalise = false, children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -147,8 +153,13 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
     if (isMobile) return
     const medir = () => {
       const grude = Math.round(zonaFixa.current?.getBoundingClientRect().height ?? 118)
-      const el = menuLateral.current
-      const doTopo = el ? Math.round(el.getBoundingClientRect().top + window.scrollY) : grude
+      // Medir pelo PAI, nunca pelo proprio menu: o menu e sticky, e quando ja
+      // esta grudado o rect.top dele e `grude` somado a rolagem inteira. Era
+      // isso que fazia a barra encolher para um quadradinho com rolagem propria
+      // depois de rolar a pagina (visto por ele em 30/08/2026). O pai (a linha
+      // do corpo) nao gruda, entao a conta dele e estavel.
+      const pai = menuLateral.current?.parentElement
+      const doTopo = pai ? Math.round(pai.getBoundingClientRect().top + window.scrollY) : grude
       // O guarda de 1px é o que impede o laço: mudar a altura do menu muda a
       // altura do corpo, o observador dispara de novo, e sem ele isso não pararia.
       setMedidas(m => (Math.abs(m.grude - grude) < 1 && Math.abs(m.doTopo - doTopo) < 1)
@@ -636,10 +647,11 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
             e o CFO passa o dia nele · 60px de moldura clara em volta custam uma
             faixa de lançamentos que ele deixaria de ver. */}
         <div style={{ flex: 1, padding: TELA_CHEIA.includes(pathname) ? 0 : (isMobile ? '16px 12px' : '28px 32px'), minWidth: 0 }}>
-          <PermissoesProvider perfil={perfilUsuario} proprietario={proprietario} podePublicarAvisos={podePublicarAvisos}>
+          <PermissoesProvider perfil={perfilUsuario} proprietario={proprietario} podePublicarAvisos={podePublicarAvisos} editaAnalise={editaAnalise}>
             <DateRangeProvider initialDate={dataInicio}>
               {children}
             </DateRangeProvider>
+            <AvisosAoVivo editaAnalise={editaAnalise} />
           </PermissoesProvider>
         </div>
       </div>

@@ -10,6 +10,11 @@ interface PermissoesCtx {
   somenteLeitura: boolean
   proprietario: boolean
   podePublicarAvisos: boolean
+  // Análise de crédito: um analista só (o Marco). Todo mundo VÊ a análise —
+  // ele quer a equipe acompanhando o trabalho —, mas só o analista decide
+  // conflito e aplica ao cadastro. Não é `perfil`: os 7 admins não editam.
+  // A trava real é a RLS `fam_e_analista()`; isto aqui só some com o botão.
+  editaAnalise: boolean
 }
 
 const PermissoesContext = createContext<PermissoesCtx>({
@@ -17,6 +22,7 @@ const PermissoesContext = createContext<PermissoesCtx>({
   somenteLeitura: false,
   proprietario: false,
   podePublicarAvisos: false,
+  editaAnalise: false,
 })
 
 export function PermissoesProvider({
@@ -24,11 +30,13 @@ export function PermissoesProvider({
   perfil,
   proprietario,
   podePublicarAvisos,
+  editaAnalise = false,
 }: {
   children: React.ReactNode
   perfil: string
   proprietario: boolean
   podePublicarAvisos: boolean
+  editaAnalise?: boolean
 }) {
   const p: Perfil = perfil === 'admin' || perfil === 'leitura' ? perfil : 'usuario'
   return (
@@ -37,6 +45,7 @@ export function PermissoesProvider({
       somenteLeitura: p === 'leitura',
       proprietario,
       podePublicarAvisos,
+      editaAnalise,
     }}>
       {children}
     </PermissoesContext.Provider>

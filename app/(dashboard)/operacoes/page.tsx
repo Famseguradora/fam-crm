@@ -6,7 +6,8 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'rea
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
-import { maskCNPJ, maskMoeda, fmtMoeda, fmtMoedaCurta, fmtData, fmtPercent, titleCase } from '@/lib/utils'
+import { maskCNPJ, maskMoeda, fmtMoeda, fmtMoedaCurta, fmtData, fmtPercent, titleCase, validarCNPJ } from '@/lib/utils'
+import { consultarCNPJ, type CartaoCNPJ } from '@/lib/cnpj'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario, Usuario, ComiteVoto, ComiteVotoHistorico, VotoComite, Anexo } from '@/types'
 import AnexosSection from '@/components/AnexosSection'
 import ComiteEntradaModal from '@/components/comite/ComiteEntradaModal'
@@ -302,6 +303,23 @@ export default function OperacoesPage() {
   const [formTomador, setFormTomador] = useState<FormTomadorBasico>(FORM_TB_INICIAL)
   const [enviandoTomador, setEnviandoTomador] = useState(false)
   const [msgTomador, setMsgTomador] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
+  // O cartão CNPJ da Receita, quando a busca deu certo: completa o cadastro
+  // (endereço, contato) ao salvar. Pedido dele em 30/08/2026.
+  const [cartaoCnpj, setCartaoCnpj] = useState<CartaoCNPJ | null>(null)
+  const [buscandoCnpj, setBuscandoCnpj] = useState(false)
+
+  async function buscarNaReceita() {
+    setBuscandoCnpj(true); setMsgTomador(null)
+    try {
+      const c = await consultarCNPJ(formTomador.cnpj)
+      setCartaoCnpj(c)
+      setFormTomador(f => ({ ...f, razao_social: f.razao_social.trim() ? f.razao_social : c.razao_social }))
+      setMsgTomador({ tipo: 'sucesso', texto: `Receita: ${c.razao_social}${c.cidade ? ` · ${c.cidade}/${c.estado}` : ''}${c.situacao ? ` · ${c.situacao}` : ''}. O endereço e o contato entram ao salvar.` })
+    } catch (e: unknown) {
+      setCartaoCnpj(null)
+      setMsgTomador({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha na consulta.' })
+    } finally { setBuscandoCnpj(false) }
+  }
 
   // ─── Loaders ────────────────────────────────────────────────────────────────
 
@@ -525,12 +543,20 @@ export default function OperacoesPage() {
     setMostrarFormTomador(false)
     setFormTomador(FORM_TB_INICIAL)
     setMsgTomador(null)
+    setCartaoCnpj(null)
   }
 
   async function handleSalvarTomadorBasico(e: React.SyntheticEvent) {
     e.preventDefault()
     if (!formTomador.razao_social.trim()) {
       setMsgTomador({ tipo: 'erro', texto: 'Razão Social é obrigatória.' })
+      return
+    }
+    // CNPJ OBRIGATÓRIO e com dígito conferido (30/08/2026): tomador sem CNPJ
+    // não se liga à análise de crédito, e estava dando conflito na busca.
+    const cnpjDigits = formTomador.cnpj.replace(/\D/g, '')
+    if (cnpjDigits.length !== 14 || !validarCNPJ(cnpjDigits)) {
+      setMsgTomador({ tipo: 'erro', texto: 'CNPJ é obrigatório e precisa ser válido (confira os dígitos).' })
       return
     }
     // Corretora obrigatória também no cadastro rápido: a operação espelha o vínculo
@@ -546,11 +572,17 @@ export default function OperacoesPage() {
       .from('tomadores')
       .insert({
         razao_social: titleCase(formTomador.razao_social.trim()),
-        cnpj: formTomador.cnpj.replace(/\D/g, '') || null,
+        cnpj: cnpjDigits,
         corretora_id: formTomador.corretora_id || null,
         porte: formTomador.porte || null,
         status: 'Cadastro Basico',
         ativo: true,
+        // O que a Receita trouxe, se a busca foi feita: só campos que o CRM tem.
+        ...(cartaoCnpj ? {
+          nome_fantasia: cartaoCnpj.nome_fantasia, cep: cartaoCnpj.cep, endereco: cartaoCnpj.endereco,
+          numero: cartaoCnpj.numero, complemento: cartaoCnpj.complemento, bairro: cartaoCnpj.bairro,
+          cidade: cartaoCnpj.cidade, estado: cartaoCnpj.estado, telefone: cartaoCnpj.telefone, email: cartaoCnpj.email,
+        } : {}),
       })
       .select('id,razao_social,cnpj,corretora_id')
       .single()
@@ -3050,10 +3082,18 @@ export default function OperacoesPage() {
                         onChange={(e) => setFormTomador((f) => ({ ...f, razao_social: e.target.value }))} />
                     </div>
                     <div className="form-field">
-                      <label className="form-label">CNPJ</label>
-                      <input className="fam-input" type="text" placeholder="00.000.000/0000-00"
-                        value={formTomador.cnpj}
-                        onChange={(e) => setFormTomador((f) => ({ ...f, cnpj: maskCNPJ(e.target.value) }))} />
+                      <label className="form-label">CNPJ *</label>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input className="fam-input" type="text" placeholder="00.000.000/0000-00" required maxLength={18}
+                          value={formTomador.cnpj} style={{ flex: 1, minWidth: 0 }}
+                          onChange={(e) => { setCartaoCnpj(null); setFormTomador((f) => ({ ...f, cnpj: maskCNPJ(e.target.value) })) }} />
+                        <button type="button" className="btn-secondary" onClick={buscarNaReceita}
+                          disabled={buscandoCnpj || formTomador.cnpj.replace(/\D/g, '').length !== 14}
+                          title="Busca o cartão CNPJ na Receita e completa o cadastro"
+                          style={{ whiteSpace: 'nowrap', padding: '0 12px' }}>
+                          {buscandoCnpj ? '…' : 'Receita'}
+                        </button>
+                      </div>
                     </div>
                     <div className="form-field">
                       <label className="form-label">Porte</label>

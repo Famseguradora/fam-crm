@@ -25,6 +25,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
 import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
 import { usePermissoes } from '@/lib/context/permissoes-context'
+import { consultarCNPJ } from '@/lib/cnpj'
 import AnexosSection from '@/components/AnexosSection'
 import OrganogramaModal from '@/components/OrganogramaModal'
 
@@ -92,7 +93,7 @@ function doTomador(t: Tomador): FormTomador {
  *  nomes têm que ficar perfilados. */
 function Linha({ rotulo, valor, largo }: { rotulo: string; valor: React.ReactNode; largo?: boolean }) {
   return (
-    <div className={`mt-campo${largo ? ' largo' : ''}`}>
+    <div className={`mt-campo${largo ? ' duplo' : ''}`}>
       <span className="mt-lab">{rotulo}</span>
       <span className="v">{valor || '—'}</span>
     </div>
@@ -119,6 +120,33 @@ export default function CadastroTomador({ tomador, onSalvo }: {
   const [confirmExcluir, setConfirmExcluir] = useState(false)
   const [excluindo, setExcluindo] = useState(false)
   const [organograma, setOrganograma] = useState(false)
+  const [buscandoCnpj, setBuscandoCnpj] = useState(false)
+
+  // O cartão CNPJ da Receita completa o que está vazio; o que já foi digitado
+  // fica. Quem manda no cadastro é ele, a Receita só adianta.
+  async function buscarNaReceita() {
+    setBuscandoCnpj(true); setMensagem(null)
+    try {
+      const c = await consultarCNPJ(form.cnpj)
+      setForm(f => ({
+        ...f,
+        razao_social: f.razao_social.trim() || c.razao_social,
+        nome_fantasia: f.nome_fantasia || c.nome_fantasia || '',
+        cep: f.cep || (c.cep ? maskCEP(c.cep) : ''),
+        endereco: f.endereco || c.endereco || '',
+        numero: f.numero || c.numero || '',
+        complemento: f.complemento || c.complemento || '',
+        bairro: f.bairro || c.bairro || '',
+        cidade: f.cidade || c.cidade || '',
+        estado: f.estado || c.estado || '',
+        telefone: f.telefone || (c.telefone ? maskTelefone(c.telefone) : ''),
+        email: f.email || c.email || '',
+      }))
+      setMensagem({ tipo: 'sucesso', texto: `Receita: ${c.razao_social}${c.situacao ? ` · ${c.situacao}` : ''}. Os campos vazios foram completados; confira e salve.` })
+    } catch (e: unknown) {
+      setMensagem({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha na consulta.' })
+    } finally { setBuscandoCnpj(false) }
+  }
 
   // O tomador recarregado por fora (depois de salvar) tem que voltar ao form.
   useEffect(() => { setForm(doTomador(tomador)) }, [tomador])
@@ -152,8 +180,13 @@ export default function CadastroTomador({ tomador, onSalvo }: {
 
   async function salvar(e: React.SyntheticEvent) {
     e.preventDefault()
+    // CNPJ obrigatório e válido para SALVAR (30/08/2026). Os cadastros antigos
+    // sem CNPJ ficam como estão no banco; quem editar um deles tem que informar.
     const cnpjDigits = form.cnpj.replace(/\D/g, '')
-    if (cnpjDigits && !validarCNPJ(cnpjDigits)) { setErroCnpj('CNPJ inválido.'); return }
+    if (cnpjDigits.length !== 14 || !validarCNPJ(cnpjDigits)) {
+      setErroCnpj(cnpjDigits ? 'CNPJ inválido: confira os dígitos.' : 'CNPJ é obrigatório para salvar este cadastro.')
+      return
+    }
     if (!form.corretora_id) { setErroCorretora('Selecione a corretora do tomador.'); return }
 
     setEnviando(true); setMensagem(null)
@@ -273,9 +306,9 @@ export default function CadastroTomador({ tomador, onSalvo }: {
               <div className="mt-sub"><span className="pt" style={{ background: '#3070c8' }} />Dados da empresa</div>
               <div className="mt-campos">
                 <Linha rotulo="Razão social" valor={tomador.razao_social} largo />
-                <Linha rotulo="Nome fantasia" valor={tomador.nome_fantasia} />
                 <Linha rotulo="CNPJ" valor={tomador.cnpj ? maskCNPJ(tomador.cnpj) : null} />
                 <Linha rotulo="Corretora" valor={corretoraNome} />
+                {tomador.nome_fantasia && <Linha rotulo="Nome fantasia" valor={tomador.nome_fantasia} />}
                 <Linha rotulo="Porte" valor={tomador.porte} />
                 <Linha rotulo="Prioridade" valor={tomador.prioridade} />
                 <Linha rotulo="Status no fluxo" valor={tomador.status} />
@@ -286,8 +319,8 @@ export default function CadastroTomador({ tomador, onSalvo }: {
 
               <div className="mt-sub"><span className="pt" style={{ background: '#27a96c' }} />Contato</div>
               <div className="mt-campos">
-                <Linha rotulo="Responsável" valor={tomador.responsavel} largo />
-                <Linha rotulo="E-mail" valor={tomador.email} />
+                <Linha rotulo="Responsável" valor={tomador.responsavel} />
+                <Linha rotulo="E-mail" valor={tomador.email} largo />
                 <Linha rotulo="Telefone" valor={tomador.telefone ? maskTelefone(tomador.telefone) : null} />
                 <Linha rotulo="Celular" valor={tomador.celular ? maskTelefone(tomador.celular) : null} />
               </div>
@@ -336,10 +369,17 @@ export default function CadastroTomador({ tomador, onSalvo }: {
                     onChange={e => setForm({ ...form, nome_fantasia: e.target.value })} />
                 </div>
                 <div className="form-field">
-                  <label className="form-label">CNPJ</label>
-                  <input className={`fam-input${erroCnpj ? ' invalid' : ''}`} type="text" placeholder="00.000.000/0000-00"
-                    value={form.cnpj} maxLength={18}
-                    onChange={e => { setErroCnpj(''); setForm({ ...form, cnpj: maskCNPJ(e.target.value) }) }} />
+                  <label className="form-label">CNPJ *</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input className={`fam-input${erroCnpj ? ' invalid' : ''}`} type="text" placeholder="00.000.000/0000-00"
+                      value={form.cnpj} maxLength={18} style={{ flex: 1, minWidth: 0 }}
+                      onChange={e => { setErroCnpj(''); setForm({ ...form, cnpj: maskCNPJ(e.target.value) }) }} />
+                    <button type="button" className="mt-btn" onClick={buscarNaReceita}
+                      disabled={buscandoCnpj || form.cnpj.replace(/\D/g, '').length !== 14}
+                      title="Busca o cartão CNPJ na Receita e completa os campos vazios">
+                      {buscandoCnpj ? '…' : 'Receita'}
+                    </button>
+                  </div>
                   {erroCnpj && <span className="field-error">{erroCnpj}</span>}
                 </div>
                 <div className="form-field">

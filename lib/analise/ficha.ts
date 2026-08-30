@@ -18,6 +18,7 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { soDigitos } from './local'
+import type { EstruturaSocietaria } from '@/components/tomador/OrganogramaAnalise'
 
 /** Um exercício do resumo financeiro. Valores SEMPRE em reais (a carga já
  *  converteu pela `escala`); `rotulo` é a chave porque a base nem sempre é
@@ -115,6 +116,9 @@ export interface FichaAnalise {
   /** O Serasa, quando a análise registrou alguma coisa. */
   serasa: SerasaFicha | null
 
+  /** O organograma que a análise mapeou (44 das 131 têm). */
+  estrutura: EstruturaSocietaria | null
+
   exercicios: ExercicioFicha[]
   documentos: DocumentoFicha[]
 }
@@ -138,7 +142,7 @@ const COLUNAS = `
   serasa_score, serasa_risco, serasa_interpretacao, serasa_prob,
   serasa_limite_txt, serasa_limite_num, serasa_pefin, serasa_protestos,
   serasa_acoes, serasa_recuperacao, serasa_consultas, serasa_consultas_qtd,
-  serasa_fonte
+  serasa_fonte, estrutura_societaria
 `
 
 interface LinhaCrua {
@@ -183,6 +187,7 @@ interface LinhaCrua {
   serasa_consultas: ConsultaSerasa[] | null
   serasa_consultas_qtd: number | null
   serasa_fonte: string | null
+  estrutura_societaria: EstruturaSocietaria | null
 }
 
 /** O Postgres devolve `numeric` como string. Converter sem inventar zero. */
@@ -338,6 +343,7 @@ export async function fichaDaAnalise(
       pontos_atencao: linha.pontos_atencao ?? [],
       tres_cs: linha.tres_cs,
       serasa,
+      estrutura: linha.estrutura_societaria?.entidades?.length ? linha.estrutura_societaria : null,
 
       exercicios,
       documentos: (docs ?? []) as DocumentoFicha[],

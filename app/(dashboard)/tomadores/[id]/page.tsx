@@ -32,8 +32,10 @@ import type { Tomador, Corretora, Operacao, Socio } from '@/types'
 import { fmtMoeda, fmtMoedaCurta, fmtData, maskCNPJ, maskTelefone } from '@/lib/utils'
 import { montarArvore, extrairDiretores, contarSocios } from '@/lib/relatorio-socios'
 import OrganogramaView from '@/components/OrganogramaView'
-import { fichaDaAnalise, type FichaAnalise } from '@/lib/analise/ficha'
+import { fichaDaAnalise, type FichaAnalise, type SerasaFicha } from '@/lib/analise/ficha'
 import CadastroTomador from '@/components/tomador/CadastroTomador'
+import OrganogramaModal from '@/components/OrganogramaModal'
+import OrganogramaAnalise from '@/components/tomador/OrganogramaAnalise'
 import { montarDossieHtml, baixarDossie, type SecaoDossie } from '@/lib/tomador/dossie-html'
 import {
   IcoVisao, IcoDoc, IcoEscudo, IcoCheck, IcoCalendario, IcoRede, IcoGrafico,
@@ -93,6 +95,18 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
   const [gaveta, setGaveta] = useState<Gaveta>('visao')
+  // O editor do organograma (sócios, diretores, PDF, Excel): o mesmo de sempre,
+  // aberto daqui de dentro. Ele pediu em 30/08 que voltasse para o tomador.
+  const [editorOrg, setEditorOrg] = useState(false)
+  const [usuarioInfo, setUsuarioInfo] = useState<{ authId: string; nome: string | null; email: string | null } | null>(null)
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      supabase.from('usuarios').select('nome, email').eq('auth_id', user.id).single()
+        .then(({ data }) => setUsuarioInfo({ authId: user.id, nome: data?.nome ?? null, email: data?.email ?? null }))
+    })
+  }, [])
 
   // ── carga ──
   const carregar = useCallback(async () => {
@@ -187,9 +201,9 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
       cor: '#3070c8', ir: 'analise',
       txt: <>Nenhuma <b>análise de crédito</b> publicada para este CNPJ</>,
     })
-    if (ficha && nSocios === 0) p.push({
+    if (ficha && !ficha.estrutura && nSocios === 0) p.push({
       cor: '#3070c8', ir: 'grupo',
-      txt: <>A análise mapeou a estrutura, mas o <b>organograma</b> não está cadastrado</>,
+      txt: <>Esta análise não trouxe organograma, e ele <b>não está montado</b> no CRM</>,
     })
     if (ficha && !ficha.revisada) p.push({
       cor: '#3070c8', ir: 'analise',
@@ -379,7 +393,11 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
         ? (ficha.serasa.score !== null ? `score ${ficha.serasa.score}` : 'sem score')
         : 'sem análise',
     },
-    { g: 'grupo', nome: 'Grupo e organograma', ico: <IcoRede />, meta: nSocios ? `${nSocios} sócios` : 'vazio' },
+    {
+      g: 'grupo', nome: 'Grupo e organograma', ico: <IcoRede />,
+      meta: ficha?.estrutura ? `${ficha.estrutura.entidades.filter(e => e.tipo === 'emp').length} empresas`
+        : nSocios ? `${nSocios} sócios` : 'a montar',
+    },
     { g: 'demonstracoes', nome: 'Demonstrações', ico: <IcoGrafico />, meta: ficha ? `${ficha.exercicios.length} exercícios` : '—' },
     // "0" ao lado de Documentos leria como "este tomador não mandou nada".
     // Enquanto o índice não subir, o rótulo honesto é "a indexar".
@@ -399,21 +417,11 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
           <div className="mt-brasao">{iniciais}</div>
           <div style={{ minWidth: 0 }}>
             <h1 className="mt-nome">{tomador.razao_social}</h1>
-            <div className="mt-sub mt-num">
-              {tomador.cnpj ? maskCNPJ(tomador.cnpj) : 'sem CNPJ'}
-              {tomador.cidade && ` • ${tomador.cidade}${tomador.estado ? `/${tomador.estado}` : ''}`}
-              {anosAtividade !== null && anosAtividade > 0 && ` • ${anosAtividade} anos na FAM`}
-            </div>
-            <div className="mt-chips">
-              {ficha?.rating_cod && <span className="mt-chip">Rating {ficha.rating_cod}</span>}
-              {ficha?.score_final !== null && ficha?.score_final !== undefined && (
-                <span className="mt-chip">Score FAM {String(ficha.score_final).replace('.', ',')}</span>
-              )}
-              {ficha?.nivel_risco && <span className="mt-chip n">Risco {ficha.nivel_risco.toLowerCase()}</span>}
-              <span className="mt-chip n">{tomador.status}</span>
-              {corretoraNome && (
-                <span className="mt-chip co"><IcoEscudo size={14} />{corretoraNome}</span>
-              )}
+            {/* Ordem dele, 30/08: CNPJ colado na razão social, e embaixo só a
+                corretora. Rating, score, risco e status foram para a Visão geral. */}
+            <div className="mt-sub mt-num">{tomador.cnpj ? maskCNPJ(tomador.cnpj) : 'sem CNPJ'}</div>
+            <div className="mt-corretora">
+              <IcoEscudo size={14} />{corretoraNome ?? 'sem corretora vinculada'}
             </div>
           </div>
         </div>
@@ -574,6 +582,7 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
         <div className="mt-painel">
           {gaveta === 'visao' && <GavetaVisao
             operacoes={operacoes} lmgTotal={c.lmgTotal} pct={c.pct} livre={c.livre} temLimite={c.limite > 0}
+            tomador={tomador} ficha={ficha} anosAtividade={anosAtividade} estourou={c.estourou}
           />}
 
           {gaveta === 'cadastro' && (
@@ -597,18 +606,25 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
           {gaveta === 'serasa' && <GavetaSerasa ficha={ficha} />}
 
           {gaveta === 'grupo' && (
-            <Bloco titulo="Grupo econômico e organograma" cor="#e8b84b">
+            <Bloco titulo="Grupo econômico e organograma" cor="#e8b84b"
+              acao={nSocios === 0 && diretores.length === 0 ? 'Montar organograma' : 'Editar organograma'}
+              onAcao={() => setEditorOrg(true)}>
               {ficha?.grupo && (
                 <div className="mt-campos" style={{ marginBottom: 8 }}>
                   <Campo rotulo="Grupo econômico" valor={ficha.grupo} cls="forte" largo />
                   {ficha.segmento && <Campo rotulo="Segmento" valor={ficha.segmento} largo />}
                 </div>
               )}
-              {(nSocios === 0 && diretores.length === 0) ? (
+              {/* Primeiro o organograma que a ANÁLISE mapeou (sem retrabalho:
+                  é o que ele monta na análise). Só quando a análise não tem,
+                  cai na tabela `socios` digitada no CRM. */}
+              {ficha?.estrutura ? (
+                <OrganogramaAnalise estrutura={ficha.estrutura} dataAnalise={fmtData(ficha.data_analise)} />
+              ) : (nSocios === 0 && diretores.length === 0) ? (
                 <div className="mt-nota">
-                  <b>Organograma não cadastrado.</b> Monte pela tela do Tomador, ou espere a
-                  próxima leva: a análise já mapeou a estrutura societária e ela vai passar a
-                  preencher esta árvore sozinha.
+                  <b>Organograma ainda não montado para este tomador.</b> Hoje 13 dos tomadores têm
+                  sócios cadastrados. Clique em <b>Montar organograma</b> acima para montar aqui
+                  mesmo, com sócios, diretores, PDF e Excel.
                 </div>
               ) : (
                 <div style={{ overflow: 'auto', background: '#fff', padding: 12, borderRadius: 9 }}>
@@ -667,6 +683,14 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
             </Bloco>
           )}
 
+          {editorOrg && (
+            <OrganogramaModal
+              tomador={tomador}
+              usuarioInfo={usuarioInfo}
+              onClose={() => { setEditorOrg(false); carregar() }}
+            />
+          )}
+
           {gaveta === 'linha' && <GavetaLinha
             tomador={tomador} ficha={ficha} operacoes={operacoes}
           />}
@@ -708,8 +732,38 @@ function TabelaOps({ ops }: { ops: Operacao[] }) {
   )
 }
 
-function GavetaVisao({ operacoes, lmgTotal, pct, livre, temLimite }: {
+/** O painel de indicadores no alto da Visão geral: o que antes eram chips
+ *  embaixo do nome, agora com número grande e leitura executiva. */
+function Indicadores({ tomador, ficha, estourou, pct, temLimite }: {
+  tomador: Tomador; ficha: FichaAnalise | null
+  estourou: boolean; pct: number; temLimite: boolean
+}) {
+  const risco = ficha?.nivel_risco?.toLowerCase() ?? null
+  const corRisco = !risco ? '#8ba3c0' : /alto|crit/.test(risco) ? '#a3282a' : /m[eé]dio|moder/.test(risco) ? '#a07b1e' : '#1a7a50'
+  const corPct = !temLimite ? '#8ba3c0' : estourou ? '#a3282a' : pct >= 90 ? '#a07b1e' : '#1a7a50'
+  const itens: { lab: string; v: React.ReactNode; s?: string; cor?: string; txt?: boolean }[] = [
+    { lab: 'Rating FAM', v: ficha?.rating_cod ?? '—', s: ficha?.rating_txt && ficha.rating_txt !== ficha.rating_cod ? ficha.rating_txt : undefined, cor: '#1e4080' },
+    { lab: 'Score FAM', v: ficha?.score_final !== null && ficha?.score_final !== undefined ? String(ficha.score_final).replace('.', ',') : '—', s: ficha ? `análise de ${fmtData(ficha.data_analise)}` : 'sem análise', cor: '#1e4080' },
+    { lab: 'Nível de risco', v: ficha?.nivel_risco ?? '—', s: ficha?.recomendacao ?? undefined, cor: corRisco, txt: true },
+    { lab: 'Limite usado', v: temLimite ? `${pct.toFixed(1).replace('.', ',')}%` : '—', s: estourou ? 'estourado' : temLimite ? 'do aprovado' : 'sem limite', cor: corPct },
+    { lab: 'Status no fluxo', v: tomador.status, s: tomador.porte ?? undefined, txt: true },
+  ]
+  return (
+    <section className="mt-card mt-indic">
+      {itens.map(i => (
+        <div key={i.lab} className="mt-indic-i">
+          <div className="mt-lab">{i.lab}</div>
+          <div className={`v${i.txt ? ' txt' : ''}`} style={i.cor ? { color: i.cor } : undefined} title={typeof i.v === 'string' ? i.v : undefined}>{i.v}</div>
+          {i.s && <div className="s">{i.s}</div>}
+        </div>
+      ))}
+    </section>
+  )
+}
+
+function GavetaVisao({ operacoes, lmgTotal, pct, livre, temLimite, tomador, ficha, anosAtividade, estourou }: {
   operacoes: Operacao[]; lmgTotal: number; pct: number; livre: number; temLimite: boolean
+  tomador: Tomador; ficha: FichaAnalise | null; anosAtividade: number | null; estourou: boolean
 }) {
   // A concentração é medida, não chutada. E basta UMA das duas pontas estar
   // sozinha para ser concentração: 16 apólices numa corretora só já é
@@ -735,6 +789,8 @@ function GavetaVisao({ operacoes, lmgTotal, pct, livre, temLimite }: {
 
   return (
     <>
+      <Indicadores tomador={tomador} ficha={ficha} estourou={estourou} pct={pct} temLimite={temLimite} />
+
       <section className="mt-card mt-bloco">
         <header className="mt-bloco-cab">
           <span className="pt" />
@@ -1026,6 +1082,30 @@ function faixaDoScore(score: number): { cor: string; texto: string } {
   return { cor: '#a3282a', texto: 'faixa crítica' }
 }
 
+/** A análise escreveu que este campo está zerado? Serve para separar o que ela
+ *  OLHOU e achou limpo do que ela simplesmente não olhou.
+ *
+ *  O acervo escreve isso de muitas formas ("R$ 0", "0 ação(ões)",
+ *  "Sem registros", "Nada consta"), então a regra é a mais burra que funciona:
+ *  frase de negação, ou nenhum algarismo diferente de zero no texto todo.
+ *  "R$ 7.751,21" tem 7, logo NÃO está zerado. */
+function zerado(v: string): boolean {
+  const t = v.trim()
+  if (/^(sem registro|nada consta|nenhum|não consta|nao consta|inexistente)/i.test(t)) return true
+  return !/[1-9]/.test(t)
+}
+
+/** A cor do cabeçalho das anotações negativas, e ela diz TRÊS coisas
+ *  diferentes: vermelho quando há anotação, verde quando a análise afirmou que
+ *  está zerado, e cinza quando ela não registrou nada. O cinza é o ponto:
+ *  campo em branco não é empresa limpa, e verde ali afirmaria o que o dado não
+ *  sustenta. */
+function corDasAnotacoes(s: SerasaFicha): string {
+  const campos = [s.pefin, s.protestos, s.acoes].filter(Boolean) as string[]
+  if (campos.length === 0) return '#8ba3c0'
+  return campos.every(zerado) ? '#27a96c' : '#d64545'
+}
+
 function GavetaSerasa({ ficha }: { ficha: FichaAnalise | null }) {
   if (!ficha) {
     return (
@@ -1084,9 +1164,15 @@ function GavetaSerasa({ ficha }: { ficha: FichaAnalise | null }) {
             <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: '4px 0 0' }}>{s.interpretacao}</p>
           </>
         )}
+
+        <div className="mt-nota">
+          <b>Este Serasa é o que a análise tinha em mãos em {fmtData(ficha.data_analise)}</b>, e não uma
+          consulta de hoje: o relatório em si pode ser mais velho que a análise. Score de crédito
+          envelhece, e a data de quando ele foi puxado não é um campo que a análise registra.
+        </div>
       </Bloco>
 
-      <Bloco titulo="Anotações negativas" cor={s.pefin || s.protestos || s.acoes ? '#d64545' : '#27a96c'}>
+      <Bloco titulo="Anotações negativas" cor={corDasAnotacoes(s)}>
         {(s.pefin || s.protestos || s.acoes) ? (
           <div className="mt-campos">
             {s.pefin && <Campo rotulo="PEFIN" valor={s.pefin} />}

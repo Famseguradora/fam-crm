@@ -945,15 +945,17 @@ ul.org-tree > li.org-subtree::after { display: none; }
   color: #fff; display: grid; place-items: center;
   font-size: 19px; font-weight: 700; letter-spacing: .5px;
 }
-.mt-nome { font-size: 21px; font-weight: 700; color: #0a1628; line-height: 1.15; letter-spacing: -.3px; }
-.mt-sub { font-size: 12.5px; color: #6080a0; margin-top: 5px; }
+.mt-nome { font-size: 21px; font-weight: 700; color: #0a1628; line-height: 1.15; letter-spacing: -.3px; margin: 0; }
+.mt-sub { font-size: 12.5px; color: #6080a0; margin-top: 3px; }
+.mt-corretora { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 13px; font-weight: 700; color: #1a2a3a; }
+.mt-corretora svg { color: #e8b84b; }
 /* Os chips do cabecalho ficam TODOS na mesma linha, alinhados pelo meio: a
    corretora caia sozinha numa segunda linha, e ele mandou perfilar (30/08). */
-.mt-chips { display: flex; align-items: center; gap: 7px; flex-wrap: nowrap; margin-top: 12px; min-width: 0; overflow: hidden; }
+.mt-chips { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 12px; min-width: 0; }
 .mt-chip {
   font-size: 11.5px; font-weight: 600; padding: 5px 12px; border-radius: 8px;
   border: 1px solid #dbe6f3; background: #f2f7fd; color: #1e4080; white-space: nowrap;
-  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 0 auto;
 }
 .mt-chip.n { background: #fff; color: #6080a0; }
 /* a corretora é o vínculo comercial: cor própria, mas perfilada na mesma
@@ -1160,8 +1162,10 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .mt-serasa-score .t { font-size: 12px; color: #6080a0; margin-top: 5px; }
 
 /* ficha de campos, dentro das gavetas */
-.mt-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0 20px; }
-.mt-campo { display: flex; flex-direction: column; gap: 3px; padding: 9px 0; border-bottom: 1px solid #eef3f9; min-width: 0; }
+.mt-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0 18px; }
+.mt-campo { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid #eef3f9; min-width: 0; }
+/* dois lugares de largura, para razão social e endereço: sem ocupar a linha inteira */
+.mt-campo.duplo { grid-column: span 2; }
 .mt-campo.largo { grid-column: 1 / -1; }
 .mt-campo .v { font-size: 12.5px; color: #0a1628; font-weight: 500; overflow-wrap: break-word; line-height: 1.4; }
 .mt-campo .v.forte { font-weight: 700; }
@@ -1214,12 +1218,56 @@ ul.org-tree > li.org-subtree::after { display: none; }
 }
 .mt-voltar:hover { text-decoration: underline; }
 
+/* os indicadores no alto da Visão geral */
+/* seis colunas fixas: com auto-fit o sexto caia sozinho numa segunda linha */
+.mt-indic { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.mt-indic-i { padding: 12px 16px; border-right: 1px solid #eef3f9; min-width: 0; display: flex; flex-direction: column; }
+.mt-indic-i:last-child { border-right: none; }
+.mt-indic-i .v { font-size: 16px; font-weight: 700; color: #0a1628; margin-top: 3px; line-height: 1.15; letter-spacing: -.3px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* valor em texto (status, risco): menor, e com direito a duas linhas */
+.mt-indic-i .v.txt { font-size: 16px; white-space: normal; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mt-indic-i .s { font-size: 11.5px; color: #6080a0; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* o organograma da análise: cartões aninhados, em texto */
+.mt-org-barra { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.mt-org-meta { font-size: 12.5px; color: #6080a0; }
+.mt-org-arvore { display: flex; flex-direction: column; gap: 6px; }
+.mt-org-no { display: flex; flex-direction: column; gap: 6px; }
+.mt-org-filhos { display: flex; flex-direction: column; gap: 6px; border-left: 2px solid #dbe6f3; padding-left: 12px; }
+.mt-org-cartao {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  font-family: inherit; font-size: 13.5px; color: #0a1628; cursor: pointer;
+  background: #fff; border: 1px solid #dbe6f3; border-radius: 9px; padding: 9px 12px;
+  transition: .12s;
+}
+.mt-org-cartao:hover { border-color: #3070c8; background: #fbfdff; }
+.mt-org-cartao:focus-visible { outline: 2px solid #3070c8; outline-offset: 1px; }
+.mt-org-cartao.tomador { background: #eef5fd; border-color: #b9d4f0; font-weight: 700; }
+.mt-org-cartao.pf { background: #fbfdff; }
+.mt-org-cartao.mais { color: #3070c8; font-weight: 600; border-style: dashed; }
+.mt-org-seta { width: 12px; color: #8ba3c0; font-size: 12px; flex-shrink: 0; }
+.mt-org-nome { flex: 1 1 auto; min-width: 0; font-weight: 600; }
+.mt-org-selo { color: #6080a0; font-weight: 500; }
+.mt-org-tipo {
+  display: inline-block; margin-left: 8px; font-size: 10px; font-weight: 700; letter-spacing: .5px;
+  color: #1e4080; background: #eaf2fc; border-radius: 5px; padding: 1px 6px; vertical-align: middle;
+}
+.mt-org-pct { font-size: 12.5px; color: #6080a0; font-weight: 600; white-space: nowrap; }
+.mt-org-pct.n { color: #1e4080; font-weight: 700; font-variant-numeric: tabular-nums; }
+.mt-org-detalhe {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: #6080a0;
+  padding: 2px 12px 4px 32px; line-height: 1.45;
+}
+.mt-org-cnpj { font-variant-numeric: tabular-nums; color: #1e4080; }
+.mt-org-cheia {
+  position: fixed; inset: 0; z-index: 1200; background: #f2f6fb; overflow: auto; padding: 24px;
+}
+.mt-org-cheia-corpo { max-width: 1100px; margin: 0 auto; background: #fff; border-radius: 14px; padding: 20px 24px; }
+
 /* ══════════ CELULAR ══════════ */
 @media (max-width: 1000px) {
   .mt-faixa { grid-template-columns: 1fr; }
   .mt-resumos { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); grid-auto-rows: auto; }
-  /* no estreito, perfilar numa linha so cortaria nome de corretora */
-  .mt-chips { flex-wrap: wrap; overflow: visible; }
   .mt-corpo { grid-template-columns: 1fr; }
   .mt-rail { position: static; min-width: 0; }
   .mt-menu { flex-direction: row; overflow-x: auto; gap: 6px; width: 100%; scrollbar-width: thin; }
@@ -1240,5 +1288,7 @@ ul.org-tree > li.org-subtree::after { display: none; }
   .mt-risca { display: none; }
   .mt-total { text-align: left; }
   .mt-serasa-score .n { font-size: 32px; }
+  .mt-indic { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .mt-indic-i { border-right: none; border-bottom: 1px solid #eef3f9; }
   .mt-rolagem { max-height: none; }
 }

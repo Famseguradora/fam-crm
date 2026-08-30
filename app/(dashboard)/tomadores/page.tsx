@@ -9,9 +9,6 @@ import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCas
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
 import { useDateRange } from '@/lib/context/date-range-context'
 import { usePermissoes } from '@/lib/context/permissoes-context'
-import AnexosSection from '@/components/AnexosSection'
-import OrganogramaModal from '@/components/OrganogramaModal'
-import AnaliseDoTomadorSection from '@/components/AnaliseDoTomadorSection'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -83,7 +80,6 @@ export default function TomadoresPage() {
   const [statusOpcoes, setStatusOpcoes] = useState<StatusFluxo[]>([])
   const [carregando, setCarregando] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
-  const [editando, setEditando] = useState<Tomador | null>(null)
   const [form, setForm] = useState<FormTomador>(FORM_TOM_INICIAL)
   const [enviando, setEnviando] = useState(false)
   const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
@@ -114,12 +110,6 @@ export default function TomadoresPage() {
   const [msgStatus, setMsgStatus] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
   const [confirmExcluir, setConfirmExcluir] = useState<StatusFluxo | null>(null)
 
-  // ── Permissão proprietário ──
-  const [isProprietario, setIsProprietario] = useState(false)
-  const [usuarioInfo, setUsuarioInfo] = useState<{ authId: string; nome: string | null; email: string | null } | null>(null)
-  const [confirmExcluirTomador, setConfirmExcluirTomador] = useState<Tomador | null>(null)
-  const [excluindoTomador, setExcluindoTomador] = useState(false)
-  const [organogramaTomador, setOrganogramaTomador] = useState<Tomador | null>(null)
 
   // ─── Loaders ────────────────────────────────────────────────────────────────
 
@@ -158,55 +148,10 @@ export default function TomadoresPage() {
     carregarCorretoras()
   }, [carregarTomadores, carregarStatusLista, carregarCorretoras])
 
-  useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return
-      supabase.from('usuarios').select('proprietario, nome, email').eq('auth_id', user.id).single()
-        .then(({ data }) => {
-          setIsProprietario(data?.proprietario ?? false)
-          setUsuarioInfo({ authId: user.id, nome: data?.nome ?? null, email: data?.email ?? null })
-        })
-    })
-  }, [])
-
   // ─── Tomadores CRUD ─────────────────────────────────────────────────────────
 
   function abrirNovo() {
-    setEditando(null)
     setForm(FORM_TOM_INICIAL)
-    setMensagem(null)
-    setErroCnpj('')
-    setErroCorretora('')
-    setMostrarForm(true)
-  }
-
-  function abrirEditar(t: Tomador) {
-    setEditando(t)
-    setForm({
-      razao_social: t.razao_social,
-      nome_fantasia: t.nome_fantasia ?? '',
-      cnpj: maskCNPJ(t.cnpj ?? ''),
-      corretora_id: t.corretora_id ?? '',
-      email: t.email ?? '',
-      telefone: maskTelefone(t.telefone ?? ''),
-      celular: maskTelefone(t.celular ?? ''),
-      cep: t.cep ?? '',
-      endereco: t.endereco ?? '',
-      numero: t.numero ?? '',
-      complemento: t.complemento ?? '',
-      bairro: t.bairro ?? '',
-      cidade: t.cidade ?? '',
-      estado: t.estado ?? '',
-      responsavel: t.responsavel ?? '',
-      porte: t.porte ?? '',
-      prioridade: t.prioridade ?? 'Normal',
-      limite_aprovado: t.limite_aprovado != null ? maskMoeda(String(Math.round(t.limite_aprovado * 100))) : '',
-      observacao: t.observacao ?? '',
-      status: t.status,
-      ativo: t.ativo,
-      data_entrada: t.data_entrada ?? '',
-    })
     setMensagem(null)
     setErroCnpj('')
     setErroCorretora('')
@@ -215,37 +160,10 @@ export default function TomadoresPage() {
 
   function fecharForm() {
     setMostrarForm(false)
-    setEditando(null)
     setForm(FORM_TOM_INICIAL)
     setMensagem(null)
     setErroCnpj('')
     setErroCorretora('')
-  }
-
-  async function excluirTomador() {
-    if (!confirmExcluirTomador) return
-    setExcluindoTomador(true)
-    const supabase = createClient()
-    const { error } = await supabase.from('tomadores').delete().eq('id', confirmExcluirTomador.id)
-    setExcluindoTomador(false)
-    if (error) {
-      setConfirmExcluirTomador(null)
-      setMensagem({ tipo: 'erro', texto: 'Erro ao excluir: ' + error.message })
-      return
-    }
-    await supabase.from('audit_log').insert({
-      tabela: 'tomadores',
-      acao: 'exclusao',
-      registro_id: confirmExcluirTomador.id,
-      dados_antes: confirmExcluirTomador as unknown as Record<string, unknown>,
-      dados_depois: null,
-      usuario_auth_id: usuarioInfo?.authId ?? null,
-      usuario_nome: usuarioInfo?.nome ?? null,
-      usuario_email: usuarioInfo?.email ?? null,
-    })
-    setConfirmExcluirTomador(null)
-    fecharForm()
-    await carregarTomadores()
   }
 
   useEffect(() => {
@@ -257,9 +175,11 @@ export default function TomadoresPage() {
 
   async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault()
+    // CNPJ obrigatório no cadastro NOVO (30/08/2026): sem ele o tomador não se
+    // liga à análise de crédito. Os antigos sem CNPJ ficam como estão.
     const cnpjDigits = form.cnpj.replace(/\D/g, '')
-    if (cnpjDigits && !validarCNPJ(cnpjDigits)) {
-      setErroCnpj('CNPJ inválido.')
+    if (cnpjDigits.length !== 14 || !validarCNPJ(cnpjDigits)) {
+      setErroCnpj(cnpjDigits ? 'CNPJ inválido: confira os dígitos.' : 'CNPJ é obrigatório.')
       return
     }
     // Corretora é obrigatória: o vínculo Tomador→Corretora é a fonte única que as
@@ -297,34 +217,17 @@ export default function TomadoresPage() {
     }
     try {
       const supabase = createClient()
-      if (editando) {
-        const { error } = await supabase.from('tomadores').update(payload).eq('id', editando.id)
-        if (error) throw new Error(error.message)
-        // Fonte única do vínculo Tomador→Corretora: a corretora só é alterada
-        // AQUI (tela de Tomadores). Quando muda, precisa alcançar as operações do
-        // tomador, que espelham esse vínculo — senão elas ficariam com a corretora
-        // antiga (foi exatamente o furo da Petrobras).
-        if ((editando.corretora_id ?? null) !== (payload.corretora_id ?? null)) {
-          const { error: errProp } = await supabase
-            .from('operacoes')
-            .update({ corretora_id: payload.corretora_id })
-            .eq('tomador_id', editando.id)
-          if (errProp) throw new Error(errProp.message)
-        }
-        await supabase.from('audit_log').insert({
-          tabela: 'tomadores',
-          acao: 'alteracao',
-          registro_id: editando.id,
-          dados_antes: editando as unknown as Record<string, unknown>,
-          dados_depois: payload,
-          usuario_auth_id: usuarioInfo?.authId ?? null,
-          usuario_nome: usuarioInfo?.nome ?? null,
-          usuario_email: usuarioInfo?.email ?? null,
-        })
-      } else {
-        const { error } = await supabase.from('tomadores').insert(payload)
-        if (error) throw new Error(error.message)
-      }
+      // Esta tela só CRIA. Alterar o cadastro (e excluir, e o organograma, e
+      // os anexos) acontece na Mesa do Tomador, em /tomadores/<id>: ordem
+      // dele em 30/08/2026, "tudo deve ser feito na tela quando clicar com o
+      // mouse em cima da linha".
+      const { data: criado, error } = await supabase
+        .from('tomadores').insert(payload).select('id').maybeSingle()
+      if (error) throw new Error(error.message)
+
+      // Cadastrou: cai direto na Mesa do tomador novo, que é onde se completa
+      // o resto. Sem id de volta (RLS), volta para a lista.
+      if (criado?.id) { router.push('/tomadores/' + criado.id); return }
       await carregarTomadores()
       fecharForm()
     } catch (err: unknown) {
@@ -778,7 +681,7 @@ export default function TomadoresPage() {
             <div className="modal-overlay">
               <div className="modal-box" style={{ maxWidth: 760 }}>
                 <div className="modal-header">
-                  <div className="modal-title">{editando ? '✏️ Editar Tomador' : '+ Novo Tomador'}</div>
+                  <div className="modal-title">+ Novo Tomador</div>
                   <button onClick={fecharForm} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
                 </div>
                 {mensagem && (
@@ -804,7 +707,7 @@ export default function TomadoresPage() {
                         onChange={(e) => setForm({ ...form, nome_fantasia: e.target.value })} />
                     </div>
                     <div className="form-field">
-                      <label className="form-label">CNPJ</label>
+                      <label className="form-label">CNPJ *</label>
                       <input className={`fam-input${erroCnpj ? ' invalid' : ''}`} type="text" placeholder="00.000.000/0000-00"
                         value={form.cnpj}
                         onChange={(e) => { setErroCnpj(''); setForm({ ...form, cnpj: maskCNPJ(e.target.value) }) }}
@@ -946,17 +849,9 @@ export default function TomadoresPage() {
                   </div>
 
                   <div style={{ display: 'flex', gap: 10, marginTop: 24, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                    {editando && isProprietario && !somenteLeitura && (
-                      <button type="button" onClick={() => setConfirmExcluirTomador(editando)}
-                        style={{ marginRight: 'auto', background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 16px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
-                        🗑 Excluir Tomador
-                      </button>
-                    )}
-                    {editando && (
-                      <button type="button" className="btn-export" onClick={() => setOrganogramaTomador(editando)}>
-                        🏛️ Organograma Societário
-                      </button>
-                    )}
+                    <span style={{ marginRight: 'auto', alignSelf: 'center', fontSize: 12, color: '#6080a0' }}>
+                      Anexos, organograma e análise você completa na tela do tomador.
+                    </span>
                     {somenteLeitura ? (
                       <>
                         <span style={{ alignSelf: 'center', fontSize: 12, color: '#a05010' }}>👁 Acesso somente leitura</span>
@@ -966,54 +861,13 @@ export default function TomadoresPage() {
                       <>
                         <button type="button" className="btn-secondary" onClick={fecharForm}>Cancelar</button>
                         <button type="submit" className="btn-primary" disabled={enviando}>
-                          {enviando ? 'Salvando...' : editando ? 'Salvar Alterações' : 'Cadastrar Tomador'}
+                          {enviando ? 'Salvando...' : 'Cadastrar Tomador'}
                         </button>
                       </>
                     )}
                   </div>
                 </form>
 
-                {editando && (
-                  <>
-                    <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
-                    {/* O que a análise de crédito apurou sobre este CNPJ. Só
-                        leitura, e some sozinho se não houver análise. */}
-                    <AnaliseDoTomadorSection cnpj={editando.cnpj} />
-                    <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
-                    <AnexosSection entidadeTipo="tomador" entidadeId={editando.id} />
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Modal Organograma Societário */}
-          {organogramaTomador && (
-            <OrganogramaModal
-              tomador={organogramaTomador}
-              usuarioInfo={usuarioInfo}
-              onClose={() => setOrganogramaTomador(null)}
-            />
-          )}
-
-          {/* Modal confirmar exclusão de tomador */}
-          {confirmExcluirTomador && (
-            <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setConfirmExcluirTomador(null) }}>
-              <div className="modal-box" style={{ maxWidth: 400 }}>
-                <div className="modal-header">
-                  <div className="modal-title">Excluir Tomador</div>
-                  <button onClick={() => setConfirmExcluirTomador(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#6080a0' }}>✕</button>
-                </div>
-                <p style={{ color: '#1a2a3a', margin: '0 0 20px', lineHeight: 1.5 }}>
-                  Tem certeza que deseja excluir permanentemente <strong>{confirmExcluirTomador.razao_social}</strong>? Esta ação é <strong style={{ color: '#d64545' }}>irreversível</strong>.
-                </p>
-                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                  <button className="btn-secondary" onClick={() => setConfirmExcluirTomador(null)}>Cancelar</button>
-                  <button onClick={excluirTomador} disabled={excluindoTomador}
-                    style={{ background: '#d64545', color: 'white', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>
-                    {excluindoTomador ? 'Excluindo...' : 'Sim, Excluir'}
-                  </button>
-                </div>
               </div>
             </div>
           )}
@@ -1069,25 +923,22 @@ export default function TomadoresPage() {
                   <th style={thSort} onClick={() => handleSort('limite')}>Limite{sortIcon('limite')}</th>
                   <th style={thSort} onClick={() => handleSort('status')}>Status{sortIcon('status')}</th>
                   <th style={thSort} onClick={() => handleSort('data_entrada')}>Data Entrada{sortIcon('data_entrada')}</th>
-                  {/* O clique na LINHA abre a Mesa. A edição do cadastro ficou
-                      aqui, no lápis, para não disputar o mesmo gesto. */}
-                  <th style={{ width: 90 }} />
                 </tr>
               </thead>
               <tbody>
                 {carregando ? (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>Carregando...</td></tr>
                 ) : tomadoresFiltrados.length === 0 ? (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                     {busca || filtroStatus || filtroEstado || filtroCorretora
                       ? 'Nenhum tomador encontrado para os filtros selecionados.'
                       : 'Nenhum tomador cadastrado ainda.'}
                   </td></tr>
                 ) : tomadoresFiltrados.map((t, i) => (
-                  // Clicar na linha abre a MESA DO TOMADOR, que é a tela cheia.
-                  // Era a edição antes; ele pediu em 30/08 que o clique no
-                  // tomador abrisse a ficha direto. A edição virou o lápis, na
-                  // última coluna.
+                  // Clicar na linha abre a MESA DO TOMADOR, e é o ÚNICO caminho.
+                  // Ordem dele em 30/08/2026: "não quero aquela página em lugar
+                  // nenhum mais". A edição do cadastro mora na gaveta "Cadastro"
+                  // da Mesa, e o lápis que abria o modal antigo saiu daqui.
                   <tr key={t.id} onClick={() => router.push(`/tomadores/${t.id}`)} style={{ cursor: 'pointer' }}>
                     <td style={{ color: '#6080a0', fontSize: 13 }}>{i + 1}</td>
                     <td>
@@ -1112,20 +963,6 @@ export default function TomadoresPage() {
                     </td>
                     <td style={{ fontSize: 13, color: '#6080a0', whiteSpace: 'nowrap' }}>
                       {t.data_entrada ? fmtData(t.data_entrada) : '—'}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); abrirEditar(t) }}
-                        title="Editar o cadastro deste tomador"
-                        style={{
-                          padding: '3px 9px', borderRadius: 7, cursor: 'pointer',
-                          border: '1px solid #dbe6f3', background: '#fff', color: '#3070c8',
-                          fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', fontFamily: 'inherit',
-                        }}
-                      >
-                        ✏️ Editar
-                      </button>
                     </td>
                   </tr>
                 ))}

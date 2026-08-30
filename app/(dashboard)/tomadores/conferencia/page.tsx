@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { usePermissoes } from '@/lib/context/permissoes-context'
 
 // ─────────────────────────────────────────────────────────────
 // Os grupos, na ordem em que ele pediu
@@ -83,6 +84,15 @@ export default function ConferenciaPage() {
   const [gravando, setGravando] = useState(false)
   const [recado, setRecado] = useState<string | null>(null)
   const [quem, setQuem] = useState<string>('')
+  /** Canal do "ao vivo" conectado, e quando chegou a última decisão. */
+  const [ligado, setLigado] = useState(false)
+  const [aoVivo, setAoVivo] = useState<number | null>(null)
+
+  /* Um analista só. Quem não é continua entrando e lendo tudo — é de
+     propósito, ele quer a equipe acompanhando — mas sem nenhum botão de
+     decidir. A trava de verdade é a RLS `fam_e_analista()`: sem ela isto
+     seria só um `if` de desenho, e o dado já teria ido para o navegador. */
+  const { editaAnalise } = usePermissoes()
 
   // ── carregar ──────────────────────────────────────────────
   const carregar = useCallback(async () => {
@@ -102,6 +112,31 @@ export default function ConferenciaPage() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setQuem(user?.email ?? 'desconhecido'))
   }, [supabase])
+
+  /* ── AO VIVO ────────────────────────────────────────────────
+     Pedido dele: que a equipe o veja trabalhando. Quem está só acompanhando
+     vê o contador cair sozinho, na hora em que o analista decide, sem F5.
+
+     Por que isto é seguro: o Realtime do Supabase obedece à mesma RLS da
+     consulta. LER conflito é liberado para todo autenticado, então todos
+     recebem o aviso; ESCREVER é só do analista, então só o trabalho dele
+     gera evento. Assistir sem poder tocar.
+
+     Quem edita fica de fora do canal de propósito: a própria tela dele já
+     recarrega ao gravar, e receber de volta o próprio eco recarregaria a
+     lista no meio de uma seleção em lote, perdendo o que ele marcou. */
+  useEffect(() => {
+    if (editaAnalise) return
+
+    const canal = supabase
+      .channel('conferencia-ao-vivo')
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'analise_conflitos' },
+        () => { setAoVivo(Date.now()); carregar() })
+      .subscribe(estado => setLigado(estado === 'SUBSCRIBED'))
+
+    return () => { supabase.removeChannel(canal) }
+  }, [supabase, editaAnalise, carregar])
 
   // ── recorte da tela ───────────────────────────────────────
   const doGrupo = useMemo(
@@ -191,12 +226,44 @@ export default function ConferenciaPage() {
     <div style={{ padding: '20px 0' }}>
       {/* cabeçalho */}
       <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0a1628', margin: 0 }}>
-          Conferência da análise de crédito
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0a1628', margin: 0 }}>
+            Conferência da análise de crédito
+          </h1>
+          {/* Só para quem acompanha: o selo prova que a tela está viva, e não
+              que o trabalho parou. Sem ele, uma fila que não anda e uma tela
+              desconectada são a mesma imagem. */}
+          {!editaAnalise && (
+            <span title={ligado
+              ? 'Esta tela se atualiza sozinha quando o analista decide algo.'
+              : 'Sem conexão ao vivo — recarregue para ver as decisões novas.'}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                fontSize: 11, fontWeight: 700, letterSpacing: .3, padding: '3px 9px',
+                borderRadius: 999, textTransform: 'uppercase',
+                background: ligado ? '#e6f9f0' : '#f2f4f7',
+                border: `1px solid ${ligado ? '#b8e6cf' : '#dde2e8'}`,
+                color: ligado ? '#1a7a50' : '#8a94a2',
+              }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: ligado ? '#22a06b' : '#b0b8c2',
+                boxShadow: ligado ? '0 0 0 3px rgba(34,160,107,.18)' : 'none',
+              }} />
+              {ligado ? 'ao vivo' : 'sem conexão'}
+            </span>
+          )}
+          {aoVivo && (
+            <span style={{ fontSize: 12, color: 'var(--soft)' }}>
+              o analista acabou de decidir algo
+            </span>
+          )}
+        </div>
         <p style={{ color: 'var(--soft)', fontSize: 14, margin: '6px 0 0' }}>
           Tudo que a carga das análises não conseguiu casar com o cadastro, com os dois valores lado a lado.
-          Nada aqui alterou o cadastro sozinho: <strong>quem decide é você</strong>.
+          Nada aqui alterou o cadastro sozinho: <strong>{editaAnalise
+            ? 'quem decide é você'
+            : 'quem decide é o analista de crédito'}</strong>.
           {' '}<strong>{totalAberto}</strong> em aberto de {conflitos.length}.
         </p>
       </div>
@@ -230,6 +297,7 @@ export default function ConferenciaPage() {
 
         {/* barra de ações */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+          {editaAnalise && <>
           <button className="btn-secondary" onClick={marcarTodosAplicaveis}
             disabled={!doGrupo.some(aplicavel)}>
             Marcar os aplicáveis ({doGrupo.filter(aplicavel).length})
@@ -250,6 +318,21 @@ export default function ConferenciaPage() {
             disabled={!marcadosAplicaveis.length || gravando}>
             Aplicar ao cadastro ({marcadosAplicaveis.length})
           </button>
+          </>}
+
+          {!editaAnalise && (
+            <>
+              <span style={{ fontSize: 13, color: 'var(--soft)' }}>
+                Você está <strong>acompanhando</strong>. Quem decide o que entra no
+                cadastro é o analista de crédito.
+              </span>
+              <div style={{ flex: 1 }} />
+              <label style={{ fontSize: 12, color: 'var(--soft)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="checkbox" checked={verResolvidos} onChange={e => setVerResolvidos(e.target.checked)} />
+                mostrar os já resolvidos
+              </label>
+            </>
+          )}
         </div>
 
         {recado && (
@@ -292,9 +375,11 @@ export default function ConferenciaPage() {
                   return (
                     <tr key={c.id} style={resolvido ? { opacity: 0.5 } : undefined}>
                       <td>
-                        <input type="checkbox" checked={marcados.has(c.id)}
-                          disabled={resolvido}
-                          onChange={() => alternar(c.id)} />
+                        {editaAnalise && (
+                          <input type="checkbox" checked={marcados.has(c.id)}
+                            disabled={resolvido}
+                            onChange={() => alternar(c.id)} />
+                        )}
                       </td>
                       <td style={{ fontWeight: 600, color: '#102040', maxWidth: 260 }}>
                         {c.tomadores?.razao_social ?? c.analises?.razao_social ?? '(sem nome)'}

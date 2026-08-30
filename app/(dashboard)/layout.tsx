@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { quemFinanceiro } from '@/lib/financeiro/acesso'
+import { quemAnalise } from '@/lib/analise/acesso'
 import DashboardShell from './DashboardShell'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -20,6 +21,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
            Supabase de verdade e, sem sessão real, responderiam 403. Menu que
            leva a uma tela recusada é pior que menu que não existe. */
         veFinanceiro={false}
+        /* No sandbox ele é ele mesmo: entra como o analista. */
+        editaAnalise={true}
       >
         {children}
       </DashboardShell>
@@ -55,6 +58,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // vê nem o item no menu.
   const financeiro = await quemFinanceiro()
 
+  // A análise de crédito tem um analista só, e não é "quem é admin". Todo mundo
+  // continua VENDO (é de propósito: ele quer a equipe acompanhando o trabalho
+  // acontecer); editar é só de quem tem `analista_credito`.
+  const analise = await quemAnalise()
+
   return (
     <DashboardShell
       nomeUsuario={usuarioDb?.nome ?? user.email ?? ''}
@@ -65,6 +73,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       userId={user.id}
       dataInicio={config?.valor ?? null}
       veFinanceiro={financeiro.ve}
+      editaAnalise={analise.edita}
     >
       {children}
     </DashboardShell>

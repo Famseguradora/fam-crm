@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useDateRange } from '@/lib/context/date-range-context'
-import { fmtData, fmtPercent } from '@/lib/utils'
+import { fmtPercent } from '@/lib/utils'
 import { taxaMediaPonderada, TAXA_PONDERADA_INFO } from '@/lib/corretoras/agregacoes'
 import RacionalTaxaBox from '@/components/RacionalTaxaBox'
 import {
@@ -371,19 +371,6 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
-
-      {/* ── Badge filtro global ── */}
-      {isFiltered && (
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          background: 'rgba(48,112,200,.08)', border: '1px solid #3070c8',
-          borderRadius: 8, padding: '8px 16px', marginBottom: 20,
-          fontSize: 13, color: '#3070c8', fontWeight: 600,
-        }}>
-          <span>📅</span>
-          <span>Exibindo dados a partir de <strong>{fmtData(dataInicio)}</strong></span>
-        </div>
-      )}
 
       {/* ── Destaque ── */}
       {cartoes.destaque && (
