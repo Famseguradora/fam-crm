@@ -15,6 +15,7 @@
 //  poderia inventar avisos no CRM da empresa inteira.
 // ============================================================================
 import { createClient } from '@supabase/supabase-js'
+import { soDigitos } from '@/lib/analise/cnpj'
 
 /** Aviso sem empresa não diz nada a ninguém; é o único campo obrigatório. */
 interface Evento {
@@ -23,6 +24,8 @@ interface Evento {
   chave_local?: string
   detalhe?: string
   criado_por?: string
+  /** Liga o aviso ao card do tomador (31/08/2026). */
+  cnpj?: string
 }
 
 const TIPOS = ['iniciou', 'concluiu', 'falhou']
@@ -64,6 +67,10 @@ export async function POST(req: Request) {
       empresa,
       chave_local: corpo.chave_local?.slice(0, 200) ?? null,
       detalhe: corpo.detalhe?.slice(0, 500) ?? null,
+      // Só dígitos: o motor manda mascarado, a tabela `tomadores` guarda sem
+      // máscara, e sem normalizar o card nunca casaria. Ver a mesma função em
+      // app/api/agente/evento/route.ts, que é onde ela mora.
+      cnpj: soDigitos(corpo.cnpj),
       criado_por: corpo.criado_por?.slice(0, 120) ?? 'motor local',
     })
     .select('id, criado_em')

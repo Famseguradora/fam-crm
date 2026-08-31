@@ -49,6 +49,10 @@ const TABS: Tab[] = [
   { label: '👥 Tomadores',  href: '/tomadores', sub: [
     { label: '🔎 Análise de crédito', href: '/tomadores/analise-credito' },
     { label: '⚖️ Conferência', href: '/tomadores/conferencia' },
+    /* O chão de fábrica: os funcionários virtuais trabalhando, ao vivo.
+       Fica sob Tomadores porque os dois que reportam hoje (Triagem e Analista)
+       trabalham a pasta do tomador do começo ao fim. */
+    { label: '🤖 Equipe', href: '/tomadores/equipe' },
   ] },
   { label: '📋 Operações',  href: '/operacoes' },
   { label: '🏢 Corretoras', href: '/corretoras', adminOnly: true },

@@ -36,6 +36,9 @@ import { fichaDaAnalise, type FichaAnalise, type SerasaFicha } from '@/lib/anali
 import CadastroTomador from '@/components/tomador/CadastroTomador'
 import OrganogramaModal from '@/components/OrganogramaModal'
 import OrganogramaAnalise from '@/components/tomador/OrganogramaAnalise'
+// A análise deste tomador, ao vivo, com a caixa de autorização. Tudo do tomador
+// dentro do card dele: ordem do Marco em 31/08/2026.
+import AnaliseNoCard from '@/components/tomador/AnaliseNoCard'
 import { montarDossieHtml, baixarDossie, type SecaoDossie } from '@/lib/tomador/dossie-html'
 import {
   IcoVisao, IcoDoc, IcoEscudo, IcoCheck, IcoCalendario, IcoRede, IcoGrafico,
@@ -99,12 +102,19 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
   // aberto daqui de dentro. Ele pediu em 30/08 que voltasse para o tomador.
   const [editorOrg, setEditorOrg] = useState(false)
   const [usuarioInfo, setUsuarioInfo] = useState<{ authId: string; nome: string | null; email: string | null } | null>(null)
+  // Quem pode AUTORIZAR o que a análise pergunta. Não é `perfil`: a análise tem
+  // um analista só, e os sete admins não passam (ver lib/analise/acesso.ts).
+  // Isto aqui só decide se o botão APARECE; a trava de verdade é a RLS.
+  const [analistaCredito, setAnalistaCredito] = useState(false)
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
-      supabase.from('usuarios').select('nome, email').eq('auth_id', user.id).single()
-        .then(({ data }) => setUsuarioInfo({ authId: user.id, nome: data?.nome ?? null, email: data?.email ?? null }))
+      supabase.from('usuarios').select('nome, email, analista_credito').eq('auth_id', user.id).single()
+        .then(({ data }) => {
+          setUsuarioInfo({ authId: user.id, nome: data?.nome ?? null, email: data?.email ?? null })
+          setAnalistaCredito(!!data?.analista_credito)
+        })
     })
   }, [])
 
@@ -580,6 +590,17 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
         </div>
 
         <div className="mt-painel">
+          {/* A ANÁLISE DESTE TOMADOR, ACONTECENDO (31/08/2026).
+              Fica ACIMA das gavetas, e não dentro de uma delas, porque a ordem
+              dele foi "eu abro o card do tomador e mostra que está rodando":
+              tem que aparecer com qualquer gaveta aberta, sem procurar. E some
+              sozinha quando não há nada acontecendo, para não ocupar espaço à toa. */}
+          <AnaliseNoCard
+            cnpj={tomador.cnpj ?? null}
+            podeAutorizar={analistaCredito}
+            nomeUsuario={usuarioInfo?.nome ?? usuarioInfo?.email ?? null}
+          />
+
           {gaveta === 'visao' && <GavetaVisao
             operacoes={operacoes} lmgTotal={c.lmgTotal} pct={c.pct} livre={c.livre} temLimite={c.limite > 0}
             tomador={tomador} ficha={ficha} anosAtividade={anosAtividade} estourou={c.estourou}
