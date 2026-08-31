@@ -927,6 +927,48 @@ async function principal() {
   const falhas = []
 
   const linhas = montadas.map(m => m.linha)
+
+  /* APOSENTAR A VERSAO ANTERIOR ANTES DE PROMOVER A NOVA (31/08/2026).
+
+     O banco tem `analises_vigente_por_cnpj`, um indice unico parcial:
+       CREATE UNIQUE INDEX ... ON analises (cnpj) WHERE (vigente AND cnpj IS NOT NULL)
+     Ou seja: UMA analise vigente por CNPJ. A regra esta certa e fica.
+
+     O que faltava era aqui. Na carga de 30/08 nenhum CNPJ tinha duas analises,
+     entao o upsert passou. Hoje, com a Engie reanalisada, a linha nova chega com
+     `chave_local` diferente (CNPJ + data), o upsert NAO a reconhece como a mesma
+     linha, tenta INSERIR uma segunda vigente para o mesmo CNPJ e o indice barra.
+     E como o upsert vai em lote de 100, o lote inteiro cai junto: foi assim que
+     101 analises ficaram de fora numa tacada, a Engie entre elas.
+
+     Entao, antes de gravar, as versoes anteriores do mesmo CNPJ sao rebaixadas.
+     Nao se apaga nada: a analise velha continua no banco, com `vigente = false`,
+     que e exatamente o que o acervo local ja faz quando ele reanalisa um tomador. */
+  const vigentePorCnpj = new Map()
+  for (const l of linhas) {
+    if (!l.vigente || !l.cnpj) continue
+    const ja = vigentePorCnpj.get(l.cnpj)
+    if (ja === undefined) { vigentePorCnpj.set(l.cnpj, l.chave_local); continue }
+    if (ja && ja !== l.chave_local) {
+      // Duas vigentes para o mesmo CNPJ no ACERVO. Nao da para escolher por conta
+      // propria qual vale: nenhuma e promovida, e o caso vira falha visivel.
+      falhas.push(`${l.cnpj}: o acervo tem duas analises vigentes (${ja} e ${l.chave_local}); nenhuma foi promovida`)
+      vigentePorCnpj.set(l.cnpj, null)
+    }
+  }
+
+  let aposentadas = 0
+  for (const [cnpj, chave] of vigentePorCnpj) {
+    if (!chave) continue
+    const { data, error } = await sb.from('analises')
+      .update({ vigente: false })
+      .eq('cnpj', cnpj).eq('vigente', true).neq('chave_local', chave)
+      .select('chave_local')
+    if (error) { falhas.push(`aposentar vigente de ${cnpj}: ${error.message}`); continue }
+    aposentadas += (data ?? []).length
+  }
+  console.log(`versoes anteriores aposentadas: ${aposentadas}`)
+
   const gravadas = []
   for (let i = 0; i < linhas.length; i += 100) {
     const lote = linhas.slice(i, i + 100)
