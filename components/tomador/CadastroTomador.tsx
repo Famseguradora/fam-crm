@@ -121,6 +121,7 @@ export default function CadastroTomador({ tomador, onSalvo }: {
   const [excluindo, setExcluindo] = useState(false)
   const [organograma, setOrganograma] = useState(false)
   const [buscandoCnpj, setBuscandoCnpj] = useState(false)
+  const [buscandoAnalise, setBuscandoAnalise] = useState(false)
 
   // O cartão CNPJ da Receita completa o que está vazio; o que já foi digitado
   // fica. Quem manda no cadastro é ele, a Receita só adianta.
@@ -146,6 +147,77 @@ export default function CadastroTomador({ tomador, onSalvo }: {
     } catch (e: unknown) {
       setMensagem({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha na consulta.' })
     } finally { setBuscandoCnpj(false) }
+  }
+
+  /* TRAZER OS DADOS DA ANÁLISE DE CRÉDITO (31/08/2026).
+
+     Pedido dele, com o caso: "A Engie, eu tive que alterar dentro da análise de
+     crédito, às vezes acontece, e dentro do cadastro do Tomador não trouxe os dados."
+
+     Lê a análise VIGENTE deste CNPJ na tabela `analises`, do próprio banco do CRM.
+     A primeira versão disto ia buscar na porta 7311, no Sistema de Análises, e ele
+     cortou com razão: "são muitos sistemas, várias portas, tem que focar apenas no
+     CRM FAM". Quem leva a análise do disco para o banco é `scripts/carga-analises.mjs`,
+     e é ele que tem que rodar quando uma análise muda. Este botão só lê o que já está
+     publicado — uma fonte, um sistema.
+
+     Preenche e para. Quem salva é ele, no botão de sempre. */
+  async function buscarNaAnalise() {
+    setBuscandoAnalise(true); setMensagem(null)
+    try {
+      const digitos = form.cnpj.replace(/\D/g, '')
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('analises')
+        .select('razao_social, data_analise, score_final, rating_cod, nivel_risco, recomendacao, limite_recomendado_txt, limite_recomendado_num, limite_recomendado_tipo, grupo')
+        .eq('cnpj', digitos).eq('vigente', true).maybeSingle()
+
+      if (error) { setMensagem({ tipo: 'erro', texto: error.message }); return }
+      if (!data) {
+        setMensagem({
+          tipo: 'erro',
+          texto: 'Nenhuma análise publicada para este CNPJ. Se ela existe no Sistema de Análises, é a carga que ainda não rodou: node scripts/carga-analises.mjs --gravar',
+        })
+        return
+      }
+
+      /* O LIMITE SÓ ENTRA QUANDO É NÚMERO.
+         `limite_recomendado_num` fica NULO de propósito quando a análise dá um teto
+         ou uma frase em vez de um valor apurado (a Engie, por exemplo: "R$ 80.000.000,00
+         (Teto FAM)", tipo `teto`). Escrever limite de crédito a partir de um texto que
+         não é limite é o acidente que este cadastro não pode ter. Sem número, o texto
+         vai no recado e ele decide. */
+      const num = data.limite_recomendado_num
+      const limite = num != null
+        ? maskMoeda(String(Math.round(Number(num) * 100)))
+        : ''
+
+      setForm(f => ({
+        ...f,
+        razao_social: f.razao_social.trim() || (data.razao_social ?? ''),
+        limite_aprovado: limite || f.limite_aprovado,
+      }))
+
+      const resumo = [
+        data.score_final != null ? `Score ${String(data.score_final).replace('.', ',')}` : null,
+        data.rating_cod ? `Rating ${data.rating_cod}` : null,
+        data.nivel_risco ? `risco ${data.nivel_risco}` : null,
+        data.recomendacao,
+        data.grupo ? `grupo ${data.grupo}` : null,
+      ].filter(Boolean).join(' · ')
+
+      setMensagem({
+        tipo: 'sucesso',
+        texto: `Análise de ${fmtData(data.data_analise)} — ${resumo}.`
+          + (limite
+            ? ` Limite trazido: ${limite}. Confira e salve.`
+            : data.limite_recomendado_txt
+              ? ` O limite é "${data.limite_recomendado_txt}" (${data.limite_recomendado_tipo ?? 'sem tipo'}) e NÃO foi preenchido: não é um valor apurado. Digite à mão se for o caso.`
+              : ' A análise não traz limite recomendado.'),
+      })
+    } catch (e: unknown) {
+      setMensagem({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha ao ler a análise.' })
+    } finally { setBuscandoAnalise(false) }
   }
 
   // O tomador recarregado por fora (depois de salvar) tem que voltar ao form.
@@ -378,6 +450,13 @@ export default function CadastroTomador({ tomador, onSalvo }: {
                       disabled={buscandoCnpj || form.cnpj.replace(/\D/g, '').length !== 14}
                       title="Busca o cartão CNPJ na Receita e completa os campos vazios">
                       {buscandoCnpj ? '…' : 'Receita'}
+                    </button>
+                    {/* A ANÁLISE DE CRÉDITO, ao lado da Receita de propósito: os dois
+                        buscam pelo mesmo CNPJ e preenchem o mesmo formulário. */}
+                    <button type="button" className="mt-btn" onClick={buscarNaAnalise}
+                      disabled={buscandoAnalise || form.cnpj.replace(/\D/g, '').length !== 14}
+                      title="Traz Score, Rating, risco e limite da análise de crédito publicada deste CNPJ">
+                      {buscandoAnalise ? '…' : 'Análise'}
                     </button>
                   </div>
                   {erroCnpj && <span className="field-error">{erroCnpj}</span>}

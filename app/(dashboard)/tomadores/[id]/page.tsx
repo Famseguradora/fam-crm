@@ -38,7 +38,6 @@ import OrganogramaModal from '@/components/OrganogramaModal'
 import OrganogramaAnalise from '@/components/tomador/OrganogramaAnalise'
 // A análise deste tomador, ao vivo, com a caixa de autorização. Tudo do tomador
 // dentro do card dele: ordem do Marco em 31/08/2026.
-import AnaliseNoCard from '@/components/tomador/AnaliseNoCard'
 import { montarDossieHtml, baixarDossie, type SecaoDossie } from '@/lib/tomador/dossie-html'
 import {
   IcoVisao, IcoDoc, IcoEscudo, IcoCheck, IcoCalendario, IcoRede, IcoGrafico,
@@ -590,16 +589,19 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
         </div>
 
         <div className="mt-painel">
-          {/* A ANÁLISE DESTE TOMADOR, ACONTECENDO (31/08/2026).
-              Fica ACIMA das gavetas, e não dentro de uma delas, porque a ordem
-              dele foi "eu abro o card do tomador e mostra que está rodando":
-              tem que aparecer com qualquer gaveta aberta, sem procurar. E some
-              sozinha quando não há nada acontecendo, para não ocupar espaço à toa. */}
-          <AnaliseNoCard
-            cnpj={tomador.cnpj ?? null}
-            podeAutorizar={analistaCredito}
-            nomeUsuario={usuarioInfo?.nome ?? usuarioInfo?.email ?? null}
-          />
+          {/* A ANÁLISE SAIU DAQUI EM 31/08/2026, e o componente continua no repositório.
+
+              Ela lia o Supabase e, na maioria dos cards, aparecia vazia — porque o
+              Supabase só tem a análise DEPOIS que a carga a publica. A triagem, que
+              ela também mostrava, nunca esteve no banco: mora no motor.
+
+              O mesmo conteúdo (por que parou, a triagem, reiniciar e a autorização)
+              foi feito na aba **Análise** do card do Sistema de Análises, que lê o
+              motor e por isso tem o dado de verdade. Decisão dele, perguntado em
+              31/08/2026: a do cockpit manda.
+
+              O que esta Mesa mostra da análise vem do BANCO, e chega lá por
+              `scripts/carga-analises.mjs`. Ver a memória `publicar-a-analise-no-crm`. */}
 
           {gaveta === 'visao' && <GavetaVisao
             operacoes={operacoes} lmgTotal={c.lmgTotal} pct={c.pct} livre={c.livre} temLimite={c.limite > 0}
