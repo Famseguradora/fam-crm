@@ -83,19 +83,15 @@ além dele edita. A marca é `usuarios.analista_credito`, e a trava é a RLS
 - [ ] Qual a **periodicidade** que a política de crédito manda para cobrar demonstrativo financeiro?
       Por faixa de limite ou por rating? E a notificação chega no CRM, por e-mail, ou nos dois?
 
-## Caixa de entrada (Carteiro), pendências de 30/08/2026 à noite
+## Caixa de entrada (Carteiro), pendência de 30/08/2026 à noite
 
-O working tree do `_sistema` continua SEM COMMIT de propósito (outlook.ps1, outlook.mjs,
-servidor.mjs, cockpit/outlook.html): ele manda quando commitar.
+Commit `8a1a45e` no `_sistema` (outlook.ps1, outlook.mjs, servidor.mjs, cockpit/outlook.html)
+e `dac2fc0` no fam-crm, ambos empurrados. A roda do mouse não descer o e-mail quando passada
+sobre o CABEÇALHO (assunto/De/Para/anexos) é comportamento CORRETO, confirmado por ele em
+31/08/2026 — não mexer, não é bug. Sobre o corpo do e-mail, rola normal.
 
-- [ ] **A roda do mouse sobre o cabeçalho do e-mail** (assunto/De/Para/anexos) ainda não desce o
-      e-mail. Só o quadro branco rola, e para o pai repassar a roda o iframe precisa de
-      `sandbox="allow-same-origin"` (sem `allow-scripts`, e a CSP fica igual). O classificador de
-      segurança do auto mode **bloqueou essa edição**: é uma linha em `painelLeitura()`, no
-      `cockpit/outlook.html`, e a decisão é dele. O resto (barra visível no quadro, ponto de
-      rolagem preservado, o repasse em si) já está no código e liga sozinho quando o atributo mudar.
 - [ ] **O e-mail da EBSE mostra 19 imagens quebradas**: a ação `corpo` do `outlook.ps1` para em 12
-      imagens `cid:` por e-mail, e esse tem 31. Fora do escopo desta rodada, não foi mexido.
+      imagens `cid:` por e-mail, e esse tem 31. Fora do escopo daquela rodada, não foi mexido.
 
 ## Dívida achada no banco, não é plano
 
