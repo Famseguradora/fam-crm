@@ -38,6 +38,19 @@ import { soDigitos } from '@/lib/analise/cnpj'
  *  não escreve "terminei", e uma caixa dizendo que trabalha há 3 horas mente. */
 const MS_SEM_NOTICIA = 10 * 60 * 1000
 
+/* ── O BOTÃO NÃO SÓ ANOTA: ELE FAZ ────────────────────────────────────────────
+   O motor roda na máquina do Marco, em 127.0.0.1:7311. Quando ele abre o CRM
+   NESSA máquina, o navegador dele alcança o motor: o clique dispara a análise
+   de verdade, na hora. De outro computador a chamada falha, e aí a decisão
+   apenas fica registrada, que é o comportamento correto e não um erro.
+
+   Por isso a falha aqui é MUDA no que importa: a decisão já foi gravada antes,
+   e é ela que vale. O disparo é um bônus de estar na máquina certa.            */
+const MOTOR = 'http://127.0.0.1:7311'
+
+/** Quais respostas mandam o motor trabalhar. As outras só ficam registradas. */
+const DISPARAM = new Set(['retomar', 'refazer', 'continuar', 'autorizar_antigos', 'consolidado'])
+
 interface EventoAgente {
   id: string; agente: string; acao: string; tarefa: string
   alvo: string | null; detalhe: string | null; criado_em: string
@@ -94,6 +107,7 @@ export default function AnaliseNoCard({ cnpj: cnpjBruto, podeAutorizar, nomeUsua
   const [carregando, setCarregando] = useState(true)
   const [enviando, setEnviando] = useState<string | null>(null)
   const [falha, setFalha] = useState<string | null>(null)
+  const [recado, setRecado] = useState<string | null>(null)
   const [observacao, setObservacao] = useState('')
 
   const supabase = useRef(createClient()).current
@@ -182,8 +196,31 @@ export default function AnaliseNoCard({ cnpj: cnpjBruto, podeAutorizar, nomeUsua
       })
       .eq('id', pedido.id)
 
+    if (error) { setEnviando(null); setFalha(error.message); return }
+
+    // A decisão já está gravada. O que vem agora é o disparo, e ele NÃO pode
+    // desfazer nada nem assustar: se o motor não estiver alcançável, a resposta
+    // continua valendo e o recado é informativo, não erro.
+    if (DISPARAM.has(opcaoId) && pedido.pasta) {
+      try {
+        const r = await fetch(`${MOTOR}/api/analisar`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ pastas: [pedido.pasta] }),
+          signal: AbortSignal.timeout(8000),
+        })
+        const j = await r.json().catch(() => null)
+        setRecado(j?.ok
+          ? 'Pronto. A análise começou na máquina do Marco, e o andamento aparece aqui em cima.'
+          : `Decisão registrada. O motor recusou o disparo: ${j?.erro ?? 'motivo não informado'}.`)
+      } catch {
+        setRecado('Decisão registrada. O motor de análise não respondeu: ele roda na máquina do Marco, e só quem está nela consegue disparar daqui.')
+      }
+    } else {
+      setRecado('Decisão registrada.')
+    }
+
     setEnviando(null)
-    if (error) { setFalha(error.message); return }
     setObservacao('')
     carregar()
   }, [pedido, observacao, nomeUsuario, supabase, carregar])
@@ -308,6 +345,7 @@ export default function AnaliseNoCard({ cnpj: cnpjBruto, podeAutorizar, nomeUsua
             {pedido.opcoes.find(o => o.id === pedido.resposta)?.rotulo ?? pedido.resposta}
             {pedido.respondido_em && <span className="anc-quando"> · {hora(pedido.respondido_em)}</span>}
             {pedido.observacao && <div className="anc-detalhe">“{pedido.observacao}”</div>}
+            {recado && <div className="anc-detalhe">{recado}</div>}
           </div>
         )}
       </div>
