@@ -41,6 +41,15 @@ const RAIZ_ANALISES = path.join('C:', 'Users', 'MarcoDragoneFAMSEGUR',
   'OneDrive - FAM Seguradora', 'Documents', 'Analises FAM')
 const COPIAS = path.join(RAIZ_ANALISES, '_sistema', 'registro', 'json')
 
+/* PUBLICAR UMA SO (31/08/2026), para o botao Finalizar Analise.
+   Sem isto o botao teria de reprocessar as 137 analises a cada clique: leitura
+   de disco, normalizacao e upsert de tudo, para publicar uma. Com o filtro, o
+   clique mexe so na analise que ele acabou de terminar.
+   Seguro em modo `gravar`: o unico ponto que APAGA em massa (os conflitos
+   abertos) mora no `--limpar`, e a gravacao e toda por upsert. */
+const iSo = process.argv.indexOf('--so')
+const SO = iSo > -1 ? String(process.argv[iSo + 1] || '').trim() : ''
+
 const MODO = process.argv.includes('--gravar') ? 'gravar'
   : process.argv.includes('--limpar') ? 'limpar'
   : 'ensaio'
@@ -850,7 +859,17 @@ async function principal() {
   }
 
   // ── ler os dois lados
-  const { analises } = acervo()
+  let { analises } = acervo()
+  if (SO) {
+    const antes = analises.length
+    analises = analises.filter((a) => String(a.id) === SO)
+    if (!analises.length) {
+      // Falhar ALTO. Um id errado com filtro silencioso publicaria zero analises
+      // e imprimiria "0 de 0, nenhuma rejeitada", que le como sucesso.
+      throw new Error(`--so ${SO}: nao achei essa analise no acervo (${antes} disponiveis).`)
+    }
+    console.log(`filtrado por --so: 1 de ${antes} analises`)
+  }
   const { data: tomadores, error: errT } = await sb
     .from('tomadores').select('id, razao_social, cnpj, limite_aprovado, status').limit(2000)
   if (errT) throw new Error('nao consegui ler tomadores: ' + errT.message)
@@ -1038,7 +1057,10 @@ async function principal() {
     const geradas = new Set(confLinhas.map(c =>
       `${c.tipo}|${c.analise_id ?? ''}|${c.tomador_id ?? ''}|${c.campo}`))
     const orfaos = abertos.filter(a => !geradas.has(a.chave)).length
-    if (orfaos) {
+    // Com `--so` o "nao reencontrado" e obvio e nao e noticia: as outras analises
+    // nem foram lidas nesta volta. Avisar seria alarme falso a cada clique no
+    // Finalizar Analise.
+    if (orfaos && !SO) {
       console.log(`\nATENCAO: ${orfaos} conflitos continuam ABERTOS mas nao foram reencontrados`)
       console.log('nesta carga (o dado que os causou pode ter sido corrigido).')
       console.log('Eles NAO foram fechados: quem decide isso e voce, na tela de conferencia.')

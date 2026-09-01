@@ -21,6 +21,11 @@ import { NextResponse, type NextRequest } from 'next/server'
 // /api/axi — "não exige cookie" NÃO é "aberta". A rota confere o segredo
 // combinado (`x-analise-token`) e, se a variável de ambiente não existir, ela
 // responde 503 em vez de aceitar: trava ausente fecha, não abre.
+// '/api/analise/tomador' é o Finalizar Análise criando o cadastro do tomador
+// quando o CNPJ ainda não existe (31/08/2026). Mesma porta e mesmo segredo das
+// duas de cima: quem chama é o motor, que não tem sessão de navegador. Sem entrar
+// nesta lista, a rota responderia o HTML do /login com status 200, e quem chamasse
+// leria "deu certo" com nada gravado. Já aconteceu, ver o commit ef04644.
 // '/api/agente/evento' é a irmã da de cima: o mesmo motor, na mesma máquina,
 // dizendo qual funcionário virtual está trabalhando em quê (o chão de fábrica
 // dos avatares). Mesma trava, mesmo segredo, mesma regra de "variável ausente
@@ -28,7 +33,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 // para /login, que responde 200 com o HTML da tela de login, e quem chamou
 // conclui que gravou. Foi exatamente o que aconteceu em 31/08/2026, e só
 // apareceu porque a conferência foi feita no banco, não no status HTTP.
-const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi', '/api/analise/evento', '/api/agente/evento', '/api/analise/pedido']
+const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi', '/api/analise/evento', '/api/agente/evento', '/api/analise/pedido', '/api/analise/tomador']
 
 export async function proxy(request: NextRequest) {
   // MODO SANDBOX: não há sessão Supabase, então o gate de login abaixo
