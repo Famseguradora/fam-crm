@@ -29,6 +29,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { soDigitos } from '@/lib/analise/cnpj'
 import { consultarCNPJ } from '@/lib/cnpj'
+import { casarCorretora } from '@/lib/analise/corretoras.mjs'
 
 interface Pedido {
   cnpj?: string
@@ -113,17 +114,21 @@ export async function POST(req: Request) {
   // A corretora é casada POR NOME, e só quando o nome bate de verdade. Sem par,
   // fica nula: escolher a corretora errada num tomador novo é pior que deixar em
   // branco para ele preencher, porque o vínculo desce para as operações depois.
+  //
+  // A REGRA MUDOU DE LUGAR EM 31/08/2026, e não de espírito. Aqui morava uma
+  // comparação de texto escrita à mão (igual, ou um começa com o outro). Medida
+  // contra o acervo, ela achava par para 8 das 43 grafias de corretora que as
+  // análises trazem: "ATIX SEGUROS" não alcançava "Atix Servicos e Corretagem de
+  // Seguros", "WIZ" não alcançava "Wiz Corporate", "WTW" não alcançava "Willis
+  // Towers Watson". Agora a regra é a de `lib/analise/corretoras.mjs`, a MESMA
+  // que responde ao motor e a MESMA que a carga usa, e ela acha 37 das 43.
+  // Continua se recusando a escolher quando há mais de uma candidata.
   let corretoraId: string | null = null
   const nomeCorretora = String(corpo.corretora ?? '').trim()
   if (nomeCorretora) {
     const { data: cs } = await supabase
-      .from('corretoras').select('id, razao_social, nome_fantasia').eq('status', 'ativo')
-    const alvo = nomeCorretora.toLowerCase()
-    const bate = (v: string | null) => {
-      const s = String(v ?? '').toLowerCase().trim()
-      return !!s && (s === alvo || alvo.startsWith(s) || s.startsWith(alvo))
-    }
-    corretoraId = (cs ?? []).find(c => bate(c.razao_social) || bate(c.nome_fantasia))?.id ?? null
+      .from('corretoras').select('id, razao_social, nome_fantasia, cnpj').eq('status', 'ativo')
+    corretoraId = casarCorretora(nomeCorretora, cs ?? []).corretora_id
   }
 
   const novo = {

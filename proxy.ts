@@ -33,7 +33,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 // para /login, que responde 200 com o HTML da tela de login, e quem chamou
 // conclui que gravou. Foi exatamente o que aconteceu em 31/08/2026, e só
 // apareceu porque a conferência foi feita no banco, não no status HTTP.
-const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi', '/api/analise/evento', '/api/agente/evento', '/api/analise/pedido', '/api/analise/tomador']
+// '/api/analise/corretoras' é o motor perguntando com que nome o CRM chama a
+// corretora que a IA identificou (31/08/2026). Mesma porta, mesmo segredo, e é
+// a única das cinco que SÓ LÊ: ela não cria nem altera corretora nenhuma.
+const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi', '/api/analise/evento', '/api/agente/evento', '/api/analise/pedido', '/api/analise/tomador', '/api/analise/corretoras']
 
 export async function proxy(request: NextRequest) {
   // MODO SANDBOX: não há sessão Supabase, então o gate de login abaixo

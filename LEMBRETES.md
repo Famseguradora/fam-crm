@@ -64,6 +64,8 @@ além dele edita. A marca é `usuarios.analista_credito`, e a trava é a RLS
       `_sistema/estado/_crm.json` e o segredo dele tem que continuar igual ao
       `ANALISE_EVENTO_TOKEN` do `.env.local`. Sem isso o aviso simplesmente não sai, e
       a análise roda igual (de propósito: aviso nunca derruba análise).
+      **Desde 01/09/2026 o mesmo cano leva o nome das corretoras** (`/api/analise/corretoras`):
+      com a url errada, o de-para para de atualizar e os nomes ficam como a IA escreveu.
 - [ ] **O pipeline de e-mail nasce trancado.** Hoje o e-mail dele não está exposto
       porque o servidor local só escuta em `127.0.0.1`. No dia em que o corpo do
       e-mail subir vetorizado para o Supabase, ele passa a morar num banco
@@ -92,6 +94,22 @@ sobre o CABEÇALHO (assunto/De/Para/anexos) é comportamento CORRETO, confirmado
 
 - [ ] **O e-mail da EBSE mostra 19 imagens quebradas**: a ação `corpo` do `outlook.ps1` para em 12
       imagens `cid:` por e-mail, e esse tem 31. Fora do escopo daquela rodada, não foi mexido.
+
+## Cinco corretoras que a análise usa e o CRM não tem (01/09/2026)
+
+O de-para já casa 37 das 43 grafias do acervo com as 98 corretoras cadastradas. Estas cinco não
+casam porque **não existem no cadastro**, e isso é decisão da mesa comercial, não do código:
+
+- [ ] **Oneglobal** — é a corretora do Consórcio Construtor Petro UFN-III. Cadastrar ou apontar
+      qual das 98 é ela.
+- [ ] **BRNPar**
+- [ ] **Itheraseg** — a **Ithera** existe no CRM. Se for a mesma, é só grafia colada e some
+      sozinha quando a análise for corrigida.
+- [ ] **WTW - Wllis** — erro de digitação de "Willis". A grafia certa já casa.
+- [ ] **Gama Incorporadora Ltda** — não parece ser corretora; ver se o campo foi preenchido errado.
+
+Depois de cadastrar qualquer uma: `node corretoras.mjs --forcar` no `_sistema`, ou
+`POST http://127.0.0.1:7311/api/corretoras?forcar=1`.
 
 ## Dívida achada no banco, não é plano
 

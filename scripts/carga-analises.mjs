@@ -36,6 +36,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createClient } from '@supabase/supabase-js'
 import { acervo } from 'file:///C:/Users/MarcoDragoneFAMSEGUR/OneDrive%20-%20FAM%20Seguradora/Documents/Analises%20FAM/_sistema/normalizar.mjs'
+import { casarCorretora } from '../lib/analise/corretoras.mjs'
 
 const RAIZ_ANALISES = path.join('C:', 'Users', 'MarcoDragoneFAMSEGUR',
   'OneDrive - FAM Seguradora', 'Documents', 'Analises FAM')
@@ -421,6 +422,40 @@ function exercicios(rev, ger) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// A CORRETORA COM O NOME DA CASA (31/08/2026)
+// ─────────────────────────────────────────────────────────────
+// Ordem dele: "as corretoras ja estao cadastradas no CRM, quando a IA
+// identificar a corretora dentro do sistema de analise de credito, tem que
+// buscar no sistema e cadastrar com o mesmo nome."
+//
+// A lista das corretoras ativas e lida UMA vez, em `principal`, e mora aqui.
+// Ler por analise seriam 131 idas ao banco para responder 43 perguntas
+// diferentes.
+//
+// O NOME CRU NAO SE PERDE: quando ha par, ele vai para o aviso da rodada, que e
+// onde ele consegue conferir o que foi trocado antes de gravar. Sem par, o nome
+// da analise continua exatamente como veio, e o aviso diz que aquela corretora
+// nao esta cadastrada, que e informacao para a mesa comercial e nao um erro da
+// carga.
+let CORRETORAS_CRM = []
+
+function corretoraDaCasa(a, avisos) {
+  const cru = semTags(a.corretora_canonica || a.corretora) || null
+  if (!cru || !CORRETORAS_CRM.length) return cru
+  const par = casarCorretora(cru, CORRETORAS_CRM)
+  if (!par.achou) {
+    if (par.como.startsWith('nao achei') || par.como.startsWith('não achei')) {
+      avisos.push({ id: a.id, razao: a.razao_social, aviso: `corretora "${cru}" nao esta cadastrada no CRM` })
+    }
+    return cru
+  }
+  if (par.nome !== cru) {
+    avisos.push({ id: a.id, razao: a.razao_social, aviso: `corretora "${cru}" gravada como "${par.nome}" (${par.como})` })
+  }
+  return par.nome
+}
+
+// ─────────────────────────────────────────────────────────────
 // Montagem de uma analise
 // ─────────────────────────────────────────────────────────────
 function montar(a, avisos) {
@@ -474,7 +509,7 @@ function montar(a, avisos) {
       razao_social: semTags(a.razao_social) || '(sem razao social)',
       nome_curto: semTags(a.nome_curto) || null,
       razao_original: semTags(a.razao_original) || null,
-      corretora: semTags(a.corretora_canonica || a.corretora) || null,
+      corretora: corretoraDaCasa(a, avisos),
       grupo: semTags(a.grupo) || null,
       segmento: semTags(a.segmento) || null,
       setor: a.setor || null,
@@ -873,7 +908,17 @@ async function principal() {
   const { data: tomadores, error: errT } = await sb
     .from('tomadores').select('id, razao_social, cnpj, limite_aprovado, status').limit(2000)
   if (errT) throw new Error('nao consegui ler tomadores: ' + errT.message)
-  console.log(`acervo local: ${analises.length} analises · CRM: ${tomadores.length} tomadores`)
+
+  // As corretoras ATIVAS, uma vez so, para o `corretoraDaCasa` la de cima. Se a
+  // leitura falhar, a carga NAO para: fica sem casar nome, e cada analise entra
+  // com a corretora como a analise escreveu, que e exatamente o que acontecia
+  // antes de 31/08/2026. Nome de corretora nao vale uma carga interrompida.
+  const { data: corretoras, error: errC } = await sb
+    .from('corretoras').select('id, razao_social, nome_fantasia, cnpj').eq('status', 'ativo').limit(2000)
+  if (errC) console.log('AVISO: nao consegui ler as corretoras (' + errC.message + '); os nomes vao como vieram.')
+  CORRETORAS_CRM = corretoras ?? []
+
+  console.log(`acervo local: ${analises.length} analises · CRM: ${tomadores.length} tomadores · ${CORRETORAS_CRM.length} corretoras`)
 
   // ── montar, sem nunca abortar
   const avisos = []
