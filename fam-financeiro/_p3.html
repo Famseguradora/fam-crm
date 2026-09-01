@@ -339,10 +339,19 @@ function apurar(mk){
   for (const l of L) {
     if (l.valor > 0) entradas += l.valor; else saidas += l.valor;
     if (INTERNAS.includes(l.natureza)) { if (l.valor > 0) internasE += l.valor; else internasS += l.valor; }
-    if (!mapa.has(l.natureza)) mapa.set(l.natureza, { natureza: l.natureza, total: 0, qtd: 0 });
-    const n = mapa.get(l.natureza); n.total += l.valor; n.qtd++;
+    if (!mapa.has(l.natureza)) mapa.set(l.natureza, { natureza: l.natureza, total: 0, qtd: 0, temNeg: false });
+    const n = mapa.get(l.natureza); n.total += l.valor; n.qtd++; if (l.valor < 0) n.temNeg = true;
   }
-  const porNatureza = [...mapa.values()].map(n => ({...n, tipo: n.total >= 0 ? 'entrada' : 'saida', interna: INTERNAS.includes(n.natureza)}));
+  /* Conta que soma ZERO não é entrada por acaso. Desde que o R$ 0,00 passou a
+     ser aceito, uma despesa lançada zerada, ou uma que saiu e voltou no mesmo
+     mês, fecha em zero · e caía no bloco ENTRADAS só porque `0 >= 0`. Havendo
+     qualquer lançamento negativo, ela é do lado das saídas, onde a pessoa a
+     procura. */
+  const porNatureza = [...mapa.values()].map(n => ({
+    ...n,
+    tipo: (n.total < 0 || (Math.abs(n.total) < 0.005 && n.temNeg)) ? 'saida' : 'entrada',
+    interna: INTERNAS.includes(n.natureza),
+  }));
   porNatureza.sort((a,b) => Math.abs(b.total) - Math.abs(a.total));
   const resultado = entradas + saidas;
   const saldoApurado = m.saldoInicial + resultado;

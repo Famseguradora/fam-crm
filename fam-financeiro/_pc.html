@@ -33,6 +33,8 @@ const COFRE = {
 };
 
 const ITERACOES = 310000;                    // PBKDF2-SHA256, recomendação OWASP
+/* nome de gente entra em innerHTML nas telas do cofre: passa por aqui antes */
+const escT = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const b64 = b => btoa(String.fromCharCode(...new Uint8Array(b)));
 const deB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const sortear = n => crypto.getRandomValues(new Uint8Array(n));
@@ -147,7 +149,13 @@ function fecharTelaCofre(){
   if (o) o.remove();
 }
 
+/* Para qual tela a senha errada volta: a de sempre, ou a de quem ainda não tem
+   chave. Sem isto, errar o código de convite jogava a pessoa numa tela que pede
+   "sua senha do cofre" · senha que ela justamente ainda não tem. */
+let _voltarPara = null;
+
 function pedirSenha(erro){
+  _voltarPara = pedirSenha;
   telaCofre(
     '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:6px">🔒 Cofre do Financeiro</div>' +
     '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:16px">' +
@@ -164,9 +172,10 @@ function pedirSenha(erro){
 }
 
 async function destrancar(){
+  const voltar = _voltarPara || pedirSenha;
   const el = document.getElementById('cofre-senha');
   const senha = el ? el.value : '';
-  if (!senha) return pedirSenha('Escreva a senha.');
+  if (!senha) return voltar('Escreva a senha.');
 
   /* tenta o envelope da pessoa e, depois, os de recuperação · quem digitar a
      chave de recuperação entra por ela sem precisar escolher nada na tela */
@@ -186,7 +195,7 @@ async function destrancar(){
       return;
     } catch(e) { /* envelope errado: tenta o próximo */ }
   }
-  pedirSenha('Senha não confere com nenhuma chave deste cofre.');
+  voltar('Não confere com nenhuma chave deste cofre. Confira maiúsculas, minúsculas e os hifens.');
 }
 
 /* ── primeira vez: cria a senha e a chave de recuperação ─────────────────── */
@@ -270,26 +279,168 @@ async function convidarParaOCofre(){
     '<button class="btn-primary" style="width:100%" onclick="fecharTelaCofre()">Fechar</button>');
 }
 
+/* ══════════ CRIAR A SENHA DO COFRE PARA OUTRA PESSOA ══════════════════════
+   O caminho curto, e o que o Marco pediu: em vez de gerar um código, combinar
+   a senha e passá-la por fora. Quem já está com o cofre aberto embrulha a chave
+   com a senha combinada e grava o envelope no nome da OUTRA pessoa · ela entra
+   direto, sem código nenhum, e troca a senha depois se quiser.
+
+   A chave do cofre continua sem sair desta aba: o que sobe é o envelope
+   fechado. A senha combinada vale para quem a recebeu, e só. */
+async function criarSenhaParaAlguem(){
+  if (!COFRE.aberto) { alert('Abra o cofre antes de criar a senha de alguém.'); return; }
+  if (!(window.FAM_SESSAO || {}).dono) { alert('Só os donos do Financeiro criam a senha de outra pessoa.'); return; }
+
+  let pessoas = [];
+  try {
+    const r = await fetch('/api/financeiro/acesso', { cache: 'no-store' });
+    const j = await r.json();
+    /* Só quem já tem acesso à TELA. O cofre é a segunda porta, não a primeira:
+       dar a chave a quem não está na lista não o faria entrar de qualquer jeito. */
+    pessoas = (j.ativos || []).map(a => a.usuarios).filter(Boolean);
+  } catch(e) { alert('Não consegui ler a lista de quem tem acesso: ' + e.message); return; }
+
+  const comChave = new Set(COFRE.envelopes.filter(e => e.tipo === 'senha' && e.usuario_id).map(e => e.usuario_id));
+  const faltando = pessoas.filter(p => !comChave.has(p.id));
+
+  if (!faltando.length) {
+    telaCofre('<div style="font-size:17px;font-weight:700;color:#1a3560;margin-bottom:8px">Todo mundo já tem chave</div>' +
+      '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+      'Todas as pessoas com acesso ao Financeiro já têm senha própria deste cofre. ' +
+      'Para dar acesso a mais alguém, primeiro libere a pessoa em <b>🔐 Quem tem acesso</b>, ali em cima.</div>' +
+      '<button class="btn-primary" style="width:100%" onclick="fecharTelaCofre()">Fechar</button>');
+    return;
+  }
+
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:6px">🔑 Criar a senha do cofre para alguém</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+    'Escolha a pessoa e combine uma senha com ela. Ela entra com essa senha e passa a ver o caixa de verdade. ' +
+    '<b>Passe a senha por fora do sistema</b> (na mão, no telefone), nunca por aqui.</div>' +
+    '<select id="cs-quem" style="width:100%;font-size:15px;padding:10px 12px;border:1.5px solid #c5d5e8;' +
+    'border-radius:7px;margin-bottom:10px">' +
+    faltando.map(p => '<option value="' + escT(p.id) + '">' + escT(p.nome) + (p.cargo ? ' · ' + escT(p.cargo) : '') + '</option>').join('') +
+    '</select>' +
+    '<input id="cs1" type="password" placeholder="senha combinada (mínimo 10 caracteres)" style="width:100%;font-size:16px;' +
+    'padding:10px 12px;border:1.5px solid #c5d5e8;border-radius:7px;margin-bottom:9px">' +
+    '<input id="cs2" type="password" placeholder="repita a senha" style="width:100%;font-size:16px;' +
+    'padding:10px 12px;border:1.5px solid #c5d5e8;border-radius:7px;margin-bottom:12px">' +
+    '<div style="background:#fdf8e6;border-left:4px solid #e8b84b;color:#7a5c10;padding:10px 12px;border-radius:6px;' +
+    'font-size:13px;line-height:1.6;margin-bottom:14px">Você fica sabendo esta senha. Quando ela entrar, peça para trocar ' +
+    'em <b>🔑 Trocar a minha senha do cofre</b> · daí em diante só ela sabe.</div>' +
+    '<button class="btn-primary" style="width:100%;margin-bottom:8px" onclick="confirmarSenhaParaAlguem()">Criar a senha</button>' +
+    '<button class="btn-clear" style="width:100%" onclick="fecharTelaCofre()">Cancelar</button>');
+}
+
+async function confirmarSenhaParaAlguem(){
+  const sel = document.getElementById('cs-quem');
+  const id = sel ? sel.value : '';
+  const nome = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].text.split(' · ')[0] : 'a pessoa';
+  const s1 = document.getElementById('cs1').value, s2 = document.getElementById('cs2').value;
+  if (!id) { alert('Escolha a pessoa.'); return; }
+  if (s1.length < 10) { alert('Use pelo menos 10 caracteres: esta senha é a porta do caixa.'); return; }
+  if (s1 !== s2) { alert('As duas senhas não são iguais.'); return; }
+
+  try { await envelopar(COFRE.chave, s1, nome, 'senha', id); }
+  catch(e) { alert('Não deu para criar a senha: ' + e.message); return; }
+
+  /* a lista em memória fica em dia: sem isto, criar duas senhas seguidas ainda
+     ofereceria a mesma pessoa na segunda vez */
+  try {
+    const r = await fetch('/api/financeiro/cofre', { cache: 'no-store' });
+    if (r.ok) COFRE.envelopes = (await r.json()).envelopes || COFRE.envelopes;
+  } catch(e) {}
+
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:10px">✅ Senha criada para ' + nome + '</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+    'Passe a senha combinada para <b>' + nome + '</b> por fora do sistema. Na próxima vez que a pessoa abrir o ' +
+    'Financeiro, a tela vai pedir a senha e o caixa de verdade aparece · sem código, sem convite.</div>' +
+    '<button class="btn-primary" style="width:100%" onclick="fecharTelaCofre()">Fechar</button>');
+}
+
 /* Quem entrou com um código de convite troca por senha própria imediatamente.
    Sem isso, o código andaria por aí valendo para sempre. */
-async function trocarPorSenhaPropria(envelopeUsado){
-  const s1 = prompt('Você entrou com um código de convite. Crie agora a SUA senha (mínimo 10 caracteres):');
-  if (!s1) return;
-  if (s1.length < 10) { alert('Use pelo menos 10 caracteres.'); return; }
-  const s2 = prompt('Repita a sua senha:');
-  if (s1 !== s2) { alert('As senhas não são iguais. O convite continua valendo, tente de novo.'); return; }
+let _resolverTroca = null, _convitePendente = null;
 
-  try {
-    await envelopar(COFRE.chave, s1, (window.FAM_SESSAO || {}).nome || 'senha pessoal', 'senha', (window.FAM_SESSAO || {}).usuarioId);
-    await fetch('/api/financeiro/cofre', {
-      method: 'PATCH', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ envelopeId: envelopeUsado.id }),
-    });
-    flash('Pronto: a sua senha vale a partir de agora e o código de convite foi queimado.');
-  } catch(e) {
-    alert('Criei a sua senha, mas não consegui queimar o convite: ' + e.message +
-          ' · avise o dono do cofre para revogar o convite na mão.');
+function trocarPorSenhaPropria(envelopeUsado){
+  /* Quem só tem leitura não consegue gravar envelope nenhum (a RLS de
+     `financeiro_cofre_envelope` pede `fam_financeiro_edita()`). Prometer a
+     troca e falhar no fim seria pior do que dizer agora: o cofre já está
+     aberto nesta aba, e o convite continua valendo até um dono queimá-lo. */
+  if (!nuvemPodeEditar()) {
+    alert('O cofre abriu com o código. Como o seu acesso é de leitura, a senha própria tem que ser criada ' +
+          'por um dono do Financeiro · peça a ele "Criar a senha do cofre para alguém" e avise para revogar este código.');
+    return Promise.resolve();
   }
+  _convitePendente = envelopeUsado;
+  return new Promise(r => { _resolverTroca = r; telaMinhaSenha(); });
+}
+
+/* A escolha da senha própria era um `prompt()` do navegador · caixinha cinza,
+   sem repetir a senha à vista e sem explicar o que está acontecendo. É a
+   primeira coisa que a pessoa nova vê no Financeiro, então é tela de verdade. */
+function telaMinhaSenha(erro){
+  const eu = escT((window.FAM_SESSAO || {}).nome || 'você');
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:6px">🔐 Criar a minha senha do cofre</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+    'O código abriu o cofre e agora ele é seu também. Escolha a <b>sua</b> senha: daqui em diante é ela que ' +
+    'abre o caixa para <b>' + eu + '</b>, e <b>ninguém mais a conhece</b> · nem quem lhe passou o código, ' +
+    'nem quem administra o CRM, nem o servidor.</div>' +
+    (erro ? '<div style="background:#fbeaea;border-left:4px solid #d64545;color:#7a1a1a;padding:9px 12px;border-radius:6px;' +
+            'font-size:13px;margin-bottom:12px">' + erro + '</div>' : '') +
+    '<input id="ms1" type="password" placeholder="crie a sua senha (mínimo 10 caracteres)" style="width:100%;font-size:16px;' +
+    'padding:10px 12px;border:1.5px solid #c5d5e8;border-radius:7px;margin-bottom:9px">' +
+    '<input id="ms2" type="password" placeholder="repita a senha" style="width:100%;font-size:16px;' +
+    'padding:10px 12px;border:1.5px solid #c5d5e8;border-radius:7px;margin-bottom:12px" ' +
+    'onkeydown="if(event.key===\'Enter\')confirmarMinhaSenha()">' +
+    '<div style="background:#fdf8e6;border-left:4px solid #e8b84b;color:#7a5c10;padding:10px 12px;border-radius:6px;' +
+    'font-size:13px;line-height:1.6;margin-bottom:14px">Ao confirmar, o <b>código que você usou é queimado</b> e deixa de valer. ' +
+    'Se um dia esquecer a senha, quem abre é a <b>chave de recuperação lacrada</b> do cofre.</div>' +
+    '<button class="btn-primary" style="width:100%;margin-bottom:8px" onclick="confirmarMinhaSenha()">Criar a minha senha</button>' +
+    '<button class="btn-clear" style="width:100%" onclick="adiarMinhaSenha()">Agora não</button>');
+  const c = document.getElementById('ms1'); if (c) c.focus();
+}
+
+async function confirmarMinhaSenha(){
+  const s1 = document.getElementById('ms1').value, s2 = document.getElementById('ms2').value;
+  if (s1.length < 10) return telaMinhaSenha('Use pelo menos 10 caracteres: esta senha é a única porta.');
+  if (s1 !== s2) return telaMinhaSenha('As duas senhas não são iguais.');
+
+  const sessao = window.FAM_SESSAO || {};
+  try {
+    await envelopar(COFRE.chave, s1, sessao.nome || 'senha pessoal', 'senha', sessao.usuarioId);
+  } catch(e) {
+    return telaMinhaSenha('Não deu para gravar a sua senha: ' + escT(e.message) + ' · o código continua valendo.');
+  }
+
+  /* O código só é queimado DEPOIS que a senha nova está gravada. Na ordem
+     inversa, uma falha de rede no meio deixaria a pessoa sem porta nenhuma. */
+  let recado = 'Pronto: a sua senha vale a partir de agora, e o código foi queimado.';
+  try {
+    const r = await fetch('/api/financeiro/cofre', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ envelopeId: _convitePendente.id }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).erro || ('erro ' + r.status));
+  } catch(e) {
+    recado = 'A sua senha já vale. Só não consegui queimar o código usado (' + e.message +
+             ') · avise o dono do cofre para revogá-lo.';
+  }
+  _fimDaTroca();
+  flash(recado);
+}
+
+function adiarMinhaSenha(){
+  _fimDaTroca();
+  flash('O cofre está aberto nesta aba. Como você não criou senha, da próxima vez vai precisar do código de novo.');
+}
+
+function _fimDaTroca(){
+  fecharTelaCofre();
+  _convitePendente = null;
+  if (_resolverTroca) { const r = _resolverTroca; _resolverTroca = null; r(); }
 }
 
 /* ══════════════ A PORTA · decide o que fazer antes de tudo ════════════════
@@ -312,14 +463,55 @@ async function cofreIniciar(){
   }
 
   const tenhoEnvelope = COFRE.envelopes.some(e => e.tipo === 'senha' && e.usuario_id === COFRE.eu);
-  /* Sem envelope meu, ainda dá para entrar pela chave de recuperação · quem a
-     tem, tem. Mas não empurro a tela de senha para quem não tem nada: para o
-     Marco, que é dono do acesso e não é leitor, isso seria uma parede toda vez.
-     Ele cai no modo manutenção, que é onde ele consegue trabalhar. */
-  if (!tenhoEnvelope) { COFRE.semChave = true; return 'manutencao'; }
+  /* Sem envelope meu, existem duas verdades ao mesmo tempo: a pessoa PODE ter
+     uma chave que o servidor não sabe que é dela (um código de convite, ou a
+     chave de recuperação lacrada), e pode não ter nada.
+
+     Aqui era `if (!tenhoEnvelope) return 'manutencao'` direto, e isso fechava a
+     única porta que havia: quem recebia um convite caía em dados de mentira sem
+     nenhum lugar onde digitar o código. Foi o que aconteceu com o Aldeir. Agora
+     a tela pergunta, e o modo manutenção continua a um clique · sem parede para
+     quem só entrou para achar defeito. */
+  if (!tenhoEnvelope) {
+    telaSemChave();
+    return esperarCofre();
+  }
 
   pedirSenha();
   return esperarCofre();
+}
+
+/* ── quem entrou na sala e não tem chave ──────────────────────────────────── */
+function telaSemChave(erro){
+  _voltarPara = telaSemChave;
+  const eu = escT((window.FAM_SESSAO || {}).nome || 'você');
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:6px">🔐 Criar a minha senha do cofre</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+    'O caixa está cifrado, e <b>' + eu + '</b> ainda não tem senha própria deste cofre. ' +
+    'O cofre é <b>um só para a equipe toda</b>, com uma senha por pessoa · por isso a senha nova nasce de uma ' +
+    'chave que já existe. Digite o <b>código de uso único</b> que lhe passaram, ou a <b>chave de recuperação</b> ' +
+    'lacrada, e escolha a sua senha em seguida.</div>' +
+    (erro ? '<div style="background:#fbeaea;border-left:4px solid #d64545;color:#7a1a1a;padding:9px 12px;border-radius:6px;' +
+            'font-size:13px;margin-bottom:12px">' + erro + '</div>' : '') +
+    '<input id="cofre-senha" type="password" class="fam-input" placeholder="código de convite ou chave de recuperação" ' +
+    'style="width:100%;font-size:16px;padding:10px 12px;border:1.5px solid #c5d5e8;border-radius:7px;margin-bottom:12px" ' +
+    'onkeydown="if(event.key===\'Enter\')destrancar()">' +
+    '<button class="btn-primary" style="width:100%" onclick="destrancar()">Abrir o cofre</button>' +
+    '<div style="border-top:1px solid #dde7f2;margin-top:16px;padding-top:14px;font-size:12.5px;color:#6080a0;line-height:1.6">' +
+    'Não tem chave nenhuma? Quem já está dentro cria a sua senha em ' +
+    '<b>🔑 Criar a senha do cofre para alguém</b>, ou lhe passa um código por ' +
+    '<b>🎟️ Dar a chave a alguém</b>. Enquanto isso você pode entrar em ' +
+    '<b>modo manutenção</b>: a tela funciona inteira, com números inventados neste navegador, ' +
+    'e nada do que você fizer é gravado.</div>' +
+    '<button class="btn-clear" style="width:100%;margin-top:10px" onclick="entrarSemChave()">Entrar em modo manutenção</button>');
+  const c = document.getElementById('cofre-senha'); if (c) c.focus();
+}
+
+function entrarSemChave(){
+  COFRE.semChave = true;
+  fecharTelaCofre();
+  if (_resolverCofre) _resolverCofre('manutencao');
 }
 
 /* ── modo manutenção: quem entrou sem chave ──────────────────────────────────
@@ -416,8 +608,11 @@ async function trocarMinhaSenha(){
   flash('Senha trocada. A antiga nao abre mais.');
 }
 
-/* os dois botoes so existem para quem esta com o cofre aberto */
+/* os botoes do cofre so existem para quem esta com o cofre aberto · e criar a
+   senha DE OUTRA PESSOA e so do dono, que e quem manda em quem entra */
 function mostrarBotoesDoCofre(){
+  const dono = !!(window.FAM_SESSAO || {}).dono;
   document.querySelectorAll('.cofre-so').forEach(b => { b.style.display = COFRE.aberto ? '' : 'none'; });
+  document.querySelectorAll('.cofre-dono').forEach(b => { b.style.display = (COFRE.aberto && dono) ? '' : 'none'; });
 }
 </script>

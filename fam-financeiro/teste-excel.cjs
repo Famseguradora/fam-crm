@@ -233,14 +233,31 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   ok('Esc desiste da edição sem gravar',
     (await p.evaluate(id => DB.meses['2026-07'].lancamentos.find(l => l.id === id).valor, idJul)) === 100000);
 
-  // valor zerado é recusado
+  /* R$ 0,00 É VALOR, e a linha aceita ser zerada · a regra antiga recusava, e o
+     Marco não conseguia zerar uma linha que veio e voltou no mesmo mês. */
   await p.dblclick(linhaMaskan + ' td[data-mk="2026-07"]');
   await p.waitForTimeout(200);
   await p.fill('.edit-campo', '0,00');
   await p.keyboard.press('Enter');
   await p.waitForTimeout(350);
-  ok('valor zerado é recusado e a linha volta como estava',
-    (await p.evaluate(id => DB.meses['2026-07'].lancamentos.find(l => l.id === id).valor, idJul)) === 100000);
+  ok('a linha aceita ser zerada',
+    (await p.evaluate(id => DB.meses['2026-07'].lancamentos.find(l => l.id === id).valor, idJul)) === 0);
+
+  // rabisco que não vira número continua sendo recusado, e a linha não se mexe
+  await p.dblclick(linhaMaskan + ' td[data-mk="2026-07"]');
+  await p.waitForTimeout(200);
+  await p.fill('.edit-campo', 'abc');
+  await p.keyboard.press('Enter');
+  await p.waitForTimeout(350);
+  ok('texto que não é número continua recusado',
+    (await p.evaluate(id => DB.meses['2026-07'].lancamentos.find(l => l.id === id).valor, idJul)) === 0);
+
+  // devolve o valor para o resto do teste seguir com os números de sempre
+  await p.dblclick(linhaMaskan + ' td[data-mk="2026-07"]');
+  await p.waitForTimeout(200);
+  await p.fill('.edit-campo', '100.000,00');
+  await p.keyboard.press('Enter');
+  await p.waitForTimeout(350);
 
   // ═══ 13 · a descrição, que pareia os dois meses, muda nos dois ═══
   await p.dblclick(linhaMaskan + ' td[data-edit="desc"]');

@@ -229,7 +229,10 @@ function salvarCelula(td, texto){
      porque foi lançada noutro mês. */
   if (td.dataset.edit === 'novo') {
     const v = lerValor(texto);
-    if (!isFinite(v) || Math.abs(v) < 0.005) return render();   // desistiu, e tudo bem
+    /* Campo vazio é desistência: a célula estava em branco e continua em branco.
+       R$ 0,00 DIGITADO é outra coisa · é a pessoa dizendo que aquele mês teve
+       essa conta e ela deu zero, e isso vira lançamento como qualquer outro. */
+    if (!isFinite(v)) return render();
     const mk = td.dataset.mk, m = DB.meses[mk];
     if (!m) return render();
     const dias = new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)), 0).getDate();
@@ -254,7 +257,8 @@ function salvarCelula(td, texto){
     const l = (DB.meses[td.dataset.mk].lancamentos || []).find(x => x.id === td.dataset.id);
     if (!l) return render();
     const v = lerValor(texto);
-    if (!isFinite(v) || Math.abs(v) < 0.005) { flash('Escreva um valor diferente de zero.'); return render(); }
+    /* zerar a linha é uma correção legítima, e era recusada aqui */
+    if (!isFinite(v)) { flash('Não entendi esse valor. Escreva como no extrato: R$ 1.234,56.'); return render(); }
     if (Number(v.toFixed(2)) === l.valor) return render();
     const antes = l.valor;
     l.valor = Number(v.toFixed(2));
@@ -465,7 +469,14 @@ function ctxLancamento(td, x, y){
    o clique falava, então ela pergunta o mês em cada ação */
 function ctxLancamentoPar(tr, x, y){
   const nat = tr.dataset.nat, cp = tr.dataset.cp;
-  const nome = tr.querySelector('b').textContent;
+  /* O NOME VEM DA DESCRIÇÃO DA PRÓPRIA LINHA. Aqui estava
+     `tr.querySelector('b').textContent`, copiado do menu da contraparte · só
+     que a linha do lançamento não tem <b> nenhum. O menu estourava TypeError e
+     NÃO ABRIA: quem clicava com o botão direito na descrição, que é a coluna
+     larga e o alvo natural, via a tela muda e concluía, com razão, que não
+     dava para apagar a linha. */
+  const tdDesc = tr.querySelector('td[data-edit="desc"]');
+  const nome = (tdDesc && (tdDesc.dataset.texto || tdDesc.textContent.trim())) || 'Lançamento';
   const itens = [];
   for (const mk of mesesDeAcao())
     itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, cp) });
@@ -476,6 +487,22 @@ function ctxLancamentoPar(tr, x, y){
   itens.push('-',
     { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) },
     { ic:'💡', t:'Para o valor, clique na coluna do mês', off: true });
+
+  /* EXCLUIR MORAVA SÓ NA CÉLULA DO VALOR. Quem clicava com o botão direito na
+     descrição (que é a coluna larga, o alvo natural) via um menu sem nenhum
+     jeito de apagar a linha, e concluía que não dava para apagar. Aqui a linha
+     pode ser de mais de um mês, então a exclusão é uma por mês, como o resto
+     deste menu. Os ids vêm do próprio `tr`, no formato "mês|id;mês|id". */
+  const alvos = String(tr.dataset.ids || '').split(';').filter(Boolean).map(z => z.split('|'));
+  if (alvos.length) {
+    itens.push('-');
+    for (const [mk, id] of alvos) {
+      const l = DB.meses[mk] && (DB.meses[mk].lancamentos || []).find(z => z.id === id);
+      if (!l) continue;
+      itens.push({ ic:'🗑️', t:'Excluir o lançamento de ' + rotuloMes(mk), atalho: fmt(l.valor), perigo:true,
+                   faz: () => { mesAtual = mk; excluirLancamento(id); } });
+    }
+  }
   abrirCtx(x, y, nome, itens, tr);
 }
 

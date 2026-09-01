@@ -265,7 +265,11 @@ function salvarLancamento(){
   else if (data.slice(0,7) !== mesAtual) erros.push('a data precisa estar dentro de ' + rotuloMes(mesAtual));
   if (!nat) erros.push('informe a natureza');
   if (!cp) erros.push('informe a contraparte');
-  if (!isFinite(bruto) || bruto === 0) erros.push('informe um valor diferente de zero');
+  /* ZERO É NÚMERO. Um estorno que zera a linha, uma cobrança que veio e voltou,
+     uma conta que existe no plano mas não teve movimento no mês: tudo isso é
+     R$ 0,00, e recusar obrigava a inventar um centavo ou a não lançar. O que
+     continua não valendo é campo vazio ou rabisco que não vira número. */
+  if (!isFinite(bruto)) erros.push('escreva o valor como no extrato, "R$ 1.234,56"');
   if (erros.length) {
     document.getElementById('erro-lanc').innerHTML = '<div class="alert-error">Falta ajustar: ' + erros.join(' · ') + '</div>';
     return;
