@@ -84,7 +84,10 @@ const servidor = http.createServer(async (req, res) => {
   if (url === '/api/financeiro/cofre') {
     const vivos = BANCO.envelopes.filter(e => !e.revogado);
     if (req.method === 'GET') {
-      return json(res, 200, { envelopes: vivos, eu: QUEM.usuarioId, virgem: vivos.length === 0 });
+      return json(res, 200, {
+        envelopes: vivos, eu: QUEM.usuarioId, virgem: vivos.length === 0,
+        jaTiveChave: BANCO.envelopes.some(e => e.revogado && e.tipo === 'senha' && e.usuario_id === QUEM.usuarioId),
+      });
     }
     if (req.method === 'POST') {
       const c = await corpo(req);
@@ -278,6 +281,62 @@ const visivel = el => el.count().then(n => n > 0);
   await pr.click('#cofre-overlay button:has-text("Abrir o cofre")');
   await pr.waitForTimeout(3000);
   ok('a chave de recuperação lacrada continua abrindo', !(await visivel(pr.locator('#cofre-overlay'))));
+
+  // ── 7. abrir mão da chave: nem o dono vê os números ──────────────────────
+  console.log('\n=== 7. O DONO ABRE MÃO DA CHAVE ===');
+  QUEM = PESSOAS.marco;
+  ok('o botão existe para quem está com o cofre aberto',
+    await pm2.locator('button:has-text("Abrir mão da minha chave")').isVisible());
+  await pm2.click('button:has-text("Abrir mão da minha chave")');
+  await pm2.waitForSelector('#lg-ok', { timeout: 15000 });
+  const aviso = await pm2.locator('#cofre-overlay').first().textContent();
+  ok('a tela diz quem continua entrando', /Aldeir de Teste/.test(aviso), aviso.slice(0, 80));
+  ok('e avisa que não tem volta pela tela', /chave de recuperação lacrada/.test(aviso));
+  await pm2.check('#lg-ok');
+  pm2.once('dialog', d => d.accept());
+  await pm2.click('#cofre-overlay button:has-text("Abrir mão da minha chave")');
+  await pm2.waitForTimeout(4000);
+
+  const meuEnv = BANCO.envelopes.find(e => e.tipo === 'senha' && e.usuario_id === PESSOAS.marco.usuarioId);
+  ok('o envelope dele foi revogado no servidor', !!meuEnv && meuEnv.revogado === true);
+  ok('o do outro continua vivo',
+    BANCO.envelopes.some(e => e.tipo === 'senha' && e.usuario_id === PESSOAS.aldeir.usuarioId && !e.revogado));
+
+  // a tela recarrega sozinha: agora é a de quem abriu mão
+  await pm2.waitForSelector('#cofre-overlay', { timeout: 20000 });
+  const telaDepois = await pm2.locator('#cofre-overlay').first().textContent();
+  ok('a tela dele virou a de modo manutenção', /Modo manutenção/.test(telaDepois), telaDepois.slice(0, 70));
+  ok('e ela NÃO oferece criar senha nova', !/Criar a minha senha do cofre/.test(telaDepois));
+
+  await pm2.click('#cofre-overlay button:has-text("Entrar em modo manutenção")');
+  await pm2.waitForTimeout(2500);
+  const oQueEleVe = await pm2.evaluate(() => {
+    const m = RAIZ.principal.meses['2026-07'];
+    return {
+      saldo: m.saldoInicial,
+      cps: m.lancamentos.map(l => l.contraparte).join(','),
+      guardado: localStorage.getItem('fam-financeiro-tela1') || '',
+      trilha: localStorage.getItem('fam-financeiro-auditoria') || '',
+    };
+  });
+  ok('o caixa que ele vê NÃO é o de verdade', oQueEleVe.saldo !== SEMENTE.saldoInicial, 'saldo: ' + oQueEleVe.saldo);
+  ok('nenhuma contraparte de verdade na tela dele', !/ALFA TESTE|BETA TESTE/.test(oQueEleVe.cps), oQueEleVe.cps.slice(0, 60));
+  ok('o caixa guardado no navegador dele não tem os números de verdade',
+    !oQueEleVe.guardado.includes(String(SEMENTE.saldoInicial)) && !/ALFA TESTE/.test(oQueEleVe.guardado));
+  ok('a trilha decifrada foi apagada do navegador dele',
+    !/ALFA TESTE|BETA TESTE/.test(oQueEleVe.trilha), oQueEleVe.trilha.slice(0, 60));
+
+  // e o outro continua enxergando tudo
+  QUEM = PESSOAS.aldeir;
+  const pa3 = await ctx.newPage();
+  pa3.on('pageerror', e => erros.push('aldeir3: ' + e));
+  await pa3.goto(BASE);
+  await pa3.waitForSelector('#cofre-senha', { timeout: 15000 });
+  await pa3.fill('#cofre-senha', SENHA_ALDEIR);
+  await pa3.click('#cofre-overlay button:has-text("Abrir o cofre")');
+  await pa3.waitForTimeout(3000);
+  const doAldeir = await pa3.evaluate(() => RAIZ.principal.meses['2026-07'].saldoInicial);
+  ok('o outro continua vendo o caixa de verdade', doAldeir === SEMENTE.saldoInicial, 'saldo: ' + doAldeir);
 
   console.log('\n=== ERROS DE JAVASCRIPT ===');
   ok('nenhum erro de script em nenhuma das telas', erros.length === 0, erros.slice(0, 3).join(' | '));

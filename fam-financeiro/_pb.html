@@ -68,6 +68,11 @@ async function nuvemIniciar(){
   if (porta === 'manutencao') {
     NUVEM.travada = true;
     NUVEM.manutencao = true;
+    /* A TRILHA TAMBÉM. Ela é guardada DECIFRADA neste navegador, então quem já
+       teve a chave e não tem mais continuaria lendo contraparte, valor e
+       descritivo antigos na tela de auditoria, com o resto da tela em números
+       de mentira. O que vier do servidor daqui em diante aparece como 🔒. */
+    limparOQueEstaEmClaro();
     try { localStorage.setItem(CHAVE, JSON.stringify(baseDeManutencao())); } catch(e) {}
     faixaManutencao();
     return true;

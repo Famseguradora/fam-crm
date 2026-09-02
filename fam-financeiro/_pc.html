@@ -30,6 +30,7 @@ const COFRE = {
   semChave: false,    // tem acesso à tela, não tem envelope → manutenção
   envelopes: [],
   eu: null,
+  jaTiveChave: false,   // abriu mão da própria chave: entra sempre em manutenção
 };
 
 const ITERACOES = 310000;                    // PBKDF2-SHA256, recomendação OWASP
@@ -455,6 +456,7 @@ async function cofreIniciar(){
   COFRE.envelopes = j.envelopes || [];
   COFRE.eu = j.eu;
   COFRE.virgem = !!j.virgem;
+  COFRE.jaTiveChave = !!j.jaTiveChave;
 
   if (COFRE.virgem) {
     if (!nuvemPodeEditar()) { COFRE.semChave = true; return 'manutencao'; }
@@ -485,6 +487,13 @@ async function cofreIniciar(){
 function telaSemChave(erro){
   _voltarPara = telaSemChave;
   const eu = escT((window.FAM_SESSAO || {}).nome || 'você');
+
+  /* QUEM ABRIU MÃO DA CHAVE NÃO É CONVIDADO A CRIAR OUTRA. Para essa pessoa o
+     caminho de todo dia é o modo manutenção, e é isso que a tela oferece
+     primeiro · a chave de recuperação continua existindo, embaixo, para o dia
+     em que ninguém mais conseguir entrar. */
+  if (COFRE.jaTiveChave) return telaAbriuMao(erro);
+
   telaCofre(
     '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:6px">🔐 Criar a minha senha do cofre</div>' +
     '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
@@ -512,6 +521,33 @@ function entrarSemChave(){
   COFRE.semChave = true;
   fecharTelaCofre();
   if (_resolverCofre) _resolverCofre('manutencao');
+}
+
+/* A tela de quem abriu mão da própria chave: entrar aqui é entrar em números
+   inventados, e é o combinado. O campo da chave de recuperação fica recolhido
+   porque ele é a quebra de vidro, não a porta. */
+function telaAbriuMao(erro){
+  _voltarPara = telaSemChave;
+  const eu = escT((window.FAM_SESSAO || {}).nome || 'você');
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#4a2d7a;margin-bottom:6px">🧪 Modo manutenção</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+    '<b>' + eu + '</b> abriu mão da chave deste cofre. O caixa continua cifrado e você <b>não tem como abri-lo</b> · ' +
+    'não é a tela que esconde, é a chave que não existe mais aqui. Entrando, a tela funciona inteira, com ' +
+    '<b>números inventados neste navegador</b>, e nada do que você fizer é gravado.</div>' +
+    (erro ? '<div style="background:#fbeaea;border-left:4px solid #d64545;color:#7a1a1a;padding:9px 12px;border-radius:6px;' +
+            'font-size:13px;margin-bottom:12px">' + erro + '</div>' : '') +
+    '<button class="btn-primary" style="width:100%" onclick="entrarSemChave()">Entrar em modo manutenção</button>' +
+    '<details style="margin-top:16px;border-top:1px solid #dde7f2;padding-top:14px">' +
+    '<summary style="cursor:pointer;font-size:12.5px;color:#6080a0">Preciso mesmo abrir o caixa (quebra de vidro)</summary>' +
+    '<div style="font-size:12.5px;color:#6080a0;line-height:1.6;margin:10px 0">' +
+    'Só a <b>chave de recuperação lacrada</b>, ou um código de uso único de quem está dentro. ' +
+    'Usar isto devolve os números de verdade a este navegador.</div>' +
+    '<input id="cofre-senha" type="password" class="fam-input" placeholder="chave de recuperação ou código" ' +
+    'style="width:100%;font-size:16px;padding:10px 12px;border:1.5px solid #c5d5e8;border-radius:7px;margin-bottom:10px" ' +
+    'onkeydown="if(event.key===\'Enter\')destrancar()">' +
+    '<button class="btn-clear" style="width:100%" onclick="destrancar()">Abrir o cofre</button>' +
+    '</details>');
 }
 
 /* ── modo manutenção: quem entrou sem chave ──────────────────────────────────
@@ -606,6 +642,102 @@ async function trocarMinhaSenha(){
     return;
   }
   flash('Senha trocada. A antiga nao abre mais.');
+}
+
+/* ══════════ ABRIR MÃO DA PRÓPRIA CHAVE ═══════════════════════════════════
+   O pedido do Marco, em 02/09/2026: nem ele, que é o dono e quem programou,
+   pode ver os números reais. Esconder na tela não serviria · quem tem envelope
+   tem a chave, e a chave abre. Então o que se faz é DESFAZER O ENVELOPE: a
+   partir daí a chave do cofre não existe mais neste navegador nem em lugar
+   nenhum que ele alcance, e a tela dele passa a ser a de manutenção, com
+   números inventados.
+
+   Duas travas. A pessoa só abre mão se ALGUÉM MAIS tiver senha pessoal viva
+   (senão o caixa fica só com a chave de recuperação lacrada, e um envelope
+   perdido custa o histórico inteiro). E o que estava em claro NESTE navegador
+   (o caixa e a trilha decifrada) é apagado antes de recarregar · sem isso a
+   pessoa continuaria lendo os números na cópia local, e o gesto seria de
+   mentira. */
+async function abrirMaoDaChave(){
+  if (!COFRE.aberto) { alert('Abra o cofre antes: só quem está com a chave pode abrir mão dela.'); return; }
+  const eu = (window.FAM_SESSAO || {}).usuarioId;
+
+  let envs = [];
+  try {
+    const r = await fetch('/api/financeiro/cofre', { cache: 'no-store' });
+    if (!r.ok) throw new Error('cofre ' + r.status);
+    envs = (await r.json()).envelopes || [];
+  } catch(e) { alert('Não consegui falar com o servidor: ' + e.message + ' · nada foi feito.'); return; }
+
+  const meu = envs.find(e => e.tipo === 'senha' && e.usuario_id === eu);
+  if (!meu) { alert('Você já não tem chave pessoal deste cofre.'); return; }
+
+  const outras = envs.filter(e => e.tipo === 'senha' && e.usuario_id && e.usuario_id !== eu);
+  if (!outras.length) {
+    telaCofre(
+      '<div style="font-size:17px;font-weight:700;color:#7a1a1a;margin-bottom:8px">Ainda não dá</div>' +
+      '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+      'Você é a <b>única pessoa com senha deste cofre</b>. Abrindo mão agora, o caixa ficaria dependendo só da ' +
+      'chave de recuperação lacrada, e um envelope perdido apagaria o histórico para sempre.<br><br>' +
+      'Primeiro dê a chave a quem vai cuidar dos números, em <b>🔑 Criar a senha do cofre para alguém</b> ou ' +
+      '<b>🎟️ Dar a chave a alguém</b>. Depois volte aqui.</div>' +
+      '<button class="btn-primary" style="width:100%" onclick="fecharTelaCofre()">Entendi</button>');
+    return;
+  }
+
+  _envelopeParaLargar = meu.id;
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#7a1a1a;margin-bottom:6px">🚪 Abrir mão da minha chave</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:12px">' +
+    'A partir de agora você <b>não vê mais os números reais</b> do Financeiro. A tela continua abrindo inteira, ' +
+    'para você conferir a configuração e achar defeito, só que com <b>números inventados</b>. ' +
+    'Nada do que fizer nela é gravado.</div>' +
+    '<div style="font-size:13px;color:#3a4a5a;line-height:1.7;background:#f2f7fd;border:1px solid #c5d5e8;' +
+    'border-radius:8px;padding:11px 13px;margin-bottom:12px">Continuam entrando: <b>' +
+    outras.map(e => escT(e.rotulo)).join('</b>, <b>') + '</b>.</div>' +
+    '<div style="background:#fdf8e6;border-left:4px solid #e8b84b;color:#7a5c10;padding:10px 12px;border-radius:6px;' +
+    'font-size:13px;line-height:1.6;margin-bottom:14px">Isto <b>não tem volta pela tela</b>. Para voltar a ver os ' +
+    'números você precisaria da <b>chave de recuperação lacrada</b>, ou de um código de quem ficou dentro. ' +
+    'O caixa que está guardado neste navegador é apagado agora.</div>' +
+    '<label style="display:flex;gap:8px;font-size:13.5px;color:#3a4a5a;margin-bottom:12px">' +
+    '<input type="checkbox" id="lg-ok">Entendi, e é isso que eu quero.</label>' +
+    '<button class="btn-danger" style="width:100%;margin-bottom:8px" onclick="confirmarAbrirMao()">Abrir mão da minha chave</button>' +
+    '<button class="btn-clear" style="width:100%" onclick="fecharTelaCofre()">Cancelar</button>');
+}
+
+let _envelopeParaLargar = null;
+
+async function confirmarAbrirMao(){
+  const cx = document.getElementById('lg-ok');
+  if (!cx || !cx.checked) { alert('Marque a caixa: isto não tem volta pela tela.'); return; }
+
+  /* a trilha registra o gesto ANTES de a chave sumir · depois não haveria como
+     cifrar o registro, e ele nasceria em claro no meio dos cifrados */
+  try {
+    auditar('sistema', 'Abriu mão da própria chave do cofre', {
+      detalhe: 'Passa a ver dados de demonstração. Só a chave de recuperação devolve o acesso.' });
+    await nuvemEnviarTrilha();
+  } catch(e) {}
+
+  try {
+    const r = await fetch('/api/financeiro/cofre', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ envelopeId: _envelopeParaLargar }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).erro || ('erro ' + r.status));
+  } catch(e) { alert('Não deu para abrir mão da chave: ' + e.message + ' · nada mudou.'); return; }
+
+  limparOQueEstaEmClaro();
+  COFRE.chave = null; COFRE.aberto = false;
+  alert('Pronto. A sua chave não existe mais. A tela vai recarregar em modo manutenção.');
+  location.reload();
+}
+
+/* O caixa e a trilha ficam decifrados no localStorage para a tela funcionar
+   offline. Quem perde a chave não pode continuar lendo essa cópia. */
+function limparOQueEstaEmClaro(){
+  for (const k of [CHAVE, CHAVE_AUD]) { try { localStorage.removeItem(k); } catch(e) {} }
+  AUDITORIA = [];
 }
 
 /* os botoes do cofre so existem para quem esta com o cofre aberto · e criar a

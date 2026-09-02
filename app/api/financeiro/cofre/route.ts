@@ -35,12 +35,23 @@ export async function GET() {
 
   if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
 
+  // Já tive chave e não tenho mais: é quem ABRIU MÃO da própria chave de
+  // propósito. A tela precisa saber para não convidar essa pessoa a criar
+  // senha de novo · para ela, o caminho de todo dia é o modo manutenção.
+  const { count: revogados } = await supabase
+    .from('financeiro_cofre_envelope')
+    .select('id', { count: 'exact', head: true })
+    .eq('tipo', 'senha')
+    .eq('usuario_id', quem.usuarioId)
+    .not('revogado_em', 'is', null)
+
   return NextResponse.json({
     envelopes: data ?? [],
     // quem sou eu, para o navegador saber qual envelope tentar abrir
     eu: quem.usuarioId,
     // cofre ainda não existe: a tela vai oferecer a criação da senha
     virgem: (data ?? []).length === 0,
+    jaTiveChave: (revogados ?? 0) > 0,
   })
 }
 
