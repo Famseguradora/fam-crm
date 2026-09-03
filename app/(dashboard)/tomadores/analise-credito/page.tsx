@@ -23,15 +23,33 @@ export default function AnaliseCreditoPage() {
   const [pronto, setPronto] = useState(false)
   const [erro, setErro] = useState(false)
 
+  /* POR QUE HÁ DOIS MOTIVOS DE FALHA, E NÃO UM (03/09/2026)
+
+     A tela dizia sempre a mesma coisa: "o sistema não respondeu, dê duplo clique no
+     Analisar.cmd". Em 03/09 o Marco viu isso com o sistema RODANDO, e o conselho o
+     mandou fazer o que não resolvia.
+
+     A causa era outra: o CRM publicado é https, o sistema é http em 127.0.0.1, e o
+     Chrome trata isso como site público acessando a rede local. Ele bloqueia com
+     "Permission was denied for this request to access the loopback address space",
+     e o pedido nem chega ao servidor. Medido: o servidor mandando os cabeçalhos de
+     Local Network Access ainda é bloqueado; só passa quando o usuário concede a
+     permissão. Pelo localhost:3000 nada disso se aplica, e sempre funcionou.
+
+     Então o diagnóstico separa os dois casos, porque a saída de cada um é diferente. */
+  const [bloqueio, setBloqueio] = useState(false)
+
   // ── o sistema está no ar? ────────────────────────────────────────────────
   useEffect(() => {
     let vivo = true
-    const t = setTimeout(() => { if (vivo) setErro(true) }, 6000)
+    // Página servida por https só alcança 127.0.0.1 com permissão do navegador.
+    const publicado = typeof window !== 'undefined' && window.location.protocol === 'https:'
+    const t = setTimeout(() => { if (vivo) { setErro(true); setBloqueio(publicado) } }, 6000)
 
     fetch(`${SISTEMA}/api/status`)
       .then(r => r.json())
-      .then(() => { if (vivo) { setPronto(true); setErro(false) } })
-      .catch(() => { if (vivo) setErro(true) })
+      .then(() => { if (vivo) { setPronto(true); setErro(false); setBloqueio(false) } })
+      .catch(() => { if (vivo) { setErro(true); setBloqueio(publicado) } })
       .finally(() => clearTimeout(t))
 
     return () => { vivo = false; clearTimeout(t) }
@@ -113,18 +131,51 @@ export default function AnaliseCreditoPage() {
           padding: 28, color: '#46617f', fontSize: 14, lineHeight: 1.7,
           fontFamily: "'Calibri','Segoe UI',sans-serif",
         }}>
-          <strong style={{ color: '#0a1628', fontSize: 15 }}>
-            O sistema de análise não respondeu.
-          </strong>
-          <p style={{ margin: '10px 0 0' }}>
-            Ele roda na máquina do Marco, em <code>{SISTEMA}</code>, e não no servidor do
-            CRM. Se você abriu o CRM de outro computador ou do celular, é isso: a tela
-            só carrega na máquina onde o sistema está ligado.
-          </p>
-          <p style={{ margin: '10px 0 0' }}>
-            Na máquina certa, o caminho é dar duplo clique em <code>Analisar.cmd</code>,
-            que sobe o servidor, e recarregar esta tela.
-          </p>
+          {bloqueio ? (
+            <>
+              <strong style={{ color: '#0a1628', fontSize: 15 }}>
+                O navegador bloqueou o acesso ao sistema de análise.
+              </strong>
+              <p style={{ margin: '10px 0 0' }}>
+                Você abriu o CRM pelo endereço da internet, que é seguro (https), e o sistema
+                de análise roda na sua máquina em <code>{SISTEMA}</code>. O Chrome trata isso
+                como um site da internet querendo falar com o seu computador, e bloqueia até
+                você autorizar. <strong>O sistema pode estar rodando normalmente</strong>: o
+                pedido é barrado antes de chegar nele.
+              </p>
+              <p style={{ margin: '14px 0 0' }}>
+                <strong>Caminho mais rápido:</strong> abra o CRM em{' '}
+                <code>http://localhost:3000</code>, na sua máquina. Por ali essa regra não
+                existe, e a tela carrega sem pedir nada.
+              </p>
+              <p style={{ margin: '10px 0 0' }}>
+                <strong>Para continuar por este endereço:</strong> clique no ícone à esquerda
+                da barra de endereço, entre em <em>Configurações do site</em>, procure o item
+                de acesso à <em>rede local</em> e mude para <em>Permitir</em>. Depois recarregue
+                esta tela. A autorização fica valendo.
+              </p>
+              <p style={{ margin: '10px 0 0' }}>
+                E o sistema também abre sozinho, sem o CRM, em{' '}
+                <a href={SISTEMA} target="_blank" rel="noreferrer"
+                   style={{ color: '#1a5490', fontWeight: 600 }}>{SISTEMA}</a>.
+              </p>
+            </>
+          ) : (
+            <>
+              <strong style={{ color: '#0a1628', fontSize: 15 }}>
+                O sistema de análise não respondeu.
+              </strong>
+              <p style={{ margin: '10px 0 0' }}>
+                Ele roda na máquina do Marco, em <code>{SISTEMA}</code>, e não no servidor do
+                CRM. Se você abriu o CRM de outro computador ou do celular, é isso: a tela
+                só carrega na máquina onde o sistema está ligado.
+              </p>
+              <p style={{ margin: '10px 0 0' }}>
+                Na máquina certa, o caminho é dar duplo clique em <code>Analisar.cmd</code>,
+                que sobe o servidor, e recarregar esta tela.
+              </p>
+            </>
+          )}
         </div>
       )}
 
