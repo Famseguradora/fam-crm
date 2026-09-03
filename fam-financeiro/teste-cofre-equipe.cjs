@@ -282,8 +282,38 @@ const visivel = el => el.count().then(n => n > 0);
   await pr.waitForTimeout(3000);
   ok('a chave de recuperação lacrada continua abrindo', !(await visivel(pr.locator('#cofre-overlay'))));
 
-  // ── 7. abrir mão da chave: nem o dono vê os números ──────────────────────
-  console.log('\n=== 7. O DONO ABRE MÃO DA CHAVE ===');
+  /* ── 7. o segundo gera A CHAVE DE RECUPERAÇÃO DELE ────────────────────────
+     A do cofre nasceu na tela de quem criou e ficou com ele. Quem entra depois
+     precisa poder gerar a sua, senão esquecer a senha custa o caixa inteiro. */
+  console.log('\n=== 7. O SEGUNDO GERA A CHAVE DE RECUPERAÇÃO DELE ===');
+  QUEM = PESSOAS.aldeir;
+  const recupAntes = BANCO.envelopes.filter(e => e.tipo === 'recuperacao' && !e.revogado).length;
+  ok('o botão aparece para quem está com o cofre aberto',
+    await pa2.locator('button:has-text("Nova chave de recuperação")').isVisible());
+  await pa2.click('button:has-text("Nova chave de recuperação")');
+  await pa2.waitForSelector('#cofre-overlay div[style*="dashed"]', { timeout: 15000 });
+  const recupDele = (await pa2.locator('#cofre-overlay div[style*="dashed"]').first().textContent()).trim();
+  ok('saiu uma chave nova', /^[A-Za-z0-9-]{20,}$/.test(recupDele) && recupDele !== recuperacao);
+  ok('e ela não apagou a que já existia',
+    BANCO.envelopes.filter(e => e.tipo === 'recuperacao' && !e.revogado).length === recupAntes + 1);
+  ok('o envelope nasceu sem dono, como toda recuperação',
+    BANCO.envelopes.some(e => e.tipo === 'recuperacao' && e.usuario_id === null && /Aldeir/.test(e.rotulo || '')));
+  await pa2.click('#cofre-overlay button:has-text("Guardei")');
+
+  // ela abre o cofre sozinha, sem senha de ninguém
+  const pr2 = await ctx.newPage();
+  pr2.on('pageerror', e => erros.push('recup2: ' + e));
+  await pr2.goto(BASE);
+  await pr2.waitForSelector('#cofre-senha', { timeout: 15000 });
+  await pr2.fill('#cofre-senha', recupDele);
+  await pr2.click('#cofre-overlay button:has-text("Abrir o cofre")');
+  await pr2.waitForTimeout(3000);
+  ok('a chave nova abre o cofre sozinha', !(await visivel(pr2.locator('#cofre-overlay'))));
+  const pelaChaveNova = await pr2.evaluate(() => RAIZ.principal.meses['2026-07'].saldoInicial);
+  ok('e devolve o caixa de verdade', pelaChaveNova === SEMENTE.saldoInicial, 'saldo: ' + pelaChaveNova);
+
+  // ── 8. abrir mão da chave: nem o dono vê os números ──────────────────────
+  console.log('\n=== 8. O DONO ABRE MÃO DA CHAVE ===');
   QUEM = PESSOAS.marco;
   ok('o botão existe para quem está com o cofre aberto',
     await pm2.locator('button:has-text("Abrir mão da minha chave")').isVisible());

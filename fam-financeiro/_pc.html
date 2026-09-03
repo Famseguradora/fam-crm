@@ -644,6 +644,40 @@ async function trocarMinhaSenha(){
   flash('Senha trocada. A antiga nao abre mais.');
 }
 
+/* ══════════ UMA CHAVE DE RECUPERAÇÃO NOVA, A QUALQUER MOMENTO ════════════
+   A do cofre nasceu uma vez só, na tela de quem criou, e ficou com ele. Quem
+   entrou depois nunca a viu: se essa pessoa esquecesse a senha, a salvação
+   estaria numa folha na mão de outro · e, quando esse outro abre mão da chave,
+   ninguém dentro do cofre teria a quebra de vidro. Faltava esta peça.
+
+   Cada chave gerada aqui é mais um envelope de recuperação, independente dos
+   que já existem. Elas convivem: gerar uma não apaga a anterior. Quem gera
+   precisa estar com o cofre aberto, porque é a chave dele que vai dentro. */
+async function novaChaveDeRecuperacao(){
+  if (!COFRE.aberto) { alert('Abra o cofre antes: a chave de recuperação embrulha a chave que só existe com ele aberto.'); return; }
+
+  const recup = b64(sortear(24)).replace(/[+/=]/g, '').slice(0, 28).replace(/(.{7})(?=.)/g, '$1-');
+  const quem = (window.FAM_SESSAO || {}).nome || 'sem nome';
+  const dia = new Date().toLocaleDateString('pt-BR');
+
+  try { await envelopar(COFRE.chave, recup, 'recuperação · ' + quem + ' · ' + dia, 'recuperacao', null); }
+  catch(e) { alert('Não deu para gerar a chave de recuperação: ' + e.message); return; }
+
+  telaCofre(
+    '<div style="font-size:18px;font-weight:700;color:#1a3560;margin-bottom:10px">🗝️ Chave de recuperação nova</div>' +
+    '<div style="font-size:13.5px;color:#3a4a5a;line-height:1.6;margin-bottom:14px">' +
+    'Ela abre o cofre sozinha, sem depender da senha de ninguém, e <b>não aparece de novo</b>. ' +
+    'Imprima, lacre e guarde. As chaves de recuperação que já existiam continuam valendo.</div>' +
+    '<div style="font-family:Consolas,monospace;font-size:21px;font-weight:700;letter-spacing:2px;color:#102040;' +
+    'background:#f2f7fd;border:2px dashed #3070c8;border-radius:9px;padding:18px;text-align:center;margin-bottom:14px;' +
+    'user-select:all">' + recup + '</div>' +
+    '<div style="background:#fdf8e6;border-left:4px solid #e8b84b;color:#7a5c10;padding:10px 12px;border-radius:6px;' +
+    'font-size:13px;line-height:1.6;margin-bottom:14px">Quem tem esta folha abre o caixa inteiro. Guarde como se guarda ' +
+    'cheque assinado: fora do computador, longe de quem não pode ver os números.</div>' +
+    '<button class="btn-clear" style="width:100%;margin-bottom:8px" onclick="window.print()">🖨️ Imprimir esta folha</button>' +
+    '<button class="btn-primary" style="width:100%" onclick="fecharTelaCofre()">Guardei</button>');
+}
+
 /* ══════════ ABRIR MÃO DA PRÓPRIA CHAVE ═══════════════════════════════════
    O pedido do Marco, em 02/09/2026: nem ele, que é o dono e quem programou,
    pode ver os números reais. Esconder na tela não serviria · quem tem envelope
@@ -673,6 +707,7 @@ async function abrirMaoDaChave(){
   if (!meu) { alert('Você já não tem chave pessoal deste cofre.'); return; }
 
   const outras = envs.filter(e => e.tipo === 'senha' && e.usuario_id && e.usuario_id !== eu);
+  const recuperacoes = envs.filter(e => e.tipo === 'recuperacao');
   if (!outras.length) {
     telaCofre(
       '<div style="font-size:17px;font-weight:700;color:#7a1a1a;margin-bottom:8px">Ainda não dá</div>' +
@@ -694,7 +729,13 @@ async function abrirMaoDaChave(){
     'Nada do que fizer nela é gravado.</div>' +
     '<div style="font-size:13px;color:#3a4a5a;line-height:1.7;background:#f2f7fd;border:1px solid #c5d5e8;' +
     'border-radius:8px;padding:11px 13px;margin-bottom:12px">Continuam entrando: <b>' +
-    outras.map(e => escT(e.rotulo)).join('</b>, <b>') + '</b>.</div>' +
+    outras.map(e => escT(e.rotulo)).join('</b>, <b>') + '</b>.<br>' +
+    'Chaves de recuperação guardadas: <b>' + recuperacoes.length + '</b>' +
+    (recuperacoes.length ? ' (' + recuperacoes.map(e => escT(e.rotulo)).join('; ') + ')' : '') + '.</div>' +
+    (recuperacoes.length ? '' :
+      '<div style="background:#fbeaea;border-left:4px solid #d64545;color:#7a1a1a;padding:10px 12px;border-radius:6px;' +
+      'font-size:13px;line-height:1.6;margin-bottom:12px"><b>Não existe chave de recuperação viva.</b> Se a pessoa acima ' +
+      'esquecer a senha dela, o caixa fica ilegível para sempre. Gere uma em <b>🗝️ Nova chave de recuperação</b> antes.</div>') +
     '<div style="background:#fdf8e6;border-left:4px solid #e8b84b;color:#7a5c10;padding:10px 12px;border-radius:6px;' +
     'font-size:13px;line-height:1.6;margin-bottom:14px">Isto <b>não tem volta pela tela</b>. Para voltar a ver os ' +
     'números você precisaria da <b>chave de recuperação lacrada</b>, ou de um código de quem ficou dentro. ' +
