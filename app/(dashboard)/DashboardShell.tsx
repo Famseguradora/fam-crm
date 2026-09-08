@@ -44,6 +44,11 @@ interface Tab {
 
 const TABS: Tab[] = [
   { label: '📊 Dashboard',  href: '/' },
+  /* O FUNIL EM CARDS, a tela do prototipo trazida para dentro do CRM
+     (08/09/2026). Fica logo depois do Dashboard, e e de todas as areas: e o
+     lugar onde Comercial, Cadastro, Credito e Subscricao olham para a MESMA
+     fila, cada operacao num cartao, cada cartao abrindo o card da empresa. */
+  { label: '📋 Funil',      href: '/fluxo' },
   /* A análise de crédito é um subitem de Tomadores: passa o mouse, aparece.
      É a porta de entrada da frente 1 (a análise dentro do CRM). */
   { label: '👥 Tomadores',  href: '/tomadores', sub: [
@@ -66,7 +71,7 @@ const TELA_CHEIA = ['/corretoras', '/financeiro', '/tomadores/analise-credito']
 
 // Telas que aparecem no menu do app no celular (as demais ficam só no desktop).
 // Corretoras entra no mobile (respeitando adminOnly); o cockpit é responsivo.
-const MOBILE_NAV_HREFS = ['/', '/operacoes', '/tomadores', '/corretoras']
+const MOBILE_NAV_HREFS = ['/', '/fluxo', '/operacoes', '/tomadores', '/corretoras']
 
 const SUBSCRICAO_ITEMS: { label: string; href: string; icon: string; disabled?: boolean }[] = []
 
