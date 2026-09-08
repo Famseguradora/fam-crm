@@ -34,7 +34,7 @@ export const dynamic = 'force-dynamic'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { fmtMoeda } from '@/lib/utils'
+import { fmtMoeda, maskCNPJ } from '@/lib/utils'
 
 // ── as peças de dado ────────────────────────────────────────────────────────
 
@@ -83,6 +83,44 @@ const chave = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').
  *  que o protótipo escreve na tela, e ela vale para a conta dos KPIs. */
 const MORTAS = new Set(['Perdido', 'Recusado'])
 
+/* ── OS TRÊS OLHARES ─────────────────────────────────────────────────────────
+
+   Kanban, Galeria e Lista, exatamente como no Sistema de Análise dele, que traz
+   escrito no `painel.mjs`: "O Marco pediu em 02/08/2026: Kanban, Galeria e
+   Lista, os tres com os MESMOS dados". A ordem dos botões é a de lá, e a pele é
+   a de lá: aba de caderno, e não botão de app — a escolhida é a folha branca na
+   frente das outras.
+
+   UMA LEITURA, TRÊS DESENHOS. Nenhum dos modos busca nada a mais no banco: os
+   três leem a mesma lista já filtrada pela busca. É por isso que trocar de modo
+   é instantâneo, e é por isso que os três nunca discordam.
+
+     Kanban   a fila inteira de uma vez, por etapa
+     Galeria  o cartão grande, para bater o olho e entender o caso
+     Lista    uma linha por operação, para varrer e comparar  */
+type Modo = 'kanban' | 'galeria' | 'lista'
+
+type ColunaLista = 'empresa' | 'corretora' | 'produto' | 'etapa' | 'lmg' | 'taxa' | 'entrada'
+type Direcao = 'asc' | 'desc'
+
+/** As colunas da Lista, descritas e não escritas à mão: o cabeçalho, a
+ *  ordenação e a seta saem daqui. Mesma decisão da lista de análises. */
+const COLUNAS_LISTA: {
+  k: ColunaLista
+  rotulo: string
+  n?: boolean
+  padrao: Direcao
+  valor: (o: Operacao, nomeT: string, nomeC: string) => string | number | null
+}[] = [
+  { k: 'empresa', rotulo: 'Empresa', padrao: 'asc', valor: (_o, t) => t || null },
+  { k: 'corretora', rotulo: 'Corretora', padrao: 'asc', valor: (_o, _t, c) => c || null },
+  { k: 'produto', rotulo: 'Produto', padrao: 'asc', valor: o => o.modalidade || null },
+  { k: 'etapa', rotulo: 'Etapa', padrao: 'asc', valor: o => o.status || null },
+  { k: 'lmg', rotulo: 'LMG', n: true, padrao: 'desc', valor: o => (o.lmg === null ? null : num(o.lmg)) },
+  { k: 'taxa', rotulo: 'Taxa', n: true, padrao: 'desc', valor: o => (o.taxa === null ? null : num(o.taxa)) },
+  { k: 'entrada', rotulo: 'Entrada', n: true, padrao: 'desc', valor: o => o.data_entrada || null },
+]
+
 // ── a tela ──────────────────────────────────────────────────────────────────
 
 export default function FluxoPage() {
@@ -96,6 +134,9 @@ export default function FluxoPage() {
   const [erro, setErro] = useState('')
   const [busca, setBusca] = useState('')
   const [soVivas, setSoVivas] = useState(false)
+  const [modo, setModo] = useState<Modo>('kanban')
+  const [coluna, setColuna] = useState<ColunaLista>('entrada')
+  const [direcao, setDirecao] = useState<Direcao>('desc')
 
   const carregar = useCallback(async (vivo: { atual: boolean }) => {
     const supabase = createClient()
@@ -169,6 +210,39 @@ export default function FluxoPage() {
     (nome: string) => vistas.filter(o => (o.status ?? '') === nome),
     [vistas])
 
+  /** A cor da etapa, para a Galeria e a Lista pintarem igual ao Kanban. Etapa
+   *  que saiu da régua fica cinza, e não colorida de mentira. */
+  const corDaEtapa = useCallback(
+    (nome: string | null) => etapas.find(e => e.nome === nome)?.cor ?? '#8fa3b8',
+    [etapas])
+
+  /** A Lista e a Galeria são a mesma lista do Kanban, só que em fila única e
+   *  ordenada. Nulo vai para o fim nos dois sentidos, e empate desempata pela
+   *  empresa: as duas regras da lista de análises, pelo mesmo motivo. */
+  const emFila = useMemo(() => {
+    const col = COLUNAS_LISTA.find(c => c.k === coluna) ?? COLUNAS_LISTA[6]
+    const nome = (o: Operacao) => nomeDoTomador(o.tomador_id)
+    const porNome = (a: Operacao, b: Operacao) => nome(a).localeCompare(nome(b), 'pt-BR')
+    return [...vistas].sort((a, b) => {
+      const va = col.valor(a, nomeDoTomador(a.tomador_id), nomeDaCorretora(a.corretora_id))
+      const vb = col.valor(b, nomeDoTomador(b.tomador_id), nomeDaCorretora(b.corretora_id))
+      if (va === null || vb === null) {
+        if (va === vb) return porNome(a, b)
+        return va === null ? 1 : -1
+      }
+      const r = typeof va === 'number' && typeof vb === 'number'
+        ? va - vb
+        : String(va).localeCompare(String(vb), 'pt-BR')
+      return (direcao === 'desc' ? -r : r) || porNome(a, b)
+    })
+  }, [vistas, coluna, direcao, nomeDoTomador, nomeDaCorretora])
+
+  const clicarNoTitulo = (k: ColunaLista) => {
+    if (k === coluna) { setDirecao(d => (d === 'asc' ? 'desc' : 'asc')); return }
+    setColuna(k)
+    setDirecao(COLUNAS_LISTA.find(c => c.k === k)?.padrao ?? 'asc')
+  }
+
   /* As operações cuja etapa não existe (ou não está mais ativa) na régua. Elas
      não podem sumir da tela: some da tela = some do trabalho de alguém. */
   const orfas = useMemo(() => {
@@ -232,13 +306,138 @@ export default function FluxoPage() {
         }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#3070c8' }} />
           Funil de operações
+
+          {/* A aba de caderno do Sistema de Análise: a escolhida é a folha
+              branca na frente das outras. Três olhares, o mesmo dado. */}
+          <div role="group" aria-label="Modo de visualização" style={{
+            display: 'inline-flex', background: '#eef3f9', border: '1px solid var(--border)',
+            borderRadius: 8, padding: 2, gap: 2, marginLeft: 6,
+          }}>
+            {([
+              { m: 'kanban', rotulo: 'Kanban', dica: 'A fila inteira de uma vez, por etapa' },
+              { m: 'galeria', rotulo: 'Galeria', dica: 'O cartão grande, para bater o olho e entender o caso' },
+              { m: 'lista', rotulo: 'Lista', dica: 'Uma linha por operação, para varrer e comparar' },
+            ] as { m: Modo; rotulo: string; dica: string }[]).map(b => (
+              <button key={b.m} type="button" title={b.dica}
+                aria-pressed={modo === b.m}
+                onClick={() => setModo(b.m)}
+                style={{
+                  background: modo === b.m ? '#fff' : 'none',
+                  border: `1px solid ${modo === b.m ? 'var(--border)' : 'transparent'}`,
+                  borderRadius: 6, padding: '4px 12px', fontSize: 11.5, fontWeight: 600,
+                  fontFamily: 'inherit', cursor: 'pointer',
+                  color: modo === b.m ? '#1e4080' : 'var(--soft)',
+                }}>
+                {b.rotulo}
+              </button>
+            ))}
+          </div>
+
           <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--soft)' }}>
             {carregando ? 'carregando…' : `${kpis.vivas} vivas · ${kpis.mortas} recusadas ou perdidas`}
           </span>
         </div>
 
+        {/* ══════════ GALERIA ══════════ */}
+        {modo === 'galeria' && (
+          emFila.length === 0
+            ? <div style={{ fontSize: 13, color: 'var(--soft)' }}>Nenhuma operação com essa busca.</div>
+            : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
+                {emFila.map(o => (
+                  <Ficha
+                    key={o.id}
+                    empresa={nomeDoTomador(o.tomador_id)}
+                    cnpj={o.tomador_id ? (tomadores.get(o.tomador_id)?.cnpj ?? null) : null}
+                    corretora={nomeDaCorretora(o.corretora_id)}
+                    modalidade={o.modalidade}
+                    etapa={o.status}
+                    lmg={num(o.lmg)}
+                    taxa={num(o.taxa)}
+                    premio={num(o.premio_previsto)}
+                    entrada={o.data_entrada}
+                    cor={corDaEtapa(o.status)}
+                    morta={MORTAS.has(o.status ?? '')}
+                    podeAbrir={!!o.tomador_id}
+                    onAbrir={() => o.tomador_id && router.push(`/tomadores/${o.tomador_id}`)}
+                  />
+                ))}
+              </div>
+            )
+        )}
+
+        {/* ══════════ LISTA ══════════ */}
+        {modo === 'lista' && (
+          emFila.length === 0
+            ? <div style={{ fontSize: 13, color: 'var(--soft)' }}>Nenhuma operação com essa busca.</div>
+            : (
+              <div className="mt-tab-wrap">
+                <table className="mt-tab">
+                  <thead>
+                    <tr>
+                      {COLUNAS_LISTA.map(c => {
+                        const ativa = coluna === c.k
+                        return (
+                          <th key={c.k} style={{ padding: 0 }}
+                            aria-sort={ativa ? (direcao === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                            <button type="button" onClick={() => clicarNoTitulo(c.k)}
+                              title={`Ordenar por ${c.rotulo}`}
+                              style={{
+                                width: '100%', display: 'inline-flex', alignItems: 'center', gap: 5,
+                                justifyContent: c.n ? 'flex-end' : 'flex-start',
+                                padding: '11px 14px', background: 'none', border: 'none',
+                                fontFamily: 'inherit', fontSize: 10.5, fontWeight: 700,
+                                textTransform: 'uppercase', letterSpacing: '.8px',
+                                color: ativa ? '#1e4080' : '#8ba3c0',
+                                whiteSpace: 'nowrap', cursor: 'pointer',
+                              }}>
+                              {c.rotulo}
+                              <span aria-hidden style={{ fontSize: 8, opacity: ativa ? 1 : 0.35 }}>
+                                {ativa && direcao === 'asc' ? '▲' : '▼'}
+                              </span>
+                            </button>
+                          </th>
+                        )
+                      })}
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {emFila.map(o => {
+                      const podeAbrir = !!o.tomador_id
+                      const t = o.tomador_id ? tomadores.get(o.tomador_id) : null
+                      return (
+                        <tr key={o.id}
+                          style={{ cursor: podeAbrir ? 'pointer' : 'default', opacity: MORTAS.has(o.status ?? '') ? 0.72 : 1 }}
+                          onClick={podeAbrir ? () => router.push(`/tomadores/${o.tomador_id}`) : undefined}
+                          title={podeAbrir ? 'Abrir o card desta empresa' : 'Operação sem tomador cadastrado'}>
+                          <td>
+                            <div style={{ fontWeight: 700, color: '#0a1628' }}>{nomeDoTomador(o.tomador_id)}</div>
+                            {t?.cnpj && (
+                              <div style={{ fontSize: 11.5, color: 'var(--soft)', fontVariantNumeric: 'tabular-nums' }}>
+                                {maskCNPJ(t.cnpj)}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ whiteSpace: 'normal', maxWidth: 180 }}>{nomeDaCorretora(o.corretora_id) || '—'}</td>
+                          <td style={{ whiteSpace: 'normal', maxWidth: 180 }}>{o.modalidade || '—'}</td>
+                          <td><Fita nome={o.status} cor={corDaEtapa(o.status)} /></td>
+                          <td className="n">{o.lmg === null ? '—' : fmtMoeda(num(o.lmg))}</td>
+                          <td className="n">{pct(num(o.taxa))}</td>
+                          <td className="dim">{o.data_entrada ? new Date(o.data_entrada + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}</td>
+                          <td className="seta" style={{ textAlign: 'right' }}>{podeAbrir ? '›' : ''}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+        )}
+
+        {/* ══════════ KANBAN ══════════ */}
         <div style={{
-          display: 'grid',
+          display: modo === 'kanban' ? 'grid' : 'none',
           gridTemplateColumns: `repeat(${Math.max(1, etapas.length)}, minmax(178px, 1fr))`,
           gap: 10, overflowX: 'auto', paddingBottom: 6,
         }}>
@@ -290,7 +489,10 @@ export default function FluxoPage() {
           })}
         </div>
 
-        {orfas.length > 0 && (
+        {/* O aviso é do KANBAN: é lá que a operação fica sem coluna. Na Galeria e
+            na Lista ela aparece como todas as outras, então repetir o aviso ali
+            seria dizer que sumiu o que está na tela. */}
+        {orfas.length > 0 && modo === 'kanban' && (
           <div className="mt-nota at" style={{ marginTop: 14 }}>
             <b>{orfas.length} operações estão numa etapa que não está na régua</b> (
             {[...new Set(orfas.map(o => o.status ?? 'sem etapa'))].join(', ')}). Elas não aparecem
@@ -337,6 +539,119 @@ function Kpi({ rotulo, numero, pe, cor, destaque }: {
         color: destaque ? '#e8b84b' : '#102040',
       }}>{numero}</div>
       <div style={{ fontSize: 11.5, color: destaque ? '#8fb3d9' : 'var(--soft)', marginTop: 3 }}>{pe}</div>
+    </div>
+  )
+}
+
+/** A fita da etapa, do tamanho de uma etiqueta. A cor é a da régua, e etapa
+ *  desconhecida sai cinza: pintar de verde o que não se conhece é afirmar o que
+ *  o dado não diz. */
+function Fita({ nome, cor }: { nome: string | null; cor: string }) {
+  if (!nome) return <span style={{ color: 'var(--soft)' }}>—</span>
+  return (
+    <span style={{
+      display: 'inline-block', padding: '3px 10px', borderRadius: 20, fontSize: 11,
+      fontWeight: 700, whiteSpace: 'nowrap', color: cor,
+      border: `1px solid ${cor}`, background: `${cor}14`,
+    }}>{nome}</span>
+  )
+}
+
+/** As iniciais da empresa, como o selo do Sistema de Análise. */
+const iniciais = (nome: string) =>
+  nome.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('') || '—'
+
+/** GALERIA: o cartão completo, para bater o olho e entender o caso inteiro.
+ *  É a `.ficha` do painel do Sistema de Análise: a capa colorida da etapa no
+ *  alto, o selo com as iniciais, e a ação empurrada para o pé para os cartões
+ *  da mesma linha terminarem na mesma altura. */
+function Ficha({ empresa, cnpj, corretora, modalidade, etapa, lmg, taxa, premio, entrada, cor, morta, podeAbrir, onAbrir }: {
+  empresa: string
+  cnpj: string | null
+  corretora: string
+  modalidade: string | null
+  etapa: string | null
+  lmg: number
+  taxa: number
+  premio: number
+  entrada: string | null
+  cor: string
+  morta: boolean
+  podeAbrir: boolean
+  onAbrir: () => void
+}) {
+  return (
+    <article
+      role={podeAbrir ? 'button' : undefined}
+      tabIndex={podeAbrir ? 0 : undefined}
+      onClick={podeAbrir ? onAbrir : undefined}
+      onKeyDown={podeAbrir ? (e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAbrir() } }) : undefined}
+      title={podeAbrir ? 'Abrir o card desta empresa' : 'Operação sem tomador cadastrado no CRM'}
+      style={{
+        position: 'relative', display: 'flex', flexDirection: 'column',
+        border: '1px solid var(--border)', borderRadius: 10, padding: '17px 15px 13px',
+        background: '#fff', overflow: 'hidden', opacity: morta ? 0.82 : 1,
+        cursor: podeAbrir ? 'pointer' : 'default', transition: 'transform .12s, box-shadow .12s',
+      }}
+      onMouseEnter={e => {
+        if (!podeAbrir) return
+        e.currentTarget.style.transform = 'translateY(-1px)'
+        e.currentTarget.style.boxShadow = '0 6px 18px rgba(30,64,128,.14)'
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.transform = ''
+        e.currentTarget.style.boxShadow = ''
+      }}
+    >
+      {/* a capa colorida: a mesma fita da etapa, deitada no alto do cartão */}
+      <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 4, background: cor }} />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 11 }}>
+        <span style={{
+          width: 38, height: 38, borderRadius: 5, flex: '0 0 auto', display: 'grid',
+          placeItems: 'center', fontSize: 13, fontWeight: 700, color: '#fff',
+          background: cor, letterSpacing: '-.02em',
+        }}>{iniciais(empresa)}</span>
+        <div style={{ minWidth: 0 }}>
+          <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: '#0a1628', lineHeight: 1.3 }}>{empresa}</h3>
+          {cnpj && (
+            <div style={{ fontSize: 10.5, color: 'var(--soft)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
+              {maskCNPJ(cnpj)}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px 12px', marginBottom: 11 }}>
+        <Meta rotulo="Corretora" valor={corretora || '—'} />
+        <Meta rotulo="Produto" valor={modalidade || '—'} />
+        <Meta rotulo="LMG" valor={lmg ? fmtMoeda(lmg) : '—'} forte />
+        <Meta rotulo="Taxa" valor={pct(taxa)} />
+        {premio > 0 && <Meta rotulo="Prêmio previsto" valor={fmtMoeda(premio)} />}
+        {entrada && <Meta rotulo="Entrada" valor={new Date(entrada + 'T12:00:00').toLocaleDateString('pt-BR')} />}
+      </div>
+
+      <div style={{ marginTop: 'auto', paddingTop: 10, borderTop: '1px solid #eef3f9' }}>
+        <Fita nome={etapa} cor={cor} />
+      </div>
+    </article>
+  )
+}
+
+function Meta({ rotulo, valor, forte }: { rotulo: string; valor: string; forte?: boolean }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{
+        fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '.08em',
+        color: '#8ba3c0', fontWeight: 700, marginBottom: 2,
+      }}>{rotulo}</div>
+      <div
+        title={valor}
+        style={{
+          fontSize: forte ? 13 : 12, color: forte ? '#0a1628' : '#1a2a3a',
+          fontWeight: forte ? 700 : 500, overflow: 'hidden', textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums',
+        }}>{valor}</div>
     </div>
   )
 }
