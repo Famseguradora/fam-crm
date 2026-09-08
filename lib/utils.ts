@@ -185,3 +185,24 @@ export function fmtData(iso: string): string {
 export function fmtDataExtenso(date: Date = new Date()): string {
   return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
 }
+
+/** Desfaz as entidades HTML que sobraram no texto do acervo da análise.
+ *
+ *  O relatório era um HTML, e o que veio de dentro dele carrega marca de HTML:
+ *  há razão social gravada como "Longitude Incorporação &Amp; Urbanismo". É
+ *  defeito de EXIBIÇÃO, não de dado — o banco continua com o que a análise
+ *  gravou, e desfazer isso na tela não perde informação nenhuma.
+ *
+ *  Só as entidades que aparecem de fato em texto de empresa. Nada de interpretar
+ *  HTML de verdade: conteúdo de banco nunca vira marcação numa tela do CRM.  */
+export function semEntidadesHtml(texto: string | null | undefined): string {
+  if (!texto) return ''
+  return texto
+    .replace(/&amp;/gi, '&')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+}
