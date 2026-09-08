@@ -22,6 +22,13 @@
    qualquer lugar, inclusive do celular. Clicar numa delas abre a ficha do
    tomador, onde o relatório já é lido do banco (gaveta "Análise de crédito").
 
+   ELA É A BASE DO PRÓXIMO SISTEMA (ordem dele, 08/09/2026)
+   ---------------------------------------------------------------------------
+   Por isso a lista não é uma tabela escrita à mão: as colunas são a lista
+   `COLUNAS_TABELA`, e é dela que saem o cabeçalho, a ordenação por clique e a
+   seta. Coluna nova = uma linha ali. Os filtros de situação são um só de cada
+   vez, cada um com o seu número à vista.
+
    O QUE ESTA TELA NÃO FAZ, de propósito
    ---------------------------------------------------------------------------
     • não busca a lista em 127.0.0.1. A lista é banco, e só banco — é isso que
@@ -32,7 +39,7 @@
       que alguém rodar a carga (`npm run publicar`). Nada roda isso por horário.
    ============================================================================ */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fmtMoeda, fmtData, maskCNPJ, semEntidadesHtml } from '@/lib/utils'
@@ -106,6 +113,64 @@ const corDaDecisao = (d: string | null): string => {
   return 'badge-gray'
 }
 
+/* ── AS COLUNAS DA TABELA, e o que significa ordenar por cada uma ────────────
+
+   A tabela é DESCRITA aqui, e não escrita à mão no cabeçalho. Quem criar uma
+   coluna nova põe uma linha nesta lista e ganha o clique de ordenar junto, sem
+   repetir JSX nem esquecer metade. Ele disse em 08/09/2026 que esta tela é a
+   base do próximo sistema integrado: o que se repete tem que ser dado. */
+type Coluna = 'empresa' | 'corretora' | 'data' | 'score' | 'rating' | 'decisao' | 'limite'
+type Direcao = 'asc' | 'desc'
+
+const COLUNAS_TABELA: {
+  k: Coluna
+  rotulo: string
+  /** Coluna de número ou data: alinha à direita. */
+  n?: boolean
+  /** A direção do PRIMEIRO clique. Ninguém pede "o menor score primeiro" nem
+   *  "a empresa de trás para a frente": o padrão é o que a pessoa quis dizer. */
+  padrao: Direcao
+  /** Por onde se ordena. `null` é ausência de dado, não o menor valor. */
+  valor: (l: LinhaAnalise) => string | number | null
+}[] = [
+  { k: 'empresa', rotulo: 'Empresa', padrao: 'asc', valor: l => limpo(l.razao_social) || null },
+  { k: 'corretora', rotulo: 'Corretora', padrao: 'asc', valor: l => limpo(l.corretora) || null },
+  { k: 'data', rotulo: 'Data', n: true, padrao: 'desc', valor: l => l.data_analise || null },
+  { k: 'score', rotulo: 'Score', n: true, padrao: 'desc', valor: l => num(l.score_final) },
+  // Rating e decisão ordenam pela palavra, e a palavra já sai na ordem certa:
+  // A3 antes de E6, e "Aprovar" · "Aprovar com ressalvas" · "Reprovar".
+  { k: 'rating', rotulo: 'Rating', padrao: 'asc', valor: l => l.rating_cod ?? l.rating_txt ?? null },
+  { k: 'decisao', rotulo: 'Decisão', padrao: 'asc', valor: l => l.recomendacao ?? null },
+  { k: 'limite', rotulo: 'Limite recomendado', n: true, padrao: 'desc', valor: l => limiteConfiavel(l) },
+]
+
+/** Ordena por uma coluna, com os dois acertos que a lista pede:
+ *  · linha SEM valor vai para o fim nos dois sentidos (ausência não é o menor
+ *    número: inverter a ordem não pode jogar 26 traços para o alto da tela);
+ *  · empate desempata pelo nome da empresa, para a lista não dançar sozinha a
+ *    cada clique quando dez linhas têm o mesmo rating. */
+function ordenar(linhas: LinhaAnalise[], k: Coluna, dir: Direcao): LinhaAnalise[] {
+  const col = COLUNAS_TABELA.find(c => c.k === k) ?? COLUNAS_TABELA[2]
+  const nome = (l: LinhaAnalise) => limpo(l.razao_social)
+  const porNome = (a: LinhaAnalise, b: LinhaAnalise) => nome(a).localeCompare(nome(b), 'pt-BR')
+  return [...linhas].sort((a, b) => {
+    const va = col.valor(a)
+    const vb = col.valor(b)
+    if (va === null || vb === null) {
+      if (va === vb) return porNome(a, b)
+      return va === null ? 1 : -1
+    }
+    const r = typeof va === 'number' && typeof vb === 'number'
+      ? va - vb
+      : String(va).localeCompare(String(vb), 'pt-BR')
+    return (dir === 'desc' ? -r : r) || porNome(a, b)
+  })
+}
+
+/** Os filtros de situação. "A revisar" é a análise que a máquina escreveu e
+ *  ninguém conferiu ainda; "sem cadastro" é a que não chega em ficha nenhuma. */
+type Situacao = 'todas' | 'revisadas' | 'a-revisar' | 'sem-cadastro'
+
 export default function AnaliseCreditoPage() {
   const router = useRouter()
   const moldura = useRef<HTMLDivElement>(null)
@@ -136,6 +201,9 @@ export default function AnaliseCreditoPage() {
 
   const [busca, setBusca] = useState('')
   const [soVigentes, setSoVigentes] = useState(true)
+  const [situacao, setSituacao] = useState<Situacao>('todas')
+  const [coluna, setColuna] = useState<Coluna>('data')
+  const [direcao, setDirecao] = useState<Direcao>('desc')
 
   // ── o sistema está no ar NESTA máquina? ──────────────────────────────────
   useEffect(() => {
@@ -251,17 +319,36 @@ export default function AnaliseCreditoPage() {
     }
   }, [onde])
 
+  /** A ficha onde esta análise pode ser lida inteira, ou `null` se nenhum
+   *  tomador do CRM alcança este CNPJ. */
+  const fichaDe = useCallback((l: LinhaAnalise): string | null =>
+    l.tomador_id ?? porCnpj.get(soDigitos(l.cnpj)) ?? null, [porCnpj])
+
+  // O que os filtros contam: a lista com o interruptor das vigentes já aplicado,
+  // mas SEM a busca. Contar só o que a busca deixou passar faria os números dos
+  // filtros mudarem a cada letra digitada, e ninguém consegue mirar num alvo
+  // que se mexe.
+  const escopo = useMemo(
+    () => (linhas ?? []).filter(l => (soVigentes ? l.vigente : true)),
+    [linhas, soVigentes])
+
   const contagem = useMemo(() => ({
     total: linhas?.length ?? 0,
     vigentes: (linhas ?? []).filter(l => l.vigente).length,
-  }), [linhas])
+    noEscopo: escopo.length,
+    revisadas: escopo.filter(l => l.revisada).length,
+    aRevisar: escopo.filter(l => !l.revisada).length,
+    semCadastro: escopo.filter(l => !fichaDe(l)).length,
+  }), [linhas, escopo, fichaDe])
 
   const vistas = useMemo(() => {
     const q = chave(busca.trim())
     const digitos = q.replace(/\D/g, '')
 
-    let r = linhas ?? []
-    if (soVigentes) r = r.filter(l => l.vigente)
+    let r = escopo
+    if (situacao === 'revisadas') r = r.filter(l => l.revisada)
+    if (situacao === 'a-revisar') r = r.filter(l => !l.revisada)
+    if (situacao === 'sem-cadastro') r = r.filter(l => !fichaDe(l))
     if (q) {
       r = r.filter(l => {
         const texto = chave(limpo([l.razao_social, l.corretora, l.grupo].filter(Boolean).join(' ')))
@@ -269,13 +356,16 @@ export default function AnaliseCreditoPage() {
         return texto.includes(q) || (digitos.length >= 3 && !!l.cnpj?.includes(digitos))
       })
     }
-    return r
-  }, [linhas, busca, soVigentes])
+    return ordenar(r, coluna, direcao)
+  }, [escopo, busca, situacao, coluna, direcao, fichaDe])
 
-  /** A ficha onde esta análise pode ser lida inteira, ou `null` se nenhum
-   *  tomador do CRM alcança este CNPJ. */
-  const fichaDe = (l: LinhaAnalise): string | null =>
-    l.tomador_id ?? porCnpj.get(soDigitos(l.cnpj)) ?? null
+  /** Clicar no título: na mesma coluna, inverte; em outra, entra na direção que
+   *  aquela coluna pede. */
+  const clicarNoTitulo = (k: Coluna) => {
+    if (k === coluna) { setDirecao(d => (d === 'asc' ? 'desc' : 'asc')); return }
+    setColuna(k)
+    setDirecao(COLUNAS_TABELA.find(c => c.k === k)?.padrao ?? 'asc')
+  }
 
   return (
     <div ref={moldura} style={{ display: 'flex', flexDirection: 'column' }}>
@@ -336,6 +426,42 @@ export default function AnaliseCreditoPage() {
                 </span>
               )}
             </div>
+
+            {/* ── OS FILTROS DE SITUAÇÃO ──
+                Um de cada vez, e não caixas que se somam: "revisadas E a revisar"
+                é a lista inteira, e "revisadas E sem cadastro" é uma pergunta que
+                ninguém faz. Cada botão traz o seu número, então dá para ver o
+                tamanho de cada monte antes de clicar. */}
+            {linhas && (
+              <div role="group" aria-label="Filtrar por situação"
+                style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 11 }}>
+                {([
+                  { s: 'todas', rotulo: 'Todas', conta: contagem.noEscopo, cor: 'badge-blue',
+                    dica: 'Todas as análises da lista' },
+                  { s: 'revisadas', rotulo: 'Revisadas', conta: contagem.revisadas, cor: 'badge-green',
+                    dica: 'Você já conferiu e ajustou os números destas' },
+                  { s: 'a-revisar', rotulo: 'Aguardando revisão', conta: contagem.aRevisar, cor: 'badge-yellow',
+                    dica: 'Ainda são os números que a máquina gerou · ninguém conferiu' },
+                  { s: 'sem-cadastro', rotulo: 'Sem cadastro no CRM', conta: contagem.semCadastro, cor: 'badge-orange',
+                    dica: 'A empresa não tem tomador cadastrado, então a análise não chega em ficha nenhuma' },
+                ] as { s: Situacao; rotulo: string; conta: number; cor: string; dica: string }[]).map(f => {
+                  const ativo = situacao === f.s
+                  return (
+                    <button key={f.s} type="button" title={f.dica}
+                      aria-pressed={ativo}
+                      onClick={() => setSituacao(f.s)}
+                      className={`badge ${ativo ? f.cor : 'badge-gray'}`}
+                      style={{
+                        cursor: 'pointer',
+                        border: ativo ? '1px solid currentColor' : '1px solid transparent',
+                        opacity: ativo || f.conta > 0 ? 1 : 0.55,
+                      }}>
+                      {f.rotulo} <b style={{ marginLeft: 3 }}>{f.conta}</b>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {linhas === null ? (
@@ -347,22 +473,46 @@ export default function AnaliseCreditoPage() {
               <p style={{ color: 'var(--soft)', fontSize: 14, lineHeight: 1.6, margin: 0 }}>
                 {contagem.total === 0
                   ? 'Nenhuma análise publicada no banco. Quem publica é a carga, na máquina onde as análises rodam.'
-                  : 'Nenhuma análise com essa busca. Tente outro nome, ou desligue "Só as vigentes" para ver as versões anteriores.'}
+                  : situacao !== 'todas'
+                    ? 'Nenhuma análise nesse filtro com essa busca. Clique em "Todas" para ver a lista inteira.'
+                    : 'Nenhuma análise com essa busca. Tente outro nome, ou desligue "Só as vigentes" para ver as versões anteriores.'}
               </p>
             </div>
           ) : (
             <div className="card-panel" style={{ padding: 0, overflow: 'hidden' }}>
               <div className="mt-tab-wrap">
                 <table className="mt-tab">
+                  {/* O título É o botão de ordenar: o `th` fica sem recheio e o
+                      botão ocupa a célula inteira, para o alvo do clique ser a
+                      coluna toda e não sete letras. A seta some quando a coluna
+                      não é a ativa (fica fraca, não invisível: é ela que conta
+                      que dá para clicar). */}
                   <thead>
                     <tr>
-                      <th>Empresa</th>
-                      <th>Corretora</th>
-                      <th style={{ textAlign: 'right' }}>Data</th>
-                      <th style={{ textAlign: 'right' }}>Score</th>
-                      <th>Rating</th>
-                      <th>Decisão</th>
-                      <th style={{ textAlign: 'right' }}>Limite recomendado</th>
+                      {COLUNAS_TABELA.map(c => {
+                        const ativa = coluna === c.k
+                        return (
+                          <th key={c.k} style={{ padding: 0 }}
+                            aria-sort={ativa ? (direcao === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                            <button type="button" onClick={() => clicarNoTitulo(c.k)}
+                              title={`Ordenar por ${c.rotulo}`}
+                              style={{
+                                width: '100%', display: 'inline-flex', alignItems: 'center', gap: 5,
+                                justifyContent: c.n ? 'flex-end' : 'flex-start',
+                                padding: '11px 14px', background: 'none', border: 'none',
+                                fontFamily: 'inherit', fontSize: 10.5, fontWeight: 700,
+                                textTransform: 'uppercase', letterSpacing: '.8px',
+                                color: ativa ? '#1e4080' : '#8ba3c0',
+                                whiteSpace: 'nowrap', cursor: 'pointer',
+                              }}>
+                              {c.rotulo}
+                              <span aria-hidden style={{ fontSize: 8, opacity: ativa ? 1 : 0.35 }}>
+                                {ativa && direcao === 'asc' ? '▲' : '▼'}
+                              </span>
+                            </button>
+                          </th>
+                        )
+                      })}
                       <th />
                     </tr>
                   </thead>
@@ -424,7 +574,9 @@ export default function AnaliseCreditoPage() {
           )}
 
           <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 12, lineHeight: 1.6, maxWidth: '92ch' }}>
-            Mostrando {vistas.length} de {contagem.total}. Esta lista é o que a carga publicou no
+            Mostrando {vistas.length} de {contagem.total}, ordenadas por{' '}
+            <b>{(COLUNAS_TABELA.find(c => c.k === coluna)?.rotulo ?? '').toLowerCase()}</b>{' '}
+            ({direcao === 'asc' ? 'crescente' : 'decrescente'}). Esta lista é o que a carga publicou no
             banco — <b>nada a roda por horário</b>, então uma análise editada hoje aparece aqui
             depois que alguém publicar.
           </div>
