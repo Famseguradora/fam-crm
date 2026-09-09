@@ -91,3 +91,7 @@ scripts/carteiro.json
 # O segredo e o caminho da raiz que o agente da esteira usa. Fica na maquina
 # onde o motor da analise roda, e nunca no repositorio.
 scripts/esteira.json
+
+# O log do servidor da maquina (o que substituiu a janela preta). E historico
+# local, cresce sozinho e nao e fonte.
+crm-servidor.log
