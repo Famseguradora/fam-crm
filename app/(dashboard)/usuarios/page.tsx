@@ -6,6 +6,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { maskTelefone, badgeClassPerfil, badgeClassStatus, fmtData, titleCase, labelPerfil } from '@/lib/utils'
 import type { Usuario, Perfil } from '@/types'
+// As cinco áreas do fluxo do card, para não repetir a lista aqui.
+import { AREAS, type AreaId } from '@/lib/card/secoes'
 
 interface FormData {
   nome: string
@@ -16,11 +18,13 @@ interface FormData {
   perfil: Perfil
   status: 'ativo' | 'inativo'
   comite: boolean
+  areas: AreaId[]
+  diretoria: boolean
 }
 
 const FORM_INICIAL: FormData = {
   nome: '', email: '', senha: '', telefone: '', cargo: '',
-  perfil: 'usuario', status: 'ativo', comite: false,
+  perfil: 'usuario', status: 'ativo', comite: false, areas: [], diretoria: false,
 }
 
 export default function UsuariosPage() {
@@ -84,6 +88,8 @@ export default function UsuariosPage() {
       perfil: u.perfil,
       status: u.status,
       comite: u.comite ?? false,
+      areas: ((u.areas ?? []) as AreaId[]),
+      diretoria: u.diretoria ?? false,
     })
     setMensagem(null)
     setMostrarForm(true)
@@ -113,6 +119,8 @@ export default function UsuariosPage() {
             perfil: form.perfil,
             status: form.status,
             comite: form.comite,
+            areas: form.areas,
+            diretoria: form.diretoria,
           })
           .eq('id', editando.id)
 
@@ -334,6 +342,60 @@ export default function UsuariosPage() {
                           Com telefone cadastrado, recebe o convite de votação no WhatsApp.
                         </span>
                       )}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Áreas do fluxo do card do tomador. Enquanto não houver
+                    ninguém de Cadastro e triagem, o Crédito acumula; liberar
+                    essa área para outra pessoa é marcar a caixa aqui, sem
+                    deploy. Pedido dele em 08/09/2026. */}
+                <div className="form-field full">
+                  <label style={{ fontSize: 12.5, fontWeight: 700, color: '#1a3560', display: 'block', marginBottom: 6 }}>
+                    Áreas do card do tomador
+                  </label>
+                  <div style={{ fontSize: 12, color: '#6080a0', marginBottom: 8, lineHeight: 1.45 }}>
+                    Quem tem a área escreve o registro <b>oficial</b> daquela seção quando a central
+                    estiver com ela. Quem não tem, lê e comenta. A trava é do banco, não da tela.
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {AREAS.map(a => {
+                      const marcada = form.areas.includes(a.id)
+                      return (
+                        <label key={a.id} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer',
+                          background: marcada ? '#e8f0fa' : '#f8fafc',
+                          border: `1.5px solid ${marcada ? '#1e4080' : '#c5d5e8'}`,
+                          borderRadius: 8, padding: '9px 12px', fontSize: 13,
+                        }}>
+                          <input type="checkbox" checked={marcada}
+                            onChange={e => setForm({
+                              ...form,
+                              areas: e.target.checked
+                                ? [...form.areas, a.id]
+                                : form.areas.filter(x => x !== a.id),
+                            })}
+                            style={{ width: 17, height: 17, accentColor: '#1e4080', cursor: 'pointer' }} />
+                          <span>{a.icone} {a.nome}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="form-field full">
+                  <label style={{
+                    display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                    background: form.diretoria ? '#fdf8e6' : '#f8fafc',
+                    border: `1.5px solid ${form.diretoria ? '#e8b84b' : '#c5d5e8'}`,
+                    borderRadius: 8, padding: '12px 14px',
+                  }}>
+                    <input type="checkbox" checked={form.diretoria}
+                      onChange={e => setForm({ ...form, diretoria: e.target.checked })}
+                      style={{ width: 18, height: 18, accentColor: '#e8b84b', cursor: 'pointer' }} />
+                    <span style={{ fontSize: 13, color: '#1a2a3a', lineHeight: 1.4 }}>
+                      <strong>★ Poder de diretoria no card</strong> — escreve e reabre seção de
+                      qualquer área, com o motivo ficando no histórico
                     </span>
                   </label>
                 </div>

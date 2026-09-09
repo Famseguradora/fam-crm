@@ -49,10 +49,14 @@ interface Aviso {
   detalhe: string | null
 }
 
-const TOM: Record<string, { faixa: string; texto: string; verbo: string }> = {
+const TOM: Record<string, { faixa: string; texto: string; verbo: string; prefixo?: string }> = {
   iniciou:  { faixa: '#2563eb', texto: '#1e3a8a', verbo: 'iniciou' },
   concluiu: { faixa: '#22a06b', texto: '#14532d', verbo: 'ficou pronta' },
   falhou:   { faixa: '#dc2626', texto: '#7f1d1d', verbo: 'parou com erro' },
+  // A Triagem terminou e o caso entrou na fila do analista. Ouro, e não o verde
+  // de "análise pronta": as duas coisas acontecem em pontas opostas da esteira e
+  // confundi-las faria alguém abrir a análise achando que já tem parecer.
+  triagem:  { faixa: '#c8922e', texto: '#7a5410', verbo: 'entrou na fila de análise', prefixo: 'O tomador' },
 }
 
 export default function AvisosAoVivo({ editaAnalise }: { editaAnalise: boolean }) {
@@ -128,7 +132,7 @@ export default function AvisosAoVivo({ editaAnalise }: { editaAnalise: boolean }
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13.5, color: t.texto, lineHeight: 1.45 }}>
-                  Análise da empresa{' '}
+                  {t.prefixo ?? 'Análise da empresa'}{' '}
                   <strong style={{ color: '#0a1628' }}>{a.empresa}</strong> {t.verbo}.
                 </div>
                 {a.detalhe && (

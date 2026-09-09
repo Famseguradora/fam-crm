@@ -35,6 +35,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fmtMoeda, maskCNPJ } from '@/lib/utils'
+// A regra do card mora num lugar só: a Mesa e este funil importam daqui, para
+// que "travado" no cartão e "travado" na seção nunca discordem.
+import {
+  REGUA, ESPERAM_SUBSCRICAO, nomeArea, resumoDoCard,
+  type PostoCentral, type Secao, type ItemCatalogo, type DadosDoCard,
+} from '@/lib/card/secoes'
 
 // ── as peças de dado ────────────────────────────────────────────────────────
 
@@ -52,9 +58,10 @@ interface Operacao {
   prioridade: string | null
   temperatura: string | null
   data_entrada: string | null
+  voto_subscricao: string | null
 }
 
-interface Tomador { id: string; razao_social: string; cnpj: string | null }
+interface Tomador { id: string; razao_social: string; cnpj: string | null; central_area: string | null }
 interface Corretora { id: string; razao_social: string; nome_fantasia: string | null }
 
 const num = (v: number | string | null | undefined): number => {
@@ -98,7 +105,10 @@ const MORTAS = new Set(['Perdido', 'Recusado'])
      Kanban   a fila inteira de uma vez, por etapa
      Galeria  o cartão grande, para bater o olho e entender o caso
      Lista    uma linha por operação, para varrer e comparar  */
-type Modo = 'kanban' | 'galeria' | 'lista'
+// "areas" entrou em 08/09/2026. As outras três colunam por STATUS da operação;
+// esta coluna por ÁREA responsável, e é a única onde o cartão se arrasta.
+// Decisão dele: arrastar muda a área responsável, nunca o status da operação.
+type Modo = 'kanban' | 'galeria' | 'lista' | 'areas'
 
 type ColunaLista = 'empresa' | 'corretora' | 'produto' | 'etapa' | 'lmg' | 'taxa' | 'entrada'
 type Direcao = 'asc' | 'desc'
@@ -135,18 +145,32 @@ export default function FluxoPage() {
   const [busca, setBusca] = useState('')
   const [soVivas, setSoVivas] = useState(false)
   const [modo, setModo] = useState<Modo>('kanban')
+  // O card por área: as seções, o catálogo de documentos e os nomes de arquivo
+  // que o checklist do Cadastro lê. Mesma regra da Mesa, vinda de lib/card/secoes.
+  const [secoes, setSecoes] = useState<Map<string, Secao[]>>(new Map())
+  const [catalogo, setCatalogo] = useState<ItemCatalogo[]>([])
+  const [arquivos, setArquivos] = useState<Map<string, string[]>>(new Map())
+  const [arrastando, setArrastando] = useState<string | null>(null)
+  const [soltandoEm, setSoltandoEm] = useState<string | null>(null)
   const [coluna, setColuna] = useState<ColunaLista>('entrada')
   const [direcao, setDirecao] = useState<Direcao>('desc')
 
   const carregar = useCallback(async (vivo: { atual: boolean }) => {
     const supabase = createClient()
-    const [e, o, t, c] = await Promise.all([
+    const [e, o, t, c, s, cat, anx] = await Promise.all([
       supabase.from('status_fluxo_operacao').select('nome, cor, ordem').eq('ativo', true).order('ordem'),
       supabase.from('operacoes')
-        .select('id, tomador_id, corretora_id, modalidade, lmg, taxa, premio_previsto, status, prioridade, temperatura, data_entrada')
+        .select('id, tomador_id, corretora_id, modalidade, lmg, taxa, premio_previsto, status, prioridade, temperatura, data_entrada, voto_subscricao')
         .limit(3000),
-      supabase.from('tomadores').select('id, razao_social, cnpj').limit(3000),
+      supabase.from('tomadores').select('id, razao_social, cnpj, central_area').limit(3000),
       supabase.from('corretoras').select('id, razao_social, nome_fantasia').limit(3000),
+      // As seções do card: é daqui que sai "em que área o card está e o que trava".
+      supabase.from('card_secoes')
+        .select('id, tomador_id, area, estado, texto, rascunho, campos, pendencia_texto, paralisa, paralisa_motivo, paralisa_por')
+        .limit(6000),
+      supabase.from('caso_item_catalogo').select('*').eq('ativo', true).order('ordem'),
+      // `analise_documentos` está zerada, então o checklist lê só os anexos.
+      supabase.from('anexos').select('tomador_id, nome_original').limit(3000),
     ])
     if (!vivo.atual) return
     const falhou = e.error || o.error || t.error || c.error
@@ -155,6 +179,24 @@ export default function FluxoPage() {
     setOps((o.data ?? []) as unknown as Operacao[])
     setTomadores(new Map(((t.data ?? []) as Tomador[]).map(x => [x.id, x])))
     setCorretoras(new Map(((c.data ?? []) as Corretora[]).map(x => [x.id, x])))
+
+    const porTomador = new Map<string, Secao[]>()
+    ;((s.data ?? []) as unknown as Secao[]).forEach(x => {
+      const lista = porTomador.get(x.tomador_id) ?? []
+      lista.push(x)
+      porTomador.set(x.tomador_id, lista)
+    })
+    setSecoes(porTomador)
+    setCatalogo((cat.data ?? []) as ItemCatalogo[])
+
+    const arqs = new Map<string, string[]>()
+    ;((anx.data ?? []) as { tomador_id: string | null; nome_original: string }[]).forEach(a => {
+      if (!a.tomador_id) return
+      const lista = arqs.get(a.tomador_id) ?? []
+      lista.push(a.nome_original)
+      arqs.set(a.tomador_id, lista)
+    })
+    setArquivos(arqs)
     setCarregando(false)
   }, [])
 
@@ -173,6 +215,53 @@ export default function FluxoPage() {
     const c = corretoras.get(id)
     return c ? (c.nome_fantasia || c.razao_social) : ''
   }, [corretoras])
+
+  /** Em que área o card está e o que trava, com a MESMA conta da Mesa. As
+   *  operações que esperam decisão são as vivas deste tomador. */
+  const resumoDe = useCallback((tomadorId: string | null) => {
+    if (!tomadorId) return null
+    const secs = secoes.get(tomadorId)
+    if (!secs?.length) return null
+    const t = tomadores.get(tomadorId)
+    const dados: DadosDoCard = {
+      cnpj: t?.cnpj ?? null,
+      arquivos: arquivos.get(tomadorId) ?? [],
+      // O funil não carrega a análise inteira: o que a seção do Crédito precisa
+      // saber aqui é se ela existe, e isso a seção concluída já conta.
+      analise: null,
+      operacoesVivas: ops
+        .filter(o => o.tomador_id === tomadorId && ESPERAM_SUBSCRICAO.has(o.status ?? ''))
+        .map(o => ({ id: o.id, modalidade: o.modalidade, taxa: num(o.taxa) || null, voto: o.voto_subscricao })),
+    }
+    return resumoDoCard(secs, (t?.central_area as PostoCentral) ?? 'comercial', dados, catalogo)
+  }, [secoes, tomadores, arquivos, ops, catalogo])
+
+  /** Arrastar no funil por área muda A ÁREA RESPONSÁVEL, e nada mais. O status
+   *  da operação continua sendo decidido dentro da seção, ao concluir: decisão
+   *  dele em 08/09/2026. */
+  const mover = useCallback(async (tomadorId: string, destino: PostoCentral) => {
+    const t = tomadores.get(tomadorId)
+    if (!t || t.central_area === destino) return
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error } = await supabase.from('tomadores').update({ central_area: destino }).eq('id', tomadorId)
+    if (error) { setErro(error.message); return }
+    let nome: string | null = null
+    if (user) {
+      const { data } = await supabase.from('usuarios').select('nome').eq('auth_id', user.id).maybeSingle()
+      nome = (data as { nome: string | null } | null)?.nome ?? null
+    }
+    await supabase.from('card_eventos').insert({
+      tomador_id: tomadorId, tipo: 'evento', area: destino,
+      texto: `Central movida de ${nomeArea(t.central_area)} para ${nomeArea(destino)} pelo funil. O status das operações não mudou.`,
+      autor_nome: nome, autor_auth_id: user?.id ?? null,
+    })
+    setTomadores(m => {
+      const novo = new Map(m)
+      novo.set(tomadorId, { ...t, central_area: destino })
+      return novo
+    })
+  }, [tomadores])
 
   // ── o que a busca deixou passar ───────────────────────────────────────────
   const vistas = useMemo(() => {
@@ -209,6 +298,19 @@ export default function FluxoPage() {
   const porEtapa = useCallback(
     (nome: string) => vistas.filter(o => (o.status ?? '') === nome),
     [vistas])
+
+  /** UMA EMPRESA, UM CARD: o olhar por área não repete o tomador uma vez por
+   *  operação. Cada empresa aparece na coluna da área que está com a central. */
+  const empresasVistas = useMemo(() => {
+    const mapa = new Map<string, { id: string; nome: string; ops: Operacao[] }>()
+    vistas.forEach(o => {
+      if (!o.tomador_id) return
+      const atual = mapa.get(o.tomador_id)
+      if (atual) atual.ops.push(o)
+      else mapa.set(o.tomador_id, { id: o.tomador_id, nome: nomeDoTomador(o.tomador_id), ops: [o] })
+    })
+    return [...mapa.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  }, [vistas, nomeDoTomador])
 
   /** A cor da etapa, para a Galeria e a Lista pintarem igual ao Kanban. Etapa
    *  que saiu da régua fica cinza, e não colorida de mentira. */
@@ -317,6 +419,7 @@ export default function FluxoPage() {
               { m: 'kanban', rotulo: 'Kanban', dica: 'A fila inteira de uma vez, por etapa' },
               { m: 'galeria', rotulo: 'Galeria', dica: 'O cartão grande, para bater o olho e entender o caso' },
               { m: 'lista', rotulo: 'Lista', dica: 'Uma linha por operação, para varrer e comparar' },
+              { m: 'areas', rotulo: 'Áreas', dica: 'Um cartão por EMPRESA, na área que está com a central. Arrastar muda a área responsável, não o status' },
             ] as { m: Modo; rotulo: string; dica: string }[]).map(b => (
               <button key={b.m} type="button" title={b.dica}
                 aria-pressed={modo === b.m}
@@ -435,6 +538,93 @@ export default function FluxoPage() {
             )
         )}
 
+        {/* ══════════ ÁREAS ══════════
+            As outras colunas são o STATUS da operação. Estas são a ÁREA que
+            está com a central, e o cartão é a EMPRESA. Arrastar aqui move a
+            responsabilidade entre áreas; o status da operação continua sendo
+            decidido dentro da seção, ao concluir. Decisão dele em 08/09/2026. */}
+        {modo === 'areas' && (
+          <>
+            <div className="mt-nota" style={{ marginBottom: 12 }}>
+              Um cartão por <b>empresa</b>, na área que está com a central. Arraste para passar a
+              responsabilidade: <b>o status da operação não muda</b>, e a mudança fica no histórico do card.
+            </div>
+            <div style={{
+              display: 'grid', gridTemplateColumns: `repeat(${REGUA.length}, minmax(198px, 1fr))`,
+              gap: 10, overflowX: 'auto', paddingBottom: 6,
+            }}>
+              {REGUA.map(posto => {
+                const daArea = empresasVistas.filter(
+                  e => ((tomadores.get(e.id)?.central_area as PostoCentral) ?? 'comercial') === posto)
+                return (
+                  <div key={posto}
+                    onDragOver={ev => { ev.preventDefault(); setSoltandoEm(posto) }}
+                    onDragLeave={() => setSoltandoEm(s => (s === posto ? null : s))}
+                    onDrop={ev => {
+                      ev.preventDefault()
+                      setSoltandoEm(null)
+                      const id = ev.dataTransfer.getData('text/plain') || arrastando
+                      if (id) mover(id, posto)
+                      setArrastando(null)
+                    }}
+                    style={{
+                      background: soltandoEm === posto ? '#e8f0fa' : '#eef3f9',
+                      border: `1px ${soltandoEm === posto ? 'dashed #1e4080' : 'solid var(--border)'}`,
+                      borderRadius: 10, padding: 9, minHeight: 140,
+                    }}>
+                    <h4 style={{
+                      fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.7px',
+                      color: '#1a3560', fontWeight: 700, display: 'flex',
+                      justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px', gap: 6,
+                    }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{nomeArea(posto)}</span>
+                      <span style={{
+                        background: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 11,
+                        border: '1px solid var(--border)', flexShrink: 0,
+                      }}>{daArea.length}</span>
+                    </h4>
+
+                    {daArea.length === 0 ? (
+                      <div style={{ fontSize: 11.5, color: '#8fa3b8', padding: '6px 2px' }}>vazio</div>
+                    ) : daArea.map(emp => {
+                      const r = resumoDe(emp.id)
+                      const lmg = emp.ops.reduce((s, o) => s + num(o.lmg), 0)
+                      return (
+                        <div key={emp.id}
+                          draggable
+                          onDragStart={ev => { ev.dataTransfer.setData('text/plain', emp.id); setArrastando(emp.id) }}
+                          onDragEnd={() => { setArrastando(null); setSoltandoEm(null) }}
+                          onClick={() => router.push(`/tomadores/${emp.id}`)}
+                          title="Arraste para outra área, ou clique para abrir o card"
+                          style={{
+                            background: '#fff', border: '1px solid var(--border)',
+                            borderLeft: `4px solid ${r?.paralisado ? '#a05010' : r?.trava ? '#e8b84b' : '#27a96c'}`,
+                            borderRadius: 8, padding: '9px 11px', marginBottom: 8, cursor: 'grab',
+                            opacity: arrastando === emp.id ? 0.5 : 1,
+                          }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#102040', lineHeight: 1.3 }}>
+                            {emp.nome}
+                          </div>
+                          <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 3 }}>
+                            {emp.ops.length} {emp.ops.length === 1 ? 'operação' : 'operações'} · <b style={{ color: '#1a2a3a' }}>{brlCurto(lmg)}</b>
+                          </div>
+                          {r?.paralisado ? (
+                            <div style={{ fontSize: 11, color: '#a05010', marginTop: 4, fontWeight: 700 }}>⏸ {r.trava}</div>
+                          ) : r?.trava ? (
+                            <div style={{ fontSize: 11, color: '#8a6410', marginTop: 4 }}>{r.trava}</div>
+                          ) : (
+                            <div style={{ fontSize: 11, color: '#1a7a50', marginTop: 4 }}>nada travando</div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
+
         {/* ══════════ KANBAN ══════════ */}
         <div style={{
           display: modo === 'kanban' ? 'grid' : 'none',
@@ -481,6 +671,9 @@ export default function FluxoPage() {
                       morta={MORTAS.has(o.status ?? '')}
                       podeAbrir={!!o.tomador_id}
                       onAbrir={() => o.tomador_id && router.push(`/tomadores/${o.tomador_id}`)}
+                      area={resumoDe(o.tomador_id)?.area}
+                      trava={resumoDe(o.tomador_id)?.trava}
+                      paralisado={resumoDe(o.tomador_id)?.paralisado}
                     />
                   ))
                 )}
@@ -656,7 +849,7 @@ function Meta({ rotulo, valor, forte }: { rotulo: string; valor: string; forte?:
   )
 }
 
-function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbrir, onAbrir }: {
+function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbrir, onAbrir, area, trava, paralisado }: {
   empresa: string
   corretora: string
   modalidade: string | null
@@ -666,6 +859,11 @@ function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbr
   morta: boolean
   podeAbrir: boolean
   onAbrir: () => void
+  /** A área que está com a central do card, e o que trava lá. Vem de
+   *  lib/card/secoes, a mesma conta que a Mesa faz. */
+  area?: string
+  trava?: string | null
+  paralisado?: boolean
 }) {
   return (
     <div
@@ -702,6 +900,22 @@ function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbr
       {corretora && (
         <div style={{ fontSize: 11, color: '#8fa3b8', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {corretora}
+        </div>
+      )}
+      {area && (
+        <div style={{
+          marginTop: 6, paddingTop: 5, borderTop: '1px dotted #dbe6f2',
+          fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap',
+        }}>
+          <span style={{
+            background: paralisado ? '#fdf3e6' : '#e6f0fb', color: paralisado ? '#a05010' : '#1a55a0',
+            borderRadius: 20, padding: '1px 8px', fontWeight: 700,
+          }}>
+            {paralisado ? '⏸ ' : ''}{area}
+          </span>
+          <span style={{ color: trava ? '#8a6410' : '#1a7a50', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {trava ?? 'nada travando'}
+          </span>
         </div>
       )}
     </div>

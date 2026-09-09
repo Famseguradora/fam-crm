@@ -36,7 +36,19 @@ import { NextResponse, type NextRequest } from 'next/server'
 // '/api/analise/corretoras' é o motor perguntando com que nome o CRM chama a
 // corretora que a IA identificou (31/08/2026). Mesma porta, mesmo segredo, e é
 // a única das cinco que SÓ LÊ: ela não cria nem altera corretora nenhuma.
-const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi', '/api/analise/evento', '/api/agente/evento', '/api/analise/pedido', '/api/analise/tomador', '/api/analise/corretoras']
+//
+// '/api/carteiro' é o Carteiro: o processo que roda na máquina do Comercial,
+// lê o Outlook clássico e alimenta a Caixa de entrada. Mesma história das
+// anteriores, e o defeito de esquecer a linha é IDÊNTICO: o POST vira
+// redirecionamento para /login, o servidor responde 200 com HTML, e a máquina
+// conclui que sincronizou a caixa inteira sem ter gravado nada. Esta linha
+// nasceu do ensaio (07/09/2026), que pegou o 405 antes de o Marco pegar.
+// '/api/esteira' é o agente da análise de crédito, na mesma máquina e com o
+// mesmo segredo: ele conta em que pé está cada análise e recebe as ordens que
+// alguém deu na tela. Mesma armadilha, mesma linha.
+// De novo: "não exige cookie" NÃO é "aberta". As duas rotas conferem o segredo
+// `CARTEIRO_TOKEN`, e sem a variável configurada respondem 503, nunca 200.
+const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi', '/api/analise/evento', '/api/agente/evento', '/api/analise/pedido', '/api/analise/tomador', '/api/analise/corretoras', '/api/carteiro', '/api/esteira']
 
 export async function proxy(request: NextRequest) {
   // MODO SANDBOX: não há sessão Supabase, então o gate de login abaixo

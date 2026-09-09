@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtDataExtenso } from '@/lib/utils'
 import { DateRangeProvider } from '@/lib/context/date-range-context'
 import { PermissoesProvider } from '@/lib/context/permissoes-context'
+import { MQ_MOBILE } from '@/lib/ui/mobile'
 import AvisosAoVivo from './AvisosAoVivo'
 import InstallPrompt from './InstallPrompt'
 import NewsTicker from './NewsTicker'
@@ -44,15 +45,26 @@ interface Tab {
 
 const TABS: Tab[] = [
   { label: '📊 Dashboard',  href: '/' },
-  /* O FUNIL EM CARDS, a tela do prototipo trazida para dentro do CRM
-     (08/09/2026). Fica logo depois do Dashboard, e e de todas as areas: e o
-     lugar onde Comercial, Cadastro, Credito e Subscricao olham para a MESMA
-     fila, cada operacao num cartao, cada cartao abrindo o card da empresa. */
+  /* O FUNIL EM CARDS, a tela do protótipo trazida para dentro do CRM
+     (08/09/2026). Fica logo depois do Dashboard, e é de todas as áreas: é o
+     lugar onde Comercial, Cadastro, Crédito e Subscrição olham para a MESMA
+     fila, cada operação num cartão, cada cartão abrindo o card da empresa. */
   { label: '📋 Funil',      href: '/fluxo' },
-  /* A análise de crédito é um subitem de Tomadores: passa o mouse, aparece.
-     É a porta de entrada da frente 1 (a análise dentro do CRM). */
+  /* A primeira estação da esteira: o Comercial sobe o e-mail e o caso nasce
+     dentro do CRM. Fica antes de Tomadores porque é onde o tomador começa. */
+  { label: '📥 Comercial',  href: '/comercial' },
+  /* A segunda estação: o caso que a Triagem concluiu vira análise de crédito.
+     Item de primeiro nível, e não subitem de Tomadores, porque é ESTEIRA e não
+     cadastro: quem abre esta tela quer saber o que está travado hoje, e isso
+     não se procura dentro de um menu de ficha.
+     A tela antiga (o iframe do 127.0.0.1) continua em Tomadores > Análise de
+     crédito enquanto o sistema separado não for aposentado. */
+  /* UMA PORTA SÓ para a análise de crédito (ordem dele, 08/09/2026). A esteira,
+     o acervo e o motor embutido viraram abas de `/analises`; o resultado de uma
+     empresa continua dentro do card dela. Item sem submenu de propósito: o
+     submenu era o que fazia parecer que havia duas telas. */
+  { label: '🔬 Análise',    href: '/analises' },
   { label: '👥 Tomadores',  href: '/tomadores', sub: [
-    { label: '🔎 Análise de crédito', href: '/tomadores/analise-credito' },
     { label: '⚖️ Conferência', href: '/tomadores/conferencia' },
     /* O chão de fábrica: os funcionários virtuais trabalhando, ao vivo.
        Fica sob Tomadores porque os dois que reportam hoje (Triagem e Analista)
@@ -67,11 +79,17 @@ const TABS: Tab[] = [
 /* Telas sem a moldura clara da área de conteúdo: elas são painéis inteiros e
    usam a janela toda. Uma lista só, para o próximo caso não virar mais um
    ternário aninhado aqui dentro. */
-const TELA_CHEIA = ['/corretoras', '/financeiro', '/tomadores/analise-credito']
+const TELA_CHEIA = ['/corretoras', '/financeiro']
 
 // Telas que aparecem no menu do app no celular (as demais ficam só no desktop).
 // Corretoras entra no mobile (respeitando adminOnly); o cockpit é responsivo.
-const MOBILE_NAV_HREFS = ['/', '/fluxo', '/operacoes', '/tomadores', '/corretoras']
+//
+// `/analises` entrou em 08/09/2026, e o motivo é o ponto: o acervo e o relatório
+// foram feitos justamente para a análise ser lida FORA da máquina onde o sistema
+// roda — inclusive no celular — e sem esta linha não havia como chegar lá pelo
+// telefone. Desde 08/09/2026 é uma tela só, com as abas Mesa · Acervo · Sistema
+// no alto dela.
+const MOBILE_NAV_HREFS = ['/', '/fluxo', '/comercial', '/analises', '/operacoes', '/tomadores', '/corretoras']
 
 const SUBSCRICAO_ITEMS: { label: string; href: string; icon: string; disabled?: boolean }[] = []
 
@@ -108,11 +126,14 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   useEffect(() => {
-    // Celular em QUALQUER orientação: largura pequena (retrato) OU altura
-    // pequena (paisagem — ao deitar o celular a largura passa de 768px, mas a
-    // altura cai p/ ~390px). Sem o 2º critério, o celular deitado virava
-    // "desktop" e aparecia a barra lateral + abas de cima.
-    const mq = window.matchMedia('(max-width: 768px), (max-height: 600px)')
+    // Celular em QUALQUER orientação: largura pequena (retrato) OU tela baixa
+    // com a mira do dedo (paisagem · ao deitar o celular a largura passa de
+    // 768px, mas a altura cai p/ ~390px). Sem o 2º critério, o celular deitado
+    // virava "desktop" e aparecia a barra lateral + abas de cima.
+    // O `pointer: coarse` do 2º critério é o que impede um MONITOR de tela
+    // baixa de cair aqui dentro. A regra mora em lib/ui/mobile.ts, com o
+    // porquê inteiro escrito.
+    const mq = window.matchMedia(MQ_MOBILE)
     const apply = () => setIsMobile(mq.matches)
     apply()
     mq.addEventListener('change', apply)
@@ -156,30 +177,69 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
      a segunda barra de rolagem do CRM. */
   const zonaFixa = useRef<HTMLDivElement>(null)
   const menuLateral = useRef<HTMLDivElement>(null)
-  const [medidas, setMedidas] = useState({ grude: 118, doTopo: 118 })
+  /* UM NÚMERO SÓ, a altura da zona fixa (08/09/2026). Eram dois (`grude` e
+     `doTopo`), e a discordância entre eles é que deixava o pé do menu solto no
+     meio da janela. Quem manda na altura do menu agora é a coluna que o
+     segura, e o CSS resolve o resto: ver o bloco da Sidebar mais abaixo. */
+  const [medidas, setMedidas] = useState({ grude: 118 })
 
   useEffect(() => {
     if (isMobile) return
+
+    /* A ALTURA DO MENU SEGUE O TOPO REAL DELE, e por isso é ajustada aqui e não
+       só no CSS (08/09/2026). O menu tem DUAS posições e elas pedem alturas
+       diferentes: no alto da página ele começa embaixo das abas do CRM (que
+       rolam junto e não fazem parte da zona fixa) e, depois de rolar, ele gruda
+       embaixo da zona fixa, 49px mais acima. Foram esses 49px, medidos na tela,
+       que sobraram no pé da barra azul no print dele.
+
+       Um número fixo acerta um estado e erra o outro. `getBoundingClientRect`
+       já devolve a posição do sticky depois de grudado, então esta conta acerta
+       os dois. Escreve direto no DOM, sem estado: é a cada rolagem.
+
+       Não entra em laço com o observador porque a coluna que segura o menu tem
+       a altura do CORPO, e não a do menu: mexer na altura do menu não mexe na
+       altura da página. */
+    const ajustarMenu = () => {
+      const el = menuLateral.current
+      if (!el) return
+      const alto = Math.max(0, Math.round(window.innerHeight - el.getBoundingClientRect().top))
+      /* VAI NUMA VARIÁVEL CSS, e não em `style.height` (medido em 08/09/2026).
+         Escrevendo direto no `height`, o próximo render do React reescrevia a
+         propriedade com o valor do JSX e o ajuste sumia: no topo da página a
+         barra voltava a passar 49px da janela. `--menu-alto` o React não
+         conhece, então ele nunca a toca, e o `height` do JSX é uma string fixa
+         que só lê essa variável. */
+      el.style.setProperty('--menu-alto', `${alto}px`)
+    }
+
     const medir = () => {
       const grude = Math.round(zonaFixa.current?.getBoundingClientRect().height ?? 118)
-      // Medir pelo PAI, nunca pelo proprio menu: o menu e sticky, e quando ja
-      // esta grudado o rect.top dele e `grude` somado a rolagem inteira. Era
-      // isso que fazia a barra encolher para um quadradinho com rolagem propria
-      // depois de rolar a pagina (visto por ele em 30/08/2026). O pai (a linha
-      // do corpo) nao gruda, entao a conta dele e estavel.
-      const pai = menuLateral.current?.parentElement
-      const doTopo = pai ? Math.round(pai.getBoundingClientRect().top + window.scrollY) : grude
       // O guarda de 1px é o que impede o laço: mudar a altura do menu muda a
       // altura do corpo, o observador dispara de novo, e sem ele isso não pararia.
-      setMedidas(m => (Math.abs(m.grude - grude) < 1 && Math.abs(m.doTopo - doTopo) < 1)
-        ? m : { grude, doTopo })
+      setMedidas(m => (Math.abs(m.grude - grude) < 1 ? m : { grude }))
+      ajustarMenu()
     }
     medir()
+
+    // rAF para não recalcular a cada pixel de rolagem numa lista de 26 mil px.
+    let pedido = 0
+    const naRolagem = () => {
+      if (pedido) return
+      pedido = requestAnimationFrame(() => { pedido = 0; ajustarMenu() })
+    }
+
     const ro = new ResizeObserver(medir)
     ro.observe(document.body)
     if (zonaFixa.current) ro.observe(zonaFixa.current)
     window.addEventListener('resize', medir)
-    return () => { ro.disconnect(); window.removeEventListener('resize', medir) }
+    window.addEventListener('scroll', naRolagem, { passive: true })
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', medir)
+      window.removeEventListener('scroll', naRolagem)
+      if (pedido) cancelAnimationFrame(pedido)
+    }
   }, [isMobile])
 
   function showToast(msg: string) {
@@ -512,32 +572,41 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
 
         {/* ── Sidebar (desktop) ── */}
         {!isMobile && (
-        <div ref={menuLateral} style={{
+        /* A COLUNA e o MENU são duas peças, e é o que conserta o pé solto
+           (08/09/2026).
+           Antes era uma peça só: um menu sticky com `top: grude` e
+           `height: calc(100vh - doTopo)`. Dois números medidos em momentos
+           diferentes mandando na mesma caixa, e bastava eles discordarem (o
+           ticker de notícias fecha, a barra de abas passa de duas linhas para
+           uma) para o menu terminar antes do pé da janela: a faixa clara embaixo
+           da barra azul que ele mostrou no print.
+
+           Agora a COLUNA se estica com o corpo da página (`align-self: stretch`),
+           então nunca sobra faixa clara ao lado do conteúdo, e o MENU dentro dela
+           gruda com um número só: a altura da zona fixa. O `maxHeight: 100%` é o
+           que impede o menu de passar do fim do corpo em página curta, que era o
+           outro defeito, o da segunda barra de rolagem. */
+        <div style={{
           width: sidebarW,
           minWidth: sidebarW,
           background: '#0d1e3a',
           borderRight: '1px solid #1a3560',
+          transition: 'width 0.2s ease, min-width 0.2s ease',
+          flexShrink: 0,
+          alignSelf: 'stretch',
+        }}>
+        <div ref={menuLateral} style={{
           display: 'flex',
           flexDirection: 'column',
-          transition: 'width 0.2s ease, min-width 0.2s ease',
           overflowY: 'auto',
           overflowX: 'hidden',
-          flexShrink: 0,
-          // Menu lateral SEMPRE visível: gruda abaixo do topo fixo do app e não
-          // acompanha a rolagem da página.
-          //
-          // OS DOIS NÚMEROS SÃO MEDIDOS, e não escritos (consertado em 29/08/2026).
-          // Eram 118px fixos nos dois lugares, e o menu NASCE em 167 (barra + os dois
-          // tickers + as abas). Resultado: ele terminava 49px abaixo da janela, e o CRM
-          // inteiro ganhava uma segunda barra de rolagem que deslocava o layout.
-          //
-          // `grude` é onde ele para ao rolar (a altura da zona fixa). `doTopo` é onde ele
-          // COMEÇA, e é dele que sai a altura: assim o pé do menu encosta no pé da janela
-          // e não passa. Os dois mudam quando o ticker de notícias é fechado no X.
           position: 'sticky',
           top: medidas.grude,
-          alignSelf: 'flex-start',
-          height: `calc(100vh - ${medidas.doTopo}px)`,
+          /* O `calc` é só o valor de partida, para o primeiro quadro não nascer
+             torto. Quem manda daqui em diante é a variável, escrita por
+             `ajustarMenu` no efeito lá em cima. */
+          height: `var(--menu-alto, calc(100vh - ${medidas.grude}px))`,
+          maxHeight: '100%',
         }}>
 
           {/* A seta de recolher, sozinha na linha. O título "Performance" saiu
@@ -646,6 +715,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
           {isAdmin && (
             <SidebarBtn href="/usuarios" icon="⚙️" label="Usuários" />
           )}
+        </div>
         </div>
         )}
 

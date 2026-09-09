@@ -28,6 +28,14 @@ export interface Usuario {
   // Comitê: membro votante do "Julgamento" das operações. Quando true e há
   // telefone cadastrado, o diretor recebe o convite de votação no WhatsApp.
   comite: boolean
+  // As áreas do fluxo que a pessoa escreve como OFICIAL no card do tomador
+  // (comercial, cadastro, credito, subscricao, juridico). É lista porque o
+  // Crédito acumula o Cadastro enquanto não houver alguém de triagem, e o Marco
+  // libera a área para outra pessoa por esta tela. Ver lib/card/secoes.ts.
+  areas: string[] | null
+  // Poder de diretoria no card: reabre seção de qualquer área. Não é o mesmo
+  // que `perfil = 'admin'`, que é permissão de sistema.
+  diretoria: boolean
   created_at: string
   updated_at: string
 }
@@ -117,6 +125,10 @@ export interface Tomador {
   status: string
   ativo: boolean
   data_entrada: string | null
+  /** A área que está com a central do card agora (comercial → … → emissao).
+   *  Não confundir com `status`: um é onde o TRABALHO está, o outro é a
+   *  situação cadastral do tomador. Ver `lib/card/secoes.ts`. */
+  central_area: string | null
   created_at: string
   updated_at: string
 }

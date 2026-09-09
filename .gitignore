@@ -56,6 +56,7 @@ next-env.d.ts
 
 # Sandbox de testes (artefato de compilação)
 .sandbox-test/
+.tmp-email/
 
 # ── Caixa real da FAM: NUNCA versionar ──────────────────────────────────────
 # Estes arquivos têm o fluxo de caixa de verdade (remuneração de cada diretor,
@@ -82,3 +83,11 @@ fam-financeiro/extrato-exemplo-agosto.pdf
 
 # Saida da carga das analises: e regerado a cada execucao, nao e fonte.
 scripts/_carga-relatorio.json
+
+# O segredo que o Carteiro usa para falar com o CRM. Fica na maquina que le o
+# Outlook, e nunca no repositorio: quem tem esse token abre caso no CRM.
+scripts/carteiro.json
+
+# O segredo e o caminho da raiz que o agente da esteira usa. Fica na maquina
+# onde o motor da analise roda, e nunca no repositorio.
+scripts/esteira.json

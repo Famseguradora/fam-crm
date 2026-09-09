@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { CATEGORIA_META, CATEGORIAS_ORDENADAS, sugerirCategoria } from '@/lib/anexos/categorias'
+import { mimePorNome } from '@/lib/anexos/mime'
 import type { Anexo, CategoriaAnexo } from '@/types'
 
 const BUCKET = 'fam-anexos'
@@ -20,20 +21,12 @@ function fmtData(iso: string): string {
   return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+// A tabela de tipos mora em `lib/anexos/mime.ts`, e não aqui, porque agora há
+// DUAS portas de upload (esta tela e o e-mail que entra pelo Comercial). Duas
+// tabelas divergiriam: um .xlsm subiria como planilha por uma porta e como
+// arquivo binário pela outra.
 function getMimeType(file: File): string {
-  if (file.type) return file.type
-  const ext = file.name.split('.').pop()?.toLowerCase()
-  const map: Record<string, string> = {
-    pdf: 'application/pdf', html: 'text/html', htm: 'text/html',
-    doc: 'application/msword',
-    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    xls: 'application/vnd.ms-excel',
-    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-    gif: 'image/gif', txt: 'text/plain', csv: 'text/csv',
-    zip: 'application/zip', mp4: 'video/mp4', mp3: 'audio/mpeg',
-  }
-  return (ext && map[ext]) || 'application/octet-stream'
+  return file.type || mimePorNome(file.name)
 }
 
 function iconeArquivo(mime: string | null): string {
