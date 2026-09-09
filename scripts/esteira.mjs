@@ -376,6 +376,40 @@ async function sincronizarMural() {
   if (!r.ok) console.error('  CRM recusou o mural:', r.erro)
 }
 
+/* AS CONVERSAS DA IA DE GESTÃO sobem inteiras: são 37 assuntos e ~160 falas
+   que ele acumulou desde 12/08/2026, e sem elas a IA no CRM parece um sistema
+   recém-instalado. O disco é a fonte (o `conversas.mjs`), e o CRM espelha.
+
+   O id da fala é `motor:<conversa>:<índice>`: o jsonl é append-only, então o
+   índice não muda e o upsert nunca duplica uma fala já espelhada. */
+async function sincronizarConversas() {
+  const Conversas = await mod('conversas.mjs').catch(() => null)
+  if (!Conversas) return
+  try {
+    const lista = Conversas.listar()
+    if (!lista.length) return
+    const conversas = lista.map((c) => ({
+      id: c.id, titulo: c.titulo || '', titulo_dele: !!c.titulo_dele,
+      criada: c.criada, ultima: c.ultima, trocas: c.trocas ?? 0,
+    }))
+    const mensagens = []
+    for (const c of lista) {
+      const msgs = Conversas.ler(c.id, { limite: 500 })
+      msgs.forEach((m, i) => {
+        if (!m?.texto) return
+        mensagens.push({
+          id: `motor:${c.id}:${i}`, conversa_id: c.id,
+          quem: m.quem === 'ia' ? 'ia' : 'marco',
+          texto: String(m.texto), em: m.em, segundos: m.segundos ?? null,
+        })
+      })
+    }
+    const r = await crm('/api/esteira', { acao: 'conversas', conversas, mensagens, atual: Conversas.atual() })
+    if (!r.ok) console.error('  CRM recusou as conversas:', r.erro)
+    else if (r.conversas) console.log(`  Conversas da IA: ${r.conversas} assunto(s), ${r.mensagens} fala(s).`)
+  } catch (e) { console.error('  conversas:', e.message) }
+}
+
 async function sincronizarAlcadas() {
   const Alcadas = await mod('alcadas.mjs').catch(() => null)
   if (!Alcadas) return
@@ -497,8 +531,16 @@ async function executarOrdens(ordens) {
    agente ENTREGA o comando para ele colar; ligado, sobe o Claude ele mesmo. */
 async function iniciarSemServidor(o, instrucoes, modo, feito, falhou) {
   if (instrucoes) {
-    try { fs.writeFileSync(path.join(c.raiz, o.pasta, '_instrucoes.txt'), `[ordem dada pelo CRM, ${new Date().toLocaleString('pt-BR')}]\nO QUE OBSERVAR NESTA ANALISE:\n${instrucoes}\n`, 'utf8') }
-    catch (e) { console.error('    _instrucoes.txt:', e.message) }
+    /* NÃO ENGOLIR ESTA FALHA. Rodar a análise achando que a ordem chegou é
+       pior do que não rodar: o relatório sai sem o que ele mandou observar, e
+       ninguém descobre. É a mesma regra do `/api/analisar` do servidor. */
+    try {
+      fs.writeFileSync(path.join(c.raiz, o.pasta, '_instrucoes.txt'), `[ordem dada pelo CRM, ${new Date().toLocaleString('pt-BR')}]\nO QUE OBSERVAR NESTA ANALISE:\n${instrucoes}\n`, 'utf8')
+    } catch (e) {
+      console.error('    _instrucoes.txt:', e.message)
+      await falhou(`nao consegui gravar o que voce mandou observar (${e.message}). Nao comecei: a analise rodaria sem a sua ordem.`)
+      return
+    }
   }
   const comando = `/analise ${o.pasta}`
   if (!c.rodar_sozinho) {
@@ -706,7 +748,12 @@ async function responderIA(pedidos) {
     } else {
       const gestao = await mod('gestao.mjs')
       if (typeof gestao?.conversar !== 'function') throw new Error('O gestao.mjs desta máquina não expõe `conversar`.')
-      r = await gestao.conversar(String(pedido.pergunta))
+      /* A pergunta cai NA CONVERSA que ele escolheu na tela. O `conversar`
+         aceita o id direto (`Conversas.escolher`), e cria a pasta na primeira
+         fala se a conversa nasceu no CRM — por isso o CRM gera o id no mesmo
+         formato do motor. Separar assunto é separar a memória: sem passar o
+         id, tudo cairia no assunto aberto no notebook. */
+      r = await gestao.conversar(String(pedido.pergunta), pedido.conversa_id ? { id: String(pedido.conversa_id) } : {})
     }
     if (!r?.ok) throw new Error(r?.motivo ?? 'a IA recusou a pergunta')
     const texto = String(r.resposta ?? '').trim()
@@ -733,13 +780,19 @@ async function rodada({ forcar = false } = {}) {
   await aplicarDecisoes(ordem)
   // Depois das ordens: quem perguntou está olhando a tela, mas quem mandou
   // analisar está esperando há mais tempo.
-  if (ordem.ia?.length) await responderIA(ordem.ia)
+  if (ordem.ia?.length) {
+    await responderIA(ordem.ia)
+    // A fala que acabou de ser escrita no jsonl sobe na hora: quem perguntou
+    // está com a tela aberta esperando ela aparecer no fio.
+    await sincronizarConversas()
+  }
 
   if (forcar || Date.now() - ultimaSincronia >= c.sincronia_seg * 1000) {
     ultimaSincronia = Date.now()
     await sincronizar()
     await sincronizarMural()
     await sincronizarAlcadas()
+    await sincronizarConversas()
     // Execução que morreu sem avisar volta para a fila. A conta é do servidor.
     const f = await crm('/api/esteira', { acao: 'faxina' })
     if (f.ok && f.devolvidas) console.log(`  ${f.devolvidas} análise(s) travada(s) voltaram para a fila.`)

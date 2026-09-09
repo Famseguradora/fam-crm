@@ -38,6 +38,9 @@ export interface PedidoIA {
   criado_por_nome: string | null
   criado_em: string
   respondido_em: string | null
+  /** Em que assunto esta pergunta caiu. Nulo nos pedidos anteriores às
+   *  conversas (09/09/2026) e nos do card, que têm `fila_id` no lugar. */
+  conversa_id?: string | null
 }
 
 /* AS SUGESTÕES SÃO AS DELE, copiadas do `SUGESTOES` do gestao.mjs. São
@@ -74,3 +77,57 @@ export const ESPERA_LONGA_MS = 3 * 60 * 1000
 export const esperandoDemais = (p: PedidoIA): boolean =>
   (p.estado === 'pendente' || p.estado === 'respondendo')
   && Date.now() - new Date(p.criado_em).getTime() > ESPERA_LONGA_MS
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AS CONVERSAS, uma por assunto (09/09/2026)
+
+   Pedido dele em 12/08/2026, com a razão junto: "criar histórico de conversas
+   tratadas com ela, igual tenho com você, eu quero isso para separar a memória
+   e não confundir o conteúdo". A separação é de verdade, e não só visual: cada
+   conversa carrega a PRÓPRIA sessão do lado do motor, então trocar de conversa
+   troca a memória junto.
+
+   As 37 que ele já tinha vêm do disco pelo agente. As novas nascem aqui.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export interface Conversa {
+  id: string
+  titulo: string
+  titulo_dele: boolean
+  origem: 'crm' | 'motor'
+  criada: string
+  ultima: string
+  trocas: number
+  criado_por_nome: string | null
+  arquivada: boolean
+}
+
+export interface MensagemIA {
+  id: string
+  conversa_id: string
+  quem: 'marco' | 'ia' | 'pessoa'
+  texto: string
+  em: string
+  segundos: number | null
+  autor_nome: string | null
+  origem: 'crm' | 'motor'
+}
+
+/* O ID DA CONVERSA NASCE NO FORMATO DO MOTOR (`c` + base36), mesmo quando ela
+   é criada no CRM. Não é capricho: o `conversas.mjs` valida o id com
+   /^c[0-9a-z]{6,24}$/ antes de aceitar a pergunta, e um uuid seria recusado —
+   a conversa criada aqui nunca receberia resposta. Com este formato, o motor
+   cria a pasta dela na primeira fala e os dois lados falam do mesmo assunto. */
+export const novoIdConversa = (): string =>
+  'c' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36).padStart(2, '0')
+
+/** O título curto que ainda diz do que se trata. Cópia do `tituloDe` do
+ *  conversas.mjs: corta na palavra, e tira o "?" do fim, que numa lista
+ *  estreita só ocupa espaço. */
+export function tituloDe(texto: string): string {
+  const limpo = String(texto || '').replace(/\s+/g, ' ').trim().replace(/[?!.]+$/, '')
+  if (limpo.length <= 42) return limpo
+  const corte = limpo.slice(0, 42)
+  const espaco = corte.lastIndexOf(' ')
+  return (espaco > 20 ? corte.slice(0, espaco) : corte) + '…'
+}

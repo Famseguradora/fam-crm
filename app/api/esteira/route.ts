@@ -121,7 +121,7 @@ export async function GET(req: NextRequest) {
      o agente saber se responde o auditor do relatório ou o auditor da pasta. */
   const { data: iaPedidos } = await sb
     .from('ia_pedidos')
-    .select('id, pergunta, escopo, analise_id, fila_id, pasta, chave, criado_por_nome, criado_em, analise:analises(chave_local)')
+    .select('id, pergunta, escopo, analise_id, fila_id, pasta, chave, conversa_id, criado_por_nome, criado_em, analise:analises(chave_local)')
     .eq('estado', 'pendente')
     .eq('motor', 'notebook')
     .order('criado_em', { ascending: true })
@@ -428,6 +428,60 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, confirmados: (marcados ?? []).length })
   }
 
+  /* ── conversas: o fio inteiro da IA de Gestão, do disco para o CRM ────────
+     São 37 assuntos e ~160 falas que ele acumulou desde 12/08/2026. O disco é
+     a fonte e o CRM espelha: a conversa que ele abre aqui vira pedido, o
+     `gestao.mjs` grava no jsonl, e a sincronização seguinte traz as duas
+     falas. Uma verdade só, e por isso o upsert é por id estável. */
+  if (acao === 'conversas') {
+    const conversas = lista(corpo.conversas) as Record<string, unknown>[]
+    const mensagens = lista(corpo.mensagens) as Record<string, unknown>[]
+    if (!conversas.length) return NextResponse.json({ ok: true, conversas: 0, mensagens: 0 })
+
+    /* O TÍTULO QUE ELE ESCREVEU NO CRM NÃO É SOBRESCRITO pelo automático do
+       disco. `titulo_dele` é a mesma marca dos dois lados. */
+    const { data: renomeadas } = await sb.from('ia_conversas').select('id, titulo, titulo_dele').eq('titulo_dele', true)
+    const meuTitulo = new Map((renomeadas ?? []).map((c) => [c.id, c.titulo]))
+
+    const linhas = conversas.slice(0, 400).map((c) => {
+      const id = texto(c.id, 60)!
+      return {
+        id,
+        titulo: meuTitulo.get(id) ?? (texto(c.titulo, 200) ?? ''),
+        titulo_dele: meuTitulo.has(id) || !!c.titulo_dele,
+        escopo: 'gestao', origem: 'motor',
+        criada: texto(c.criada, 40) ?? agora,
+        ultima: texto(c.ultima, 40) ?? agora,
+        trocas: Number(c.trocas ?? 0) || 0,
+        sincronizado_em: agora,
+      }
+    }).filter((c) => c.id)
+
+    const { error: e1 } = await sb.from('ia_conversas').upsert(linhas, { onConflict: 'id' })
+    if (e1) return NextResponse.json({ erro: e1.message }, { status: 500 })
+
+    const conhecidas = new Set(linhas.map((c) => c.id))
+    const falas = mensagens.slice(0, 4000)
+      .filter((m) => conhecidas.has(String(m.conversa_id ?? '')))
+      .map((m) => ({
+        id: texto(m.id, 200)!,
+        conversa_id: String(m.conversa_id),
+        quem: m.quem === 'ia' ? 'ia' : 'marco',
+        texto: String(m.texto ?? '').slice(0, 200000),
+        em: texto(m.em, 40) ?? agora,
+        segundos: Number(m.segundos ?? 0) || null,
+        origem: 'motor',
+      }))
+      .filter((m) => m.id && m.texto)
+
+    // Em lotes: 4 mil falas num upsert só é um corpo grande demais para a rota.
+    for (let i = 0; i < falas.length; i += 500) {
+      const { error } = await sb.from('ia_mensagens').upsert(falas.slice(i, i + 500), { onConflict: 'id' })
+      if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
+    }
+    return NextResponse.json({ ok: true, conversas: linhas.length, mensagens: falas.length })
+  }
+
   // ── alçadas: o catálogo, os pedidos e o diário do alcadas.mjs ─────────────
   if (acao === 'alcadas') {
     const catalogo = lista(corpo.catalogo) as Record<string, unknown>[]
@@ -678,7 +732,7 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json(
-    { erro: 'Ação desconhecida (sincronizar, recados, recados-ok, alcadas, alcadas-ok, comando-aceito, comando-feito, progresso, concluir, erro, ordem-aceita, ordem-falhou, ia-pegar, ia-resposta, faxina).' },
+    { erro: 'Ação desconhecida (sincronizar, recados, recados-ok, conversas, alcadas, alcadas-ok, comando-aceito, comando-feito, progresso, concluir, erro, ordem-aceita, ordem-falhou, ia-pegar, ia-resposta, faxina).' },
     { status: 422 },
   )
 }

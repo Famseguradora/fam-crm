@@ -95,3 +95,32 @@ scripts/esteira.json
 # O log do servidor da maquina (o que substituiu a janela preta). E historico
 # local, cresce sozinho e nao e fonte.
 crm-servidor.log
+
+# ============================================================================
+#  ENQUANTO O REPOSITORIO FOR PUBLICO (09/09/2026)
+#
+#  github.com/Famseguradora/fam-crm responde 200 para acesso anonimo. O codigo
+#  do CRM pode ser publico sem problema; estes quatro grupos NAO, porque tem
+#  dado de gente e de cliente:
+#
+#    prototipo/          4 CNPJs de tomadores reais no HTML
+#    RELATORIO-*.md      relatorio interno de diretoria
+#    PROMPT-*.md         plano interno de construcao
+#    scripts/ensaio-*    o e-mail pessoal do Marco e nome de cliente no caminho
+#    scripts/teste-*     idem, le o acervo de e-mails de verdade
+#
+#  ISTO E UMA TRAVA, E NAO UMA DECISAO DE ARQUITETURA. Os ensaios sao codigo
+#  util e mereciam historico; o que impede e a visibilidade do repositorio, nao
+#  a natureza deles. NO DIA EM QUE O REPO VIRAR PRIVADO (Settings > General >
+#  Danger Zone > Change visibility, no GitHub), APAGUE ESTE BLOCO INTEIRO e
+#  commite os quatro grupos: eles voltam a ser versionados sem nada a mais.
+#
+#  A trava existe porque ha varias sessoes commitando nesta arvore por lista de
+#  arquivo, e basta um `git add` distraido para o dado sair de casa. Publicado
+#  uma vez, fica no historico mesmo depois de apagado.
+# ============================================================================
+prototipo/
+RELATORIO-*.md
+PROMPT-*.md
+scripts/ensaio-*.mjs
+scripts/teste-*.cjs

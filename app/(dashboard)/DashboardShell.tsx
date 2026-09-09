@@ -45,14 +45,22 @@ interface Tab {
 
 const TABS: Tab[] = [
   { label: '📊 Dashboard',  href: '/' },
-  /* O FUNIL EM CARDS, a tela do protótipo trazida para dentro do CRM
-     (08/09/2026). Fica logo depois do Dashboard, e é de todas as áreas: é o
-     lugar onde Comercial, Cadastro, Crédito e Subscrição olham para a MESMA
-     fila, cada operação num cartão, cada cartão abrindo o card da empresa. */
-  { label: '📋 Funil',      href: '/fluxo' },
-  /* A primeira estação da esteira: o Comercial sobe o e-mail e o caso nasce
-     dentro do CRM. Fica antes de Tomadores porque é onde o tomador começa. */
+  /* A ORDEM DAS QUATRO PRIMEIRAS É A DELE, e é a ordem do trabalho, não a de
+     quando cada tela foi construída (pedido em 09/09/2026: "Dashboard >
+     Comercial > Funil > Análises > e segue o demais"):
+
+       Comercial  o e-mail chega e o caso nasce
+       Funil      onde o caso está, em cartões, para todas as áreas
+       Análise    a esteira do crédito, o acervo e o card do tomador
+
+     A primeira estação da esteira: o Comercial sobe o e-mail e o caso nasce
+     dentro do CRM. */
   { label: '📥 Comercial',  href: '/comercial' },
+  /* O FUNIL EM CARDS, a tela do protótipo trazida para dentro do CRM
+     (08/09/2026). É de todas as áreas: o lugar onde Comercial, Cadastro,
+     Crédito e Subscrição olham para a MESMA fila, cada operação num cartão,
+     cada cartão abrindo o card da empresa. */
+  { label: '📋 Funil',      href: '/fluxo' },
   /* A segunda estação: o caso que a Triagem concluiu vira análise de crédito.
      Item de primeiro nível, e não subitem de Tomadores, porque é ESTEIRA e não
      cadastro: quem abre esta tela quer saber o que está travado hoje, e isso
