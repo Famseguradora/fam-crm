@@ -18,12 +18,14 @@
    O upload fica recolhido, e não some: ele é saída de emergência, não o caminho
    de todo dia. Era o contrário na primeira versão desta tela, e estava errado. */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { fmtData } from '@/lib/utils'
 import Caixa from './Caixa'
+import { SecaoPainel, CartaoNumero, Moldura } from '@/components/painel/Painel'
+import { cor, corDaArea, texto } from '@/lib/ui/painel'
 
 interface Caso {
   id: string
@@ -69,6 +71,7 @@ export default function ComercialPage() {
   const [recibo, setRecibo] = useState<Recibo | null>(null)
   const [sobre, setSobre] = useState(false)
   const [verUpload, setVerUpload] = useState(false)
+  const [cartaoAberto, setCartaoAberto] = useState<string | null>(null)
   const entrada = useRef<HTMLInputElement>(null)
 
   const carregar = useCallback(async () => {
@@ -94,6 +97,63 @@ export default function ComercialPage() {
   }, [])
 
   useEffect(() => { carregar() }, [carregar])
+
+  /* ── OS NÚMEROS DA ESTEIRA ────────────────────────────────────────────────
+     O padrão visual de 09/09/2026 (docs/DESIGN-PAINEL.md): um número grande por
+     cartão, o detalhe escondido até alguém pedir, e vermelho SÓ onde há decisão
+     a tomar. Aqui o vermelho é dos dois cartões que apontam trabalho parado por
+     falta de coisa (CNPJ e documento), e não da fila normal.
+
+     Sai tudo do que já foi carregado. Nenhuma consulta a mais: a tela não pode
+     ficar mais lenta por causa de enfeite. */
+  const numeros = useMemo(() => {
+    const de = (etapa: string) => casos.filter((c) => c.etapa === etapa)
+    const semCnpj = casos.filter((c) => !c.cnpj && c.etapa !== 'descartado' && c.etapa !== 'encerrado')
+    const semDoc = casos.filter((c) => (docsPorCaso[c.id] ?? 0) === 0 && c.etapa === 'comercial')
+    return {
+      comercial: de('comercial'),
+      triagem: de('triagem'),
+      semCnpj,
+      semDoc,
+    }
+  }, [casos, docsPorCaso])
+
+  /** A tabelinha que abre dentro de um cartão. Sempre com origem, porque número
+   *  sem origem é número que ninguém pode conferir. */
+  function ListaDeCasos({ lista, origem }: { lista: Caso[]; origem: string }) {
+    if (!lista.length) {
+      return <div style={texto.nota}>Nenhum caso nesta situação agora.</div>
+    }
+    return (
+      <Moldura titulo={`${lista.length} caso${lista.length === 1 ? '' : 's'}`} origem={origem}>
+        <div className="fam-table-wrap">
+          <table className="fam-table">
+            <thead>
+              <tr>
+                <th style={{ width: 50 }}>#</th>
+                <th>Assunto</th>
+                <th style={{ width: 100 }}>Entrada</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.slice(0, 12).map((c) => (
+                <tr key={c.id} onClick={() => router.push(`/comercial/${c.id}`)} style={{ cursor: 'pointer' }}>
+                  <td style={{ fontWeight: 700, color: cor.textoFraco }}>{c.numero}</td>
+                  <td>
+                    <div style={{ fontWeight: 600, color: cor.tinta }}>{c.assunto}</div>
+                    {c.razao_social && (
+                      <div style={{ fontSize: 12, color: cor.textoFraco }}>{c.razao_social}</div>
+                    )}
+                  </td>
+                  <td>{fmtData(c.criado_em)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Moldura>
+    )
+  }
 
   async function subir(arquivos: FileList | File[]) {
     setErro('')
@@ -127,12 +187,63 @@ export default function ComercialPage() {
   return (
     <div style={{ padding: '20px 0' }}>
       <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0a1628', margin: 0 }}>Entrada do Comercial</h1>
-        <p style={{ color: 'var(--soft)', fontSize: 14, margin: '6px 0 0', maxWidth: '76ch' }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: cor.tinta, margin: 0 }}>Entrada do Comercial</h1>
+        <p style={{ color: cor.textoFraco, fontSize: 14, margin: '6px 0 0', maxWidth: '76ch' }}>
           A caixa de e-mail aparece aqui. Você lê, vê os anexos e escolhe qual e-mail vira demanda.
           O CRM guarda os documentos e abre o caso para a Triagem.
         </p>
       </div>
+
+      {/* ── os números, antes do trabalho ────────────────────────────────────
+          Quatro cartões e nada mais. A tentação era encher de indicador; o
+          padrão pede o contrário: um número grande por cartão, e cartão que não
+          muda decisão nenhuma não entra. */}
+      {!carregando && casos.length > 0 && (
+        <SecaoPainel nome="A esteira hoje" cor={corDaArea('comercial')}>
+          <div style={{
+            display: 'grid', gap: 8,
+            gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+            alignItems: 'start',
+          }}>
+            {([
+              {
+                id: 'comercial', rotulo: 'No Comercial', lista: numeros.comercial,
+                sub: 'esperando você decidir se vira demanda',
+                origem: 'casos com etapa = comercial',
+              },
+              {
+                id: 'triagem', rotulo: 'Na Triagem', lista: numeros.triagem,
+                sub: 'já viraram demanda e seguiram',
+                origem: 'casos com etapa = triagem',
+              },
+              {
+                id: 'sem-cnpj', rotulo: 'Sem CNPJ', lista: numeros.semCnpj,
+                sub: 'não dá para abrir tomador nem análise sem ele',
+                origem: 'casos vivos com cnpj vazio',
+                alerta: numeros.semCnpj.length > 0,
+              },
+              {
+                id: 'sem-doc', rotulo: 'Sem documento', lista: numeros.semDoc,
+                sub: 'e-mail entrou, mas nenhum anexo foi guardado',
+                origem: 'casos em comercial sem linha em caso_documentos',
+                alerta: numeros.semDoc.length > 0,
+              },
+            ]).map((k) => (
+              <CartaoNumero
+                key={k.id}
+                rotulo={k.rotulo}
+                numero={String(k.lista.length)}
+                sub={k.sub}
+                alerta={k.alerta}
+                aberto={cartaoAberto === k.id}
+                aoAlternar={() => setCartaoAberto(cartaoAberto === k.id ? null : k.id)}
+              >
+                <ListaDeCasos lista={k.lista} origem={k.origem} />
+              </CartaoNumero>
+            ))}
+          </div>
+        </SecaoPainel>
+      )}
 
       <Caixa aoAbrirCaso={carregar} />
 
@@ -223,12 +334,12 @@ export default function ComercialPage() {
 
       {/* ── a fila ── */}
       <div className="card-panel" style={{ marginTop: 16 }}>
-        <div className="section-title"><span className="dot" />Casos na esteira</div>
+        <SecaoPainel nome="Casos na esteira" cor={corDaArea('comercial')} />
 
         {carregando ? (
-          <p style={{ color: 'var(--soft)', fontSize: 14 }}>Carregando…</p>
+          <p style={{ color: cor.textoFraco, fontSize: 14 }}>Carregando…</p>
         ) : casos.length === 0 ? (
-          <p style={{ color: 'var(--soft)', fontSize: 14 }}>
+          <p style={{ color: cor.textoFraco, fontSize: 14 }}>
             Nenhum caso ainda. O primeiro e-mail que você trouxer aqui em cima abre o caso número 1.
           </p>
         ) : (
