@@ -26,10 +26,12 @@
 //  silencioso que ninguém percebe até a apólice sair errada. Quem concilia
 //  divergência continua sendo a tela de Conferência.
 // ============================================================================
+//  A REGRA SAIU DAQUI EM 07/09/2026, e não mudou de comportamento: ela agora
+//  mora em `lib/tomador/criar-por-cnpj.ts`, porque a Triagem dentro do CRM passou
+//  a precisar exatamente do mesmo cadastro único. Duas cópias divergiriam.
 import { createClient } from '@supabase/supabase-js'
 import { soDigitos } from '@/lib/analise/cnpj'
-import { consultarCNPJ } from '@/lib/cnpj'
-import { casarCorretora } from '@/lib/analise/corretoras.mjs'
+import { acharOuCriarTomadorPorCnpj } from '@/lib/tomador/criar-por-cnpj'
 
 interface Pedido {
   cnpj?: string
@@ -65,106 +67,21 @@ export async function POST(req: Request) {
 
   const supabase = createClient(url, chave, { auth: { persistSession: false } })
 
-  // ── 1. já existe? ────────────────────────────────────────────────────────
-  const { data: achado, error: erroBusca } = await supabase
-    .from('tomadores')
-    .select('id, razao_social, cnpj')
-    .eq('cnpj', cnpj).maybeSingle()
-
-  if (erroBusca) {
-    return Response.json({ erro: erroBusca.message }, { status: 500 })
-  }
-  if (achado) {
-    return Response.json({ ok: true, criado: false, tomador: achado })
-  }
-
-  // ── 2. não existe: cadastro completo, começando pela Receita ─────────────
-  // A Receita é a melhor fonte para endereço, telefone e razão social oficial.
-  // Mas ela é rede: cai, muda de formato, responde devagar. Se falhar, o cadastro
-  // NASCE ASSIM MESMO com o que a análise apurou, e a resposta diz que a Receita
-  // não veio. Perder o cadastro inteiro porque uma consulta externa piscou seria
-  // trocar um problema pequeno por um grande.
-  // DUAS TENTATIVAS, e nao uma (medido em 31/08/2026). A BrasilAPI devolve 403
-  // quando o minuto ja teve consultas demais, e o primeiro cadastro criado por
-  // esta rota nasceu sem endereco por causa disso, com a API perfeitamente no ar
-  // dois segundos depois. Uma pausa curta resolve o caso comum sem transformar o
-  // botao numa espera longa. "CNPJ nao encontrado" NAO e tentado de novo: a
-  // resposta ja e definitiva e repetir so gastaria o tempo dele.
-  let cartao: Awaited<ReturnType<typeof consultarCNPJ>> | null = null
-  let receitaErro: string | null = null
-  for (let tentativa = 1; tentativa <= 2; tentativa++) {
-    try {
-      cartao = await consultarCNPJ(cnpj)
-      receitaErro = null
-      break
-    } catch (e: unknown) {
-      receitaErro = e instanceof Error ? e.message : 'falha na consulta'
-      if (/não encontrado/i.test(receitaErro)) break
-      if (tentativa < 2) await new Promise(r => setTimeout(r, 1500))
-    }
-  }
-
-  const razao = (cartao?.razao_social || corpo.razao_social || '').trim()
-  if (!razao) {
-    return Response.json(
-      { erro: 'Sem razão social: a Receita não respondeu e a análise não mandou nome.' },
-      { status: 422 })
-  }
-
-  // A corretora é casada POR NOME, e só quando o nome bate de verdade. Sem par,
-  // fica nula: escolher a corretora errada num tomador novo é pior que deixar em
-  // branco para ele preencher, porque o vínculo desce para as operações depois.
-  //
-  // A REGRA MUDOU DE LUGAR EM 31/08/2026, e não de espírito. Aqui morava uma
-  // comparação de texto escrita à mão (igual, ou um começa com o outro). Medida
-  // contra o acervo, ela achava par para 8 das 43 grafias de corretora que as
-  // análises trazem: "ATIX SEGUROS" não alcançava "Atix Servicos e Corretagem de
-  // Seguros", "WIZ" não alcançava "Wiz Corporate", "WTW" não alcançava "Willis
-  // Towers Watson". Agora a regra é a de `lib/analise/corretoras.mjs`, a MESMA
-  // que responde ao motor e a MESMA que a carga usa, e ela acha 37 das 43.
-  // Continua se recusando a escolher quando há mais de uma candidata.
-  let corretoraId: string | null = null
-  const nomeCorretora = String(corpo.corretora ?? '').trim()
-  if (nomeCorretora) {
-    const { data: cs } = await supabase
-      .from('corretoras').select('id, razao_social, nome_fantasia, cnpj').eq('status', 'ativo')
-    corretoraId = casarCorretora(nomeCorretora, cs ?? []).corretora_id
-  }
-
-  const novo = {
-    razao_social: razao,
+  const r = await acharOuCriarTomadorPorCnpj(supabase, {
     cnpj,
-    nome_fantasia: cartao?.nome_fantasia ?? null,
-    corretora_id: corretoraId,
-    cep: cartao?.cep ?? null,
-    endereco: cartao?.endereco ?? null,
-    numero: cartao?.numero ?? null,
-    complemento: cartao?.complemento ?? null,
-    bairro: cartao?.bairro ?? null,
-    cidade: cartao?.cidade ?? null,
-    estado: cartao?.estado ?? null,
-    telefone: cartao?.telefone ?? null,
-    email: cartao?.email ?? null,
-    data_entrada: new Date().toISOString().slice(0, 10),
-    observacao: 'Cadastro criado pelo Finalizar Análise, a partir da análise de crédito'
-      + (receitaErro ? ' (a Receita não respondeu: confira endereço e contato).' : ' e do cartão CNPJ da Receita.'),
-    // O LIMITE NÃO VEM AQUI, de propósito. Ele é decisão de crédito e sai da tela
-    // de Conferência ou da mão dele no Cadastro. Ver `conflitos-analise-vs-crm`:
-    // `limite_recomendado` é texto livre e às vezes é um teto, não um valor.
-  }
+    razao_social: corpo.razao_social,
+    corretora: corpo.corretora,
+    origem: 'Cadastro criado pelo Finalizar Analise, a partir da analise de credito',
+  })
 
-  const { data: criado, error: erroCriar } = await supabase
-    .from('tomadores').insert(novo).select('id, razao_social, cnpj').single()
-
-  if (erroCriar) {
-    return Response.json({ erro: erroCriar.message }, { status: 500 })
-  }
+  if (!r.ok) return Response.json({ erro: r.erro }, { status: r.status })
+  if (!r.criado) return Response.json({ ok: true, criado: false, tomador: r.tomador })
 
   return Response.json({
     ok: true,
     criado: true,
-    tomador: criado,
-    receita: receitaErro ? { ok: false, motivo: receitaErro } : { ok: true },
-    corretora_ligada: !!corretoraId,
+    tomador: r.tomador,
+    receita: r.receita,
+    corretora_ligada: r.corretora_ligada,
   })
 }

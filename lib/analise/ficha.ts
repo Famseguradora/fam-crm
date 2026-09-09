@@ -5,10 +5,11 @@
 //  análise INTEIRA: score, rating, taxas, os 3 C's, pontos, conclusão, os
 //  exercícios e os documentos lidos. É o que enche as gavetas da Mesa.
 //
-//  A LIGAÇÃO É POR CNPJ, e não por `tomador_id`. Medido em 30/08/2026: as 131
-//  análises estão com `tomador_id` nulo, então procurar por ele não acha nada.
-//  Quando o saneamento preencher a coluna, a busca por id passa na frente
-//  sozinha (ver `porTomador` abaixo) e o CNPJ vira reserva.
+//  A LIGAÇÃO É POR `tomador_id` PRIMEIRO, e por CNPJ como reserva. Até
+//  07/09/2026 a coluna estava NULA nas 146 e só o CNPJ funcionava; naquele dia
+//  ela foi preenchida para as 121 que casam com exatamente um tomador (as
+//  outras 25 são 20 sem tomador no CRM e 5 sem CNPJ apurado). A reserva por
+//  CNPJ fica: análise publicada depois disso nasce sem `tomador_id`.
 //
 //  A REGRA DO LIMITE é a mesma de `banco.ts`, e não pode ser afrouxada aqui:
 //  `limite_recomendado_num` só vale quando existe E quando não há motivo de
@@ -18,6 +19,7 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { soDigitos } from './local'
+import { semEntidadesHtml } from '@/lib/utils'
 import type { EstruturaSocietaria } from '@/components/tomador/OrganogramaAnalise'
 
 /** Um exercício do resumo financeiro. Valores SEMPRE em reais (a carga já
@@ -83,8 +85,18 @@ export interface FichaAnalise {
   data_analise: string
   revisada: boolean
   versao: number
+  /** Falsa nas versões antigas do mesmo CNPJ. A Mesa só pede a vigente; o
+   *  acervo abre qualquer uma, e por isso precisa saber. */
+  vigente: boolean
+
+  /** Só dígitos, como a carga gravou. Pode faltar: há análise sem CNPJ apurado. */
+  cnpj: string | null
+  /** O tomador do CRM, quando a análise já está ligada a um. */
+  tomador_id: string | null
+  corretora: string | null
 
   razao_social: string
+  nome_curto: string | null
   grupo: string | null
   segmento: string | null
   setor: string | null
@@ -132,8 +144,9 @@ const AVISO_TIPO: Record<string, string> = {
 }
 
 const COLUNAS = `
-  id, chave_local, cnpj, tomador_id, razao_social, grupo, segmento, setor,
-  data_analise, versao, revisada,
+  id, chave_local, cnpj, tomador_id, corretora,
+  razao_social, nome_curto, grupo, segmento, setor,
+  data_analise, versao, revisada, vigente,
   score_final, classe, porte, rating_txt, rating_cod, nivel_risco, recomendacao,
   limite_recomendado_txt, limite_recomendado_num, limite_recomendado_tipo,
   limite_recomendado_motivo,
@@ -148,13 +161,18 @@ const COLUNAS = `
 interface LinhaCrua {
   id: string
   chave_local: string
+  cnpj: string | null
+  tomador_id: string | null
+  corretora: string | null
   razao_social: string
+  nome_curto: string | null
   grupo: string | null
   segmento: string | null
   setor: string | null
   data_analise: string
   versao: number
   revisada: boolean
+  vigente: boolean
   score_final: number | string | null
   classe: string | null
   porte: string | null
@@ -199,6 +217,17 @@ const num = (v: number | string | null): number | null => {
 
 const curto = (s: string, n = 150) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s)
 
+/** A frase da análise já diz o que este tipo de limite é? Serve para não
+ *  escrever "R$ 80.000.000,00 (Teto FAM) (teto da FAM)", que foi o que
+ *  apareceu na tela da Engie: a análise já tinha dito, e o rótulo repetiu. */
+function jaDizOTipo(txt: string, tipo: string): boolean {
+  const t = txt.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  if (tipo === 'teto') return t.includes('teto')
+  if (tipo === 'teorico') return t.includes('teorico')
+  if (tipo === 'sem_limite') return t.includes('sem limite')
+  return false
+}
+
 /**
  * A análise vigente deste tomador, inteira. `null` quando não há nenhuma.
  * Nunca lança: falha de rede devolve `null` e a Mesa mostra as gavetas vazias
@@ -234,7 +263,42 @@ export async function fichaDaAnalise(
       linha = (data as LinhaCrua | null) ?? null
     }
     if (!linha) return null
+    return montarFicha(supabase, linha)
+  } catch {
+    return null
+  }
+}
 
+/**
+ * A análise de um `id`, VIGENTE OU NÃO, e sem precisar de tomador.
+ *
+ * É a porta do acervo (`/analises/<id>`): existe análise que nenhum tomador do
+ * CRM alcança (CNPJ que não casa com cadastro nenhum, ou CNPJ que a análise
+ * nem apurou), e existe versão antiga que continua valendo como histórico.
+ * `fichaDaAnalise` não serve para isso porque ela procura sempre a vigente de
+ * um tomador — o que, por definição, deixa essas duas de fora.
+ */
+export async function fichaPorId(id: string): Promise<FichaAnalise | null> {
+  if (!id) return null
+  try {
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('analises').select(COLUNAS).eq('id', id).maybeSingle()
+    const linha = (data as LinhaCrua | null) ?? null
+    if (!linha) return null
+    return montarFicha(supabase, linha)
+  } catch {
+    return null
+  }
+}
+
+/** O corpo comum: dada a linha de `analises`, busca os filhos e monta a ficha.
+ *  Nunca lança, pela mesma razão das duas portas acima. */
+async function montarFicha(
+  supabase: ReturnType<typeof createClient>,
+  linha: LinhaCrua,
+): Promise<FichaAnalise | null> {
+  try {
     // ── O LIMITE. A trava de `banco.ts`, repetida de propósito ──────────
     // O motivo manda: quando ele existe, a carga ANULOU o número, e o campo
     // sai como aviso escrito, jamais como valor confirmado. Um tipo novo que
@@ -251,8 +315,9 @@ export async function fichaDaAnalise(
           + (linha.limite_recomendado_txt
             ? ` A análise escreveu: “${curto(linha.limite_recomendado_txt)}”` : '')
       } else if (linha.limite_recomendado_txt) {
-        limiteAviso = curto(linha.limite_recomendado_txt)
-          + (AVISO_TIPO[tipo] ? ` (${AVISO_TIPO[tipo]})` : '')
+        const frase = curto(semEntidadesHtml(linha.limite_recomendado_txt))
+        limiteAviso = frase
+          + (AVISO_TIPO[tipo] && !jaDizOTipo(frase, tipo) ? ` (${AVISO_TIPO[tipo]})` : '')
       } else {
         limiteAviso = 'A análise não registrou limite.'
       }
@@ -315,9 +380,17 @@ export async function fichaDaAnalise(
       data_analise: linha.data_analise,
       revisada: !!linha.revisada,
       versao: linha.versao ?? 1,
+      vigente: !!linha.vigente,
 
-      razao_social: linha.razao_social,
-      grupo: linha.grupo,
+      cnpj: linha.cnpj,
+      tomador_id: linha.tomador_id,
+      // Mesma limpeza da razao social: e tudo texto do mesmo relatorio HTML,
+      // e proteger um campo e deixar o vizinho de fora e so esperar a vez.
+      corretora: linha.corretora ? semEntidadesHtml(linha.corretora) : null,
+
+      razao_social: semEntidadesHtml(linha.razao_social),
+      nome_curto: linha.nome_curto ? semEntidadesHtml(linha.nome_curto) : null,
+      grupo: linha.grupo ? semEntidadesHtml(linha.grupo) : null,
       segmento: linha.segmento,
       setor: linha.setor,
 

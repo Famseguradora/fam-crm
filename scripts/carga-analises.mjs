@@ -941,6 +941,65 @@ async function principal() {
 
   const confl = conflitos(montadas, tomadores)
 
+  /* ── O QUE FOI EDITADO DENTRO DO CRM NAO E SOBRESCRITO (08/09/2026) ──────
+
+     A gravacao desta carga e `upsert(onConflict: chave_local)`: ela SUBSTITUI a
+     linha inteira. No dia em que a analise passou a ser editada DENTRO do CRM,
+     isso virou um jeito silencioso de perder trabalho: publicar de novo jogaria
+     o texto do disco por cima do que ele escreveu na tela, sem avisar ninguem.
+     Ele so descobriria abrindo a analise e vendo o numero velho de volta.
+
+     Entao a linha com `editado_no_crm` preenchido fica FORA da gravacao. O que
+     o disco traz de diferente vira registro em `analise_conflitos`, que e o que
+     aquela tabela ja faz com tudo que nao casa entre a analise e o CRM. Nenhum
+     dos dois lados e apagado, e a decisao continua sendo dele.
+
+     REANALISE NAO CAI AQUI: uma analise nova tem `chave_local` diferente (CNPJ
+     + data), entra como versao nova e aposenta a anterior mais abaixo. O que
+     esta trava protege e a REGRAVACAO da mesma analise. */
+  const protegidas = new Map()
+  const chavesDoAcervo = montadas.map(m => m.linha.chave_local).filter(Boolean)
+  for (let i = 0; i < chavesDoAcervo.length; i += 200) {
+    const { data, error } = await sb.from('analises')
+      .select('id, chave_local, razao_social, editado_no_crm, score_final, recomendacao, limite_recomendado_num, conclusao')
+      .in('chave_local', chavesDoAcervo.slice(i, i + 200))
+      .not('editado_no_crm', 'is', null)
+    // Sem CONSEGUIR conferir, a carga para. Publicar as cegas pode apagar a
+    // edicao dele; publicar mais tarde nao custa nada.
+    if (error) throw new Error('nao consegui conferir quais analises foram editadas no CRM: ' + error.message)
+    for (const d of (data ?? [])) protegidas.set(d.chave_local, d)
+  }
+
+  // O que o disco diz DIFERENTE do que esta gravado, campo a campo. So os
+  // campos de decisao: e o que muda a resposta para o corretor.
+  const comoTexto = (v) => (v === null || v === undefined || v === '' ? null : String(v))
+  for (const m of montadas) {
+    const guardada = protegidas.get(m.linha.chave_local)
+    if (!guardada) continue
+    const L = m.linha
+    const pares = [
+      ['score_final', comoTexto(guardada.score_final), comoTexto(L.score_final)],
+      ['recomendacao', comoTexto(guardada.recomendacao), comoTexto(L.recomendacao)],
+      ['limite_recomendado_num', comoTexto(guardada.limite_recomendado_num), comoTexto(L.limite_recomendado_num)],
+      ['conclusao', comoTexto(guardada.conclusao), comoTexto(L.conclusao)],
+    ]
+    for (const [campo, noCrm, noDisco] of pares) {
+      if (Number(noCrm) === Number(noDisco) && noCrm !== null && noDisco !== null) continue
+      if (String(noCrm ?? '') === String(noDisco ?? '')) continue
+      confl.push({
+        tipo: 'editada_no_crm', chave_local: L.chave_local, tomador_id: null, campo,
+        valor_crm: noCrm, valor_analise: noDisco, sugestao: null, candidatos: null,
+        motivo: 'Esta analise foi editada dentro do CRM. A carga NAO sobrescreveu: o valor do CRM fica, e o do disco esta aqui do lado para voce decidir.',
+      })
+    }
+  }
+  if (protegidas.size) {
+    console.log(`\nEDITADAS NO CRM (nao serao sobrescritas): ${protegidas.size}`)
+    for (const [chave, d] of [...protegidas].slice(0, 10)) {
+      console.log(`   ${chave}  ${d.razao_social ?? ''}`)
+    }
+  }
+
   // ── o que foi medido
   const conta = (lista, f) => lista.reduce((m, x) => (m[f(x)] = (m[f(x)] ?? 0) + 1, m), {})
   const comCnpj = montadas.filter(m => m.linha.cnpj).length
@@ -990,7 +1049,14 @@ async function principal() {
   console.log('\ngravando…')
   const falhas = []
 
-  const linhas = montadas.map(m => m.linha)
+  // As editadas no CRM ficam de fora da gravacao (a trava esta explicada la em
+  // cima, junto com `protegidas`). Elas continuam no relatorio de conflitos.
+  const paraGravar = montadas.filter(m => !protegidas.has(m.linha.chave_local))
+  if (protegidas.size) {
+    console.log(`de fora por edicao no CRM: ${montadas.length - paraGravar.length}`)
+  }
+
+  const linhas = paraGravar.map(m => m.linha)
 
   /* APOSENTAR A VERSAO ANTERIOR ANTES DE PROMOVER A NOVA (31/08/2026).
 
@@ -1043,10 +1109,14 @@ async function principal() {
   }
   console.log(`analises gravadas: ${gravadas.length} de ${linhas.length}`)
 
+  // As protegidas nao voltam do upsert (nem foram enviadas), mas o id delas e
+  // conhecido: sem isso o conflito "editada_no_crm" entraria sem `analise_id`, e
+  // a tela nao teria como levar ate a analise de que ele fala.
   const idPorChave = new Map(gravadas.map(g => [g.chave_local, g.id]))
+  for (const [chave, d] of protegidas) idPorChave.set(chave, d.id)
 
   const exLinhas = []
-  for (const m of montadas) {
+  for (const m of paraGravar) {
     const id = idPorChave.get(m.linha.chave_local)
     if (!id) {
       // Pular em silencio era o defeito: os exercicios sumiriam sem ninguem ver.
