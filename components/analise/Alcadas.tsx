@@ -18,7 +18,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
-import { dataCurta, desde } from '@/lib/analise/mesa'
+import { dataCurta, desde, corta } from '@/lib/analise/mesa'
 
 interface Acao { acao: string; alcada: string; rotulo: string | null; o_que_faz: string | null; desfaz: string | null; padrao: string | null; definido_no_crm_em: string | null; aplicado_em: string | null }
 interface Pedido { id: string; acao: string; acao_rotulo: string | null; args: Record<string, unknown> | null; quem: string; motivo: string | null; status: string; pedido_em: string; decisao_crm: string | null; decisao_crm_por: string | null; aplicado_em: string | null; resultado: string | null; pasta: string | null; chave: string | null }
@@ -103,7 +103,16 @@ export default function Alcadas({ nomeUsuario }: { nomeUsuario: string | null })
               {p.motivo && <div className="motivo">{p.motivo}</div>}
               <div className="detalhe">
                 {acao?.o_que_faz && <><b>O que acontece:</b> {acao.o_que_faz}<br /></>}
-                {Object.keys(args).length > 0 && <>{Object.entries(args).map(([k, v]) => <span key={k}><b>{k}:</b> {String(v)} &nbsp;·&nbsp; </span>)}<br /></>}
+                {/* OS ARGUMENTOS SÃO CORTADOS, e o inteiro fica no title. Uma
+                    ordem de refazer análise tem 3 mil caracteres (medido na
+                    Engie): despejada na tela, ela empurra os botões de decidir
+                    para fora e a página inteira vira uma parede de texto. O que
+                    ele precisa ler para decidir é o MOTIVO, que está logo acima
+                    e inteiro. */}
+                {Object.entries(args).map(([k, v]) => (
+                  <span key={k} title={String(v)}><b>{k}:</b> {corta(String(v), 150)} &nbsp;·&nbsp; </span>
+                ))}
+                {Object.keys(args).length > 0 && <br />}
                 {acao?.desfaz && <><b>Se der errado:</b> {acao.desfaz}</>}
               </div>
               <div className="pe">

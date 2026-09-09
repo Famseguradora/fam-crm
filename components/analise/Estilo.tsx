@@ -434,7 +434,7 @@ export default function EstiloAnalises() {
 .an-ped { border:1px solid #e8b84b; background:#fdf9ec; border-radius:11px; padding:12px 14px; margin-bottom:10px; }
 .an-ped h3 { margin:0; font-size:14.5px; color:#0a1628; }
 .an-ped .motivo { font-size:13px; color:#22344d; margin:6px 0; line-height:1.5; white-space:pre-wrap; max-height:160px; overflow:auto; }
-.an-ped .detalhe { font-size:12px; color:#6080a0; line-height:1.5; }
+.an-ped .detalhe { font-size:12px; color:#6080a0; line-height:1.5; max-height:120px; overflow:auto; }
 .an-ped .pe { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
 .an-ped .quando { margin-left:auto; font-size:11.5px; color:#6080a0; }
 .an-niveis { display:inline-flex; border:1px solid #c5d5e8; border-radius:8px; overflow:hidden; }

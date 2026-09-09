@@ -17,7 +17,7 @@ echo.
 echo   DEIXE ESTA JANELA ABERTA.
 echo   ----------------------------------------------------
 echo.
-node scriptsesteira.mjs
+node "%~dp0scripts\esteira.mjs"
 echo.
 echo   A Esteira PAROU. A mensagem do erro esta acima.
 pause >nul
