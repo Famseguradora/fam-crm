@@ -32,7 +32,14 @@ import type { Tomador, Corretora, Operacao, Socio } from '@/types'
 import { fmtMoeda, fmtMoedaCurta, fmtData, maskCNPJ, maskTelefone } from '@/lib/utils'
 import { montarArvore, extrairDiretores, contarSocios } from '@/lib/relatorio-socios'
 import OrganogramaView from '@/components/OrganogramaView'
-import { fichaDaAnalise, type FichaAnalise, type SerasaFicha } from '@/lib/analise/ficha'
+import { fichaDaAnalise, type FichaAnalise } from '@/lib/analise/ficha'
+/* As seções do relatório moram em `components/analise/Relatorio.tsx`, porque
+   agora têm dois leitores: esta Mesa e o acervo (`/analises/<id>`). Uma cópia
+   aqui e outra lá seriam duas verdades sobre a mesma análise. */
+import {
+  Bloco, Campo, SecaoAnalise, SecaoSerasa, SecaoTresCs, SecaoDocumentos,
+  SecaoDemonstracoes, fmtScore,
+} from '@/components/analise/Relatorio'
 import CadastroTomador from '@/components/tomador/CadastroTomador'
 import OrganogramaModal from '@/components/OrganogramaModal'
 import OrganogramaAnalise from '@/components/tomador/OrganogramaAnalise'
@@ -44,44 +51,17 @@ import {
   IcoRelogio, IcoBalanca, IcoPercent, IcoCarteira, IcoInfo, IcoBaixar, IcoVoltar,
 } from '@/components/tomador/icones'
 
-type Gaveta = 'visao' | 'cadastro' | 'operacoes' | 'analise' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos' | 'linha'
+// O fluxo por área entrou em 08/09/2026: é a tela "mesa" do protótipo, com as
+// cinco seções nascendo juntas dentro do card. Ver components/tomador/SecoesDoCard.
+import SecoesDoCard from '@/components/tomador/SecoesDoCard'
+import { nomeArea } from '@/lib/card/secoes'
+
+type Gaveta = 'visao' | 'fluxo' | 'cadastro' | 'operacoes' | 'analise' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos' | 'linha'
 
 /** Operações que COMPROMETEM limite. As demais (Em Análise, Para Analisar,
  *  Recusado, Perdido) não seguram capacidade e não entram na barra. */
 const EMITIDO = 'Emitido'
 const APROVADO = 'Aprovado'
-
-// ── peças pequenas ──────────────────────────────────────────────────────────
-
-function Campo({ rotulo, valor, cls, largo }: {
-  rotulo: string; valor: React.ReactNode; cls?: string; largo?: boolean
-}) {
-  return (
-    <div className={`mt-campo${largo ? ' largo' : ''}`}>
-      <span className="mt-lab">{rotulo}</span>
-      <span className={`v${cls ? ' ' + cls : ''}`}>{valor || '—'}</span>
-    </div>
-  )
-}
-
-function Sub({ texto, cor }: { texto: string; cor: string }) {
-  return <div className="mt-sub"><span className="pt" style={{ background: cor }} />{texto}</div>
-}
-
-function Bloco({ titulo, cor, acao, onAcao, children }: {
-  titulo: string; cor?: string; acao?: string; onAcao?: () => void; children: React.ReactNode
-}) {
-  return (
-    <section className="mt-card mt-bloco">
-      <header className="mt-bloco-cab">
-        <span className="pt" style={cor ? { background: cor } : undefined} />
-        <span className="mt-bloco-tit">{titulo}</span>
-        {acao && <button type="button" className="mt-bloco-acao" onClick={onAcao}>{acao}</button>}
-      </header>
-      <div className="mt-bloco-corpo">{children}</div>
-    </section>
-  )
-}
 
 // ── a página ────────────────────────────────────────────────────────────────
 
@@ -275,7 +255,7 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
       secoes.push({
         titulo: `Análise de crédito · ${fmtData(ficha.data_analise)}`,
         campos: [
-          { rotulo: 'Score FAM', valor: ficha.score_final === null ? '—' : String(ficha.score_final).replace('.', ',') },
+          { rotulo: 'Score FAM', valor: fmtScore(ficha.score_final) },
           { rotulo: 'Rating', valor: ficha.rating_cod ?? ficha.rating_txt ?? '—' },
           { rotulo: 'Classe / Porte', valor: [ficha.classe, ficha.porte].filter(Boolean).join(' · ') || '—' },
           { rotulo: 'Nível de risco', valor: ficha.nivel_risco ?? '—' },
@@ -351,7 +331,7 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
         .filter(Boolean).join(' · '),
       chips: [
         ficha?.rating_cod && `Rating ${ficha.rating_cod}`,
-        ficha?.score_final !== null && ficha?.score_final !== undefined && `Score FAM ${String(ficha.score_final).replace('.', ',')}`,
+        ficha?.score_final !== null && ficha?.score_final !== undefined && `Score FAM ${fmtScore(ficha.score_final)}`,
         ficha?.recomendacao ?? undefined,
         tomador.status,
       ].filter(Boolean) as string[],
@@ -391,6 +371,8 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
 
   const ITENS: { g: Gaveta; nome: string; ico: React.ReactNode; meta?: string; badge?: string }[] = [
     { g: 'visao', nome: 'Visão geral', ico: <IcoVisao /> },
+    // A esteira do card: onde ele está e quem escreve o quê agora.
+    { g: 'fluxo', nome: 'Fluxo por área', ico: <IcoCheck />, meta: nomeArea(tomador.central_area ?? 'comercial') },
     // A edição do cadastro mora AQUI desde 30/08/2026, e não mais no modal da
     // lista: ordem dele, "tudo deve ser feito na tela quando clicar na linha".
     { g: 'cadastro', nome: 'Cadastro', ico: <IcoCarteira /> },
@@ -608,6 +590,25 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
             tomador={tomador} ficha={ficha} anosAtividade={anosAtividade} estourou={c.estourou}
           />}
 
+          {gaveta === 'fluxo' && <SecoesDoCard
+            tomadorId={tomador.id}
+            cnpj={tomador.cnpj}
+            centralInicial={tomador.central_area}
+            operacoes={operacoes.map(o => ({
+              id: o.id, modalidade: o.modalidade, status: o.status,
+              lmg: o.lmg, taxa: o.taxa, voto_subscricao: o.voto_subscricao ?? null,
+            }))}
+            analise={ficha ? {
+              recomendacao: ficha.recomendacao,
+              data_analise: ficha.data_analise,
+              // `limiteNum` já vem null quando o motivo escrito anula o número:
+              // a regra mora em lib/analise/ficha.ts, e não é refeita aqui.
+              limite: ficha.limiteNum,
+              limiteAnulado: !!ficha.limiteAviso,
+            } : null}
+            onMudou={carregar}
+          />}
+
           {gaveta === 'cadastro' && (
             <CadastroTomador tomador={tomador} onSalvo={carregar} />
           )}
@@ -620,13 +621,31 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
             </Bloco>
           )}
 
-          {gaveta === 'analise' && <GavetaAnalise
-            ficha={ficha} limiteCadastro={c.limite} emitido={c.emitido}
-            conflito={conflitoLimite}
-            dataCadastro={tomador.data_entrada}
-          />}
+          {/* O confronto do limite só existe aqui: é o valor do CADASTRO contra o
+              que a análise recomenda, e no acervo não há cadastro para confrontar.
+              Sem conflito, `confronto` vai nulo e a seção sai igual à do acervo. */}
+          {gaveta === 'analise' && <>
+            <SecaoAnalise
+              ficha={ficha}
+              confronto={conflitoLimite ? {
+                limiteCadastro: c.limite, emitido: c.emitido, dataCadastro: tomador.data_entrada,
+              } : null}
+            />
+            <SecaoTresCs ficha={ficha} />
+            {/* A porta para a análise inteira, dentro do CRM. A Mesa mostra o
+                que interessa ao TOMADOR; o relatório mostra a análise como ela
+                foi publicada, com Serasa, organograma e demonstrações juntos. */}
+            {ficha && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn-secondary" style={{ padding: '7px 14px', fontSize: 13 }}
+                  onClick={() => router.push(`/analises/${ficha.id}`)}>
+                  Abrir o relatório completo da análise
+                </button>
+              </div>
+            )}
+          </>}
 
-          {gaveta === 'serasa' && <GavetaSerasa ficha={ficha} />}
+          {gaveta === 'serasa' && <SecaoSerasa ficha={ficha} />}
 
           {gaveta === 'grupo' && (
             <Bloco titulo="Grupo econômico e organograma" cor="#e8b84b"
@@ -660,51 +679,9 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
             </Bloco>
           )}
 
-          {gaveta === 'demonstracoes' && (
-            <Bloco titulo="Demonstrações financeiras" cor="#27a96c">
-              {!ficha || ficha.exercicios.length === 0
-                ? <div className="mt-vazio">Nenhum exercício publicado para este tomador.</div>
-                : <TabelaExercicios ficha={ficha} />}
-            </Bloco>
-          )}
+          {gaveta === 'demonstracoes' && <SecaoDemonstracoes ficha={ficha} />}
 
-          {gaveta === 'documentos' && (
-            <Bloco titulo="Documentos lidos pela análise" cor="#27a96c">
-              {!ficha || ficha.documentos.length === 0 ? (
-                /* NUNCA escrever "este tomador não tem documento": seria mentira.
-                   Conferido em 30/08/2026 no banco: `analise_documentos` está com
-                   ZERO linhas para as 131 análises. A tabela existe e a carga a
-                   limpa, mas nada nunca a preencheu. O dado está no disco, nos
-                   `_status.json` de cada pasta (62 pastas, 830 arquivos). */
-                <div className="mt-nota at" style={{ marginTop: 0 }}>
-                  <b>Os documentos ainda não foram indexados.</b> A análise leu os arquivos da
-                  pasta do tomador, mas esse índice nunca foi publicado no banco: a tabela está
-                  vazia para todas as 131 análises, não só para este tomador.
-                  {' '}É a próxima carga a rodar.
-                </div>
-              ) : (
-                <div className="mt-tab-wrap">
-                  <table className="mt-tab">
-                    <thead><tr><th>Documento</th><th style={{ textAlign: 'right' }}>Tamanho</th><th style={{ textAlign: 'right' }}>Hash</th></tr></thead>
-                    <tbody>
-                      {ficha.documentos.map((d, i) => (
-                        <tr key={i}>
-                          <td>{d.nome}</td>
-                          <td className="n">{d.bytes ? `${Math.round(d.bytes / 1024).toLocaleString('pt-BR')} KB` : '—'}</td>
-                          <td className="dim" style={{ fontFamily: 'Consolas, monospace', fontSize: 11.5 }}>{d.hash16 ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <div className="mt-nota">
-                Estes são os arquivos que a análise LEU, com o retrato de quando ela começou.
-                O arquivo em si fica no disco; aqui está o índice, com o hash para conferir que
-                não mudou.
-              </div>
-            </Bloco>
-          )}
+          {gaveta === 'documentos' && <SecaoDocumentos ficha={ficha} />}
 
           {editorOrg && (
             <OrganogramaModal
@@ -766,7 +743,7 @@ function Indicadores({ tomador, ficha, estourou, pct, temLimite }: {
   const corPct = !temLimite ? '#8ba3c0' : estourou ? '#a3282a' : pct >= 90 ? '#a07b1e' : '#1a7a50'
   const itens: { lab: string; v: React.ReactNode; s?: string; cor?: string; txt?: boolean }[] = [
     { lab: 'Rating FAM', v: ficha?.rating_cod ?? '—', s: ficha?.rating_txt && ficha.rating_txt !== ficha.rating_cod ? ficha.rating_txt : undefined, cor: '#1e4080' },
-    { lab: 'Score FAM', v: ficha?.score_final !== null && ficha?.score_final !== undefined ? String(ficha.score_final).replace('.', ',') : '—', s: ficha ? `análise de ${fmtData(ficha.data_analise)}` : 'sem análise', cor: '#1e4080' },
+    { lab: 'Score FAM', v: fmtScore(ficha?.score_final), s: ficha ? `análise de ${fmtData(ficha.data_analise)}` : 'sem análise', cor: '#1e4080' },
     { lab: 'Nível de risco', v: ficha?.nivel_risco ?? '—', s: ficha?.recomendacao ?? undefined, cor: corRisco, txt: true },
     { lab: 'Limite usado', v: temLimite ? `${pct.toFixed(1).replace('.', ',')}%` : '—', s: estourou ? 'estourado' : temLimite ? 'do aprovado' : 'sem limite', cor: corPct },
     { lab: 'Status no fluxo', v: tomador.status, s: tomador.porte ?? undefined, txt: true },
@@ -866,174 +843,6 @@ function GavetaVisao({ operacoes, lmgTotal, pct, livre, temLimite, tomador, fich
   )
 }
 
-function GavetaAnalise({ ficha, limiteCadastro, emitido, conflito, dataCadastro }: {
-  ficha: FichaAnalise | null; limiteCadastro: number; emitido: number
-  conflito: boolean; dataCadastro: string | null
-}) {
-  if (!ficha) {
-    return (
-      <Bloco titulo="Análise de crédito">
-        <div className="mt-vazio">
-          Nenhuma análise publicada para este CNPJ.
-        </div>
-        <div className="mt-nota">
-          A ficha procura a análise vigente pelo CNPJ. Se a análise existe no seu sistema mas não
-          aparece aqui, ou o CNPJ do cadastro está diferente, ou ela ainda não foi publicada no banco.
-        </div>
-      </Bloco>
-    )
-  }
-
-  const pct = (v: number | null) => v === null ? '—' : `${String(v).replace('.', ',')}%`
-
-  return (
-    <>
-      <Bloco titulo={`Análise de crédito · ${fmtData(ficha.data_analise)}`} cor="#1e4080">
-        <div className="mt-campos">
-          <Campo rotulo="Score FAM" valor={ficha.score_final === null ? '—' : String(ficha.score_final).replace('.', ',')} cls="az" />
-          <Campo rotulo="Rating" valor={ficha.rating_cod ?? ficha.rating_txt} cls="az" />
-          <Campo rotulo="Classe / Porte" valor={[ficha.classe, ficha.porte].filter(Boolean).join(' · ')} />
-          <Campo rotulo="Nível de risco" valor={ficha.nivel_risco} />
-          <Campo rotulo="Decisão" valor={ficha.recomendacao} cls="forte" />
-          <Campo rotulo="Situação" valor={ficha.revisada ? 'Editada por você' : 'Gerada, a revisar'} />
-          <Campo
-            rotulo="Limite recomendado"
-            valor={ficha.limiteNum !== null ? fmtMoeda(ficha.limiteNum) : ficha.limiteAviso}
-            cls={ficha.limiteNum !== null ? 'vd' : 'ou'}
-            largo={ficha.limiteNum === null}
-          />
-          <Campo rotulo="Taxa tradicional" valor={pct(ficha.taxa_tradicional)} />
-          <Campo rotulo="Taxa judicial" valor={pct(ficha.taxa_judicial)} />
-          <Campo rotulo="Taxa estruturada" valor={pct(ficha.taxa_estruturada)} />
-        </div>
-
-        {/* O confronto: o limite do cadastro contra o da análise. */}
-        {conflito && ficha.limiteNum !== null && (
-          <div className="mt-confronto">
-            <div className="mt-conf-cab">
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#e8b84b' }} />
-              Limite aprovado · dois valores, e a decisão é sua
-            </div>
-            <div className="mt-conf-lados">
-              <div className="mt-lado">
-                <div className="mt-lab">Está no cadastro</div>
-                <div className="lv">{fmtMoeda(limiteCadastro)}</div>
-                <div className="lq">
-                  Cadastro do CRM{dataCadastro ? ` · desde ${fmtData(dataCadastro)}` : ''}
-                </div>
-              </div>
-              <div className="mt-lado novo">
-                <div className="mt-lab">A análise recomenda</div>
-                <div className="lv">{fmtMoeda(ficha.limiteNum)}</div>
-                <div className="lq">Análise de {fmtData(ficha.data_analise)}</div>
-              </div>
-            </div>
-            <div className="mt-conf-acoes">
-              <span className="mt-conf-obs">
-                Emitido hoje: {fmtMoeda(emitido)}.
-                {emitido <= Math.min(limiteCadastro, ficha.limiteNum)
-                  ? ' Cabe nos dois.'
-                  : ' NÃO cabe no menor dos dois.'}
-              </span>
-            </div>
-            <div className="mt-nota" style={{ marginTop: 12 }}>
-              A tela <b>não muda o limite sozinha</b>. Enquanto a regra de publicação não estiver
-              ligada, o valor do cadastro continua valendo, e a mudança é feita por você na edição
-              do tomador.
-            </div>
-          </div>
-        )}
-      </Bloco>
-
-      {(ficha.pontos_positivos.length > 0 || ficha.pontos_atencao.length > 0) && (
-        <Bloco titulo="Pontos da análise" cor="#e8b84b">
-          {ficha.pontos_positivos.length > 0 && <>
-            <Sub texto="Pontos positivos" cor="#27a96c" />
-            <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.55 }}>
-              {ficha.pontos_positivos.map((p, i) => <li key={i} style={{ marginBottom: 5 }}>{p}</li>)}
-            </ul>
-          </>}
-          {ficha.pontos_atencao.length > 0 && <>
-            <Sub texto="Pontos de atenção" cor="#e8b84b" />
-            <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.55 }}>
-              {ficha.pontos_atencao.map((p, i) => <li key={i} style={{ marginBottom: 5 }}>{p}</li>)}
-            </ul>
-          </>}
-        </Bloco>
-      )}
-
-      {(ficha.conclusao || ficha.condicoes) && (
-        <Bloco titulo="Conclusão e condições" cor="#1e4080">
-          {ficha.conclusao && <>
-            <Sub texto="Conclusão" cor="#3070c8" />
-            <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: '4px 0 0' }}>{ficha.conclusao}</p>
-          </>}
-          {ficha.condicoes && <>
-            <Sub texto="Condições" cor="#e8b84b" />
-            {/* O texto vem do editor antigo com marcação HTML dentro. Aqui ele é
-                mostrado como TEXTO, sem interpretar as marcas: é conteúdo de
-                banco, e não pode virar HTML numa tela do CRM. */}
-            <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: '4px 0 0' }}>
-              {ficha.condicoes.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()}
-            </p>
-          </>}
-        </Bloco>
-      )}
-    </>
-  )
-}
-
-function TabelaExercicios({ ficha }: { ficha: FichaAnalise }) {
-  const LINHAS: { rot: string; k: keyof typeof ficha.exercicios[number] }[] = [
-    { rot: 'Ativo total', k: 'ativo_total' },
-    { rot: 'Ativo circulante', k: 'ativo_circulante' },
-    { rot: 'Passivo circulante', k: 'passivo_circulante' },
-    { rot: 'Exigível total', k: 'exigivel_total' },
-    { rot: 'Patrimônio líquido', k: 'patrimonio_liquido' },
-    { rot: 'Receita operacional', k: 'receita_operacional' },
-    { rot: 'EBITDA', k: 'ebitda' },
-    { rot: 'Lucro líquido', k: 'lucro_liquido' },
-    { rot: 'Caixa', k: 'caixa' },
-    { rot: 'Estoques', k: 'estoques' },
-  ]
-  const exs = ficha.exercicios
-
-  return (
-    <>
-      <div className="mt-tab-wrap">
-        <table className="mt-tab">
-          <thead>
-            <tr>
-              <th>Conta</th>
-              {exs.map(e => <th key={e.rotulo} style={{ textAlign: 'right' }}>{e.rotulo}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {LINHAS.map(l => {
-              // Conta que está vazia em TODOS os exercícios não vira linha em branco.
-              if (exs.every(e => e[l.k] === null)) return null
-              return (
-                <tr key={l.rot}>
-                  <td>{l.rot}</td>
-                  {exs.map(e => {
-                    const v = e[l.k] as number | null
-                    return <td key={e.rotulo} className="n">{v === null ? '—' : fmtMoeda(v)}</td>
-                  })}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-      <div className="mt-nota">
-        <b>Valores em reais.</b> A carga converteu a escala de cada demonstração (havia balanço em
-        milhares e em milhões no acervo), então as colunas podem ser comparadas direto.
-        {exs.some(e => e.base) && <> A base de cada uma está no rótulo: {exs.filter(e => e.base).map(e => `${e.rotulo} (${e.base})`).join(', ')}.</>}
-      </div>
-    </>
-  )
-}
-
 function GavetaLinha({ tomador, ficha, operacoes }: {
   tomador: Tomador; ficha: FichaAnalise | null; operacoes: Operacao[]
 }) {
@@ -1053,7 +862,7 @@ function GavetaLinha({ tomador, ficha, operacoes }: {
   }
   if (ficha) eventos.push({
     data: ficha.data_analise,
-    txt: `Análise de crédito vigente · Score ${ficha.score_final === null ? '—' : String(ficha.score_final).replace('.', ',')} · ${ficha.recomendacao ?? ''}`,
+    txt: `Análise de crédito vigente · Score ${fmtScore(ficha.score_final)} · ${ficha.recomendacao ?? ''}`,
     forte: true,
   })
 
@@ -1086,163 +895,5 @@ function GavetaLinha({ tomador, ficha, operacoes }: {
         quando uma apólice vence.
       </div>
     </Bloco>
-  )
-}
-
-// ── Serasa ──────────────────────────────────────────────────────────────────
-//  O Serasa passou a ter coluna no banco em 30/08/2026 (migration
-//  `analises_serasa` + `scripts/carga-serasa.mjs`): 130 das 131 análises. O que
-//  a análise NÃO registrou continua ficando de fora, escrito como tal: PEFIN,
-//  protestos e ações só existem no vocabulário revisado, e inventar
-//  "sem registros" onde a análise não olhou seria dizer que a empresa está
-//  limpa sem prova.
-
-function faixaDoScore(score: number): { cor: string; texto: string } {
-  if (score >= 700) return { cor: '#1a7a50', texto: 'faixa alta' }
-  if (score >= 500) return { cor: '#27a96c', texto: 'faixa boa' }
-  if (score >= 400) return { cor: '#a07b1e', texto: 'faixa média' }
-  if (score >= 250) return { cor: '#c06a1e', texto: 'faixa baixa' }
-  return { cor: '#a3282a', texto: 'faixa crítica' }
-}
-
-/** A análise escreveu que este campo está zerado? Serve para separar o que ela
- *  OLHOU e achou limpo do que ela simplesmente não olhou.
- *
- *  O acervo escreve isso de muitas formas ("R$ 0", "0 ação(ões)",
- *  "Sem registros", "Nada consta"), então a regra é a mais burra que funciona:
- *  frase de negação, ou nenhum algarismo diferente de zero no texto todo.
- *  "R$ 7.751,21" tem 7, logo NÃO está zerado. */
-function zerado(v: string): boolean {
-  const t = v.trim()
-  if (/^(sem registro|nada consta|nenhum|não consta|nao consta|inexistente)/i.test(t)) return true
-  return !/[1-9]/.test(t)
-}
-
-/** A cor do cabeçalho das anotações negativas, e ela diz TRÊS coisas
- *  diferentes: vermelho quando há anotação, verde quando a análise afirmou que
- *  está zerado, e cinza quando ela não registrou nada. O cinza é o ponto:
- *  campo em branco não é empresa limpa, e verde ali afirmaria o que o dado não
- *  sustenta. */
-function corDasAnotacoes(s: SerasaFicha): string {
-  const campos = [s.pefin, s.protestos, s.acoes].filter(Boolean) as string[]
-  if (campos.length === 0) return '#8ba3c0'
-  return campos.every(zerado) ? '#27a96c' : '#d64545'
-}
-
-function GavetaSerasa({ ficha }: { ficha: FichaAnalise | null }) {
-  if (!ficha) {
-    return (
-      <Bloco titulo="Serasa" cor="#e8b84b">
-        <div className="mt-vazio">Nenhuma análise publicada para este CNPJ.</div>
-        <div className="mt-nota">
-          O Serasa que a Mesa mostra é o que a análise de crédito leu e registrou. Sem análise
-          publicada, não há de onde tirar.
-        </div>
-      </Bloco>
-    )
-  }
-
-  const s = ficha.serasa
-  if (!s) {
-    return (
-      <Bloco titulo={`Serasa · análise de ${fmtData(ficha.data_analise)}`} cor="#e8b84b">
-        <div className="mt-nota at" style={{ marginTop: 0 }}>
-          <b>Esta análise não registrou Serasa.</b> Ela existe e está publicada, mas o bloco do
-          Serasa veio vazio: ou o relatório não foi anexado, ou não foi preenchido.
-        </div>
-      </Bloco>
-    )
-  }
-
-  const faixa = s.score !== null ? faixaDoScore(s.score) : null
-  const naoOlhados = [
-    !s.pefin && 'PEFIN',
-    !s.protestos && 'protestos',
-    !s.acoes && 'ações judiciais',
-  ].filter(Boolean) as string[]
-
-  return (
-    <>
-      <Bloco titulo={`Serasa · análise de ${fmtData(ficha.data_analise)}`} cor="#e8b84b">
-        <div className="mt-serasa-topo">
-          <div className="mt-serasa-score">
-            <div className="mt-lab">Serasa Score Empresas</div>
-            <div className="n" style={faixa ? { color: faixa.cor } : { color: '#8ba3c0' }}>
-              {s.score !== null ? s.score : '—'}
-            </div>
-            <div className="t">{faixa ? `de 1.000 · ${faixa.texto}` : 'a análise não registrou o número'}</div>
-          </div>
-          <div className="mt-risca" />
-          <div className="mt-campos" style={{ flex: '1 1 320px' }}>
-            <Campo rotulo="Risco" valor={s.risco} cls="forte" />
-            <Campo rotulo="Probabilidade de inadimplência" valor={s.prob} />
-            <Campo rotulo="Limite sugerido pelo Serasa" valor={s.limite_num !== null ? fmtMoeda(s.limite_num) : s.limite_txt} />
-            <Campo rotulo="Falência e recuperação" valor={s.recuperacao} />
-          </div>
-        </div>
-
-        {s.interpretacao && (
-          <>
-            <Sub texto="Leitura da análise" cor="#3070c8" />
-            <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: '4px 0 0' }}>{s.interpretacao}</p>
-          </>
-        )}
-
-        <div className="mt-nota">
-          <b>Este Serasa é o que a análise tinha em mãos em {fmtData(ficha.data_analise)}</b>, e não uma
-          consulta de hoje: o relatório em si pode ser mais velho que a análise. Score de crédito
-          envelhece, e a data de quando ele foi puxado não é um campo que a análise registra.
-        </div>
-      </Bloco>
-
-      <Bloco titulo="Anotações negativas" cor={corDasAnotacoes(s)}>
-        {(s.pefin || s.protestos || s.acoes) ? (
-          <div className="mt-campos">
-            {s.pefin && <Campo rotulo="PEFIN" valor={s.pefin} />}
-            {s.protestos && <Campo rotulo="Protestos" valor={s.protestos} />}
-            {s.acoes && <Campo rotulo="Ações judiciais" valor={s.acoes} />}
-            {s.recuperacao && <Campo rotulo="Falência / recuperação" valor={s.recuperacao} />}
-          </div>
-        ) : (
-          <div className="mt-vazio" style={{ padding: '16px 20px' }}>
-            A análise não registrou estes campos.
-          </div>
-        )}
-        {naoOlhados.length > 0 && (
-          <div className="mt-nota">
-            Sem registro de <b>{naoOlhados.join(', ')}</b> nesta análise. Isso quer dizer que o campo
-            não foi preenchido, e <b>não</b> que a empresa está limpa: para afirmar isso é preciso o
-            relatório do Serasa em mãos.
-          </div>
-        )}
-      </Bloco>
-
-      <Bloco titulo={`Consultas recentes ao CNPJ · ${s.consultas.length}`} cor="#e8b84b">
-        {s.consultas.length === 0 ? (
-          <div className="mt-vazio">A análise não listou consultas.</div>
-        ) : (
-          <div className="mt-tab-wrap">
-            <table className="mt-tab">
-              <thead><tr><th>Data</th><th>Quem consultou</th><th>Segmento</th></tr></thead>
-              <tbody>
-                {s.consultas.map((c, i) => (
-                  <tr key={i}>
-                    <td className="dim" style={{ width: 110 }}>{c.data ?? '—'}</td>
-                    <td>{c.empresa ?? '—'}</td>
-                    <td className="dim" style={{ whiteSpace: 'normal' }}>{c.tipo ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div className="mt-nota">
-          Esta é a lista que a análise transcreveu do relatório, e costuma ser <b>uma amostra</b> das
-          consultas mais recentes, não o total do período. O número cheio, quando existe, está na
-          leitura acima.
-          {s.fonte && <> Origem: versão <b>{s.fonte === 'revisada' ? 'revisada por você' : 'gerada pela análise'}</b>.</>}
-        </div>
-      </Bloco>
-    </>
   )
 }
