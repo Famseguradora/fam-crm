@@ -47,8 +47,14 @@ export const cor = {
   areaTomador: '#2255a4',
   /** O verde da área de Operações, subscrição e do que deu certo. */
   areaOperacao: '#27a96c',
-  /** O dourado. É filete e marcador, NUNCA fundo de bloco grande. */
+  /** O dourado. É filete, marcador, borda e ponto: NUNCA fundo de bloco
+   *  grande, e NUNCA texto. */
   ouro: '#e8b84b',
+  /** O dourado quando precisa ser LIDO (rótulo de atenção, chip "aguardando").
+   *  O `ouro` sobre branco dá ~1,9:1 de contraste, que é ilegível; este dá
+   *  ~5,7:1. Quem apontou foi a sessão que repaginou a Análise em 09/09/2026,
+   *  e ela estava certa: o token faltava. */
+  ouroTexto: '#8a6410',
   /** Vermelho de alerta. Só onde existe decisão a tomar. */
   alerta: '#c0392b',
   alertaFundo: '#fbe9e9',
@@ -76,8 +82,15 @@ export const cor = {
  *  entre "um gráfico" e "um gráfico deste sistema". */
 export const SERIE = [
   '#1e4080', '#e8b84b', '#27a96c', '#3070c8',
-  '#d64545', '#6080a0', '#9878d0', '#c76f3a',
+  '#d64545', '#6080a0', '#0f766e', '#c76f3a',
 ] as const
+
+/* O sétimo tom já foi '#9878d0', um roxo, e isso contradizia a regra de ouro
+   escrita seis linhas acima. Ficou assim porque a paleta veio de um arquivo
+   antigo e ninguém releu os oito valores contra a própria regra. Virou teal em
+   09/09/2026, no mesmo dia em que a regra foi escrita, depois que outra sessão
+   apontou. Fica como lembrete: regra em comentário não vale nada se o valor
+   logo abaixo dela desobedece. */
 
 /** Azuis e verdes em rampa, do escuro ao claro. Use quando a ordem da cor
  *  significa a ordem do valor (barra ordenada, mapa de calor). Regra que veio

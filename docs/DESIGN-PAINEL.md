@@ -43,7 +43,8 @@ pixel.
 | Ação | `#1e4080` | botão cheio, balão da pessoa |
 | Área Tomadores | `#2255a4` | ponto da seção, barra do gráfico |
 | Área Operações | `#27a96c` | idem, e tudo que deu certo |
-| Ouro | `#e8b84b` | **filete e marcador, nunca fundo de bloco** |
+| Ouro | `#e8b84b` | **filete, marcador, borda e ponto. Nunca fundo de bloco, nunca texto** |
+| Ouro como texto | `#8a6410` | `cor.ouroTexto`, para rótulo de atenção e chip |
 | Alerta | `#c0392b` | número que exige decisão |
 | Fundo | `#f4f7fb` | a área |
 | Papel | `#ffffff` | o cartão em cima da área |
@@ -105,6 +106,27 @@ import { corDaArea, botaoCheio, texto } from '@/lib/ui/painel'
   </CartaoNumero>
 </SecaoPainel>
 ```
+
+## As exceções, e por que elas são nomeadas
+
+Uma exceção escrita é uma decisão; uma exceção não escrita é só divergência.
+Estas duas nasceram em 09/09/2026, quando a Análise foi repaginada em paralelo:
+
+1. **`components/analise/Estilo.tsx` mantém hex escrito**, sem importar
+   `painel.ts`. Não é teimosia: aquilo é uma folha CSS de ~560 linhas dentro de
+   um `<style>` com prefixo `an-`, e não estilo inline. Interpolar
+   `${cor.borda}` em cada linha do template literal deixaria a folha ilegível e
+   quebraria o realce de sintaxe. A regra que vale lá é a que está no cabeçalho
+   do próprio arquivo: **se um valor dali divergir de `painel.ts`, quem manda é
+   `painel.ts`.**
+
+2. **O ouro não pode ser texto.** `#e8b84b` sobre branco dá ~1,9:1 de contraste,
+   que é ilegível. Onde o ouro precisa ser lido, use `cor.ouroTexto` (`#8a6410`,
+   ~5,7:1). O `#e8b84b` fica onde ele funciona: filete, marcador, borda, ponto.
+
+Há também um roxo pré-existente que sobreviveu à faxina: `--purple: #9878d0` em
+`app/globals.css`, dentro do bloco do cockpit escuro. Ele não vem de `painel.ts`
+e ainda não foi decidido. Se aparecer numa tela nova, é bug.
 
 ## O que ainda não está extraído
 

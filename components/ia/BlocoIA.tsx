@@ -30,10 +30,14 @@ export interface Bloco {
   origem?: string | null
 }
 
-/* A paleta é a do CRM (azul, dourado, verde, vermelho, os azuis da régua), e
-   não a paleta padrão do Recharts. É a diferença entre "um gráfico" e "um
-   gráfico deste sistema". */
-const CORES = ['#1e4080', '#e8b84b', '#27a96c', '#3070c8', '#d64545', '#6080a0', '#9878d0', '#c76f3a']
+/* A paleta é a do CRM, e não a padrão do Recharts: é a diferença entre "um
+   gráfico" e "um gráfico deste sistema".
+
+   Ela era uma cópia escrita aqui, e a cópia guardava um roxo que a regra de
+   ouro proíbe. Passou a vir de lib/ui/painel.ts em 09/09/2026, que é o ponto
+   inteiro daquele arquivo existir: token copiado à mão vira token divergente
+   no primeiro ajuste. */
+import { SERIE as CORES } from '@/lib/ui/painel'
 
 /** Número grande vira legível no eixo: 12.500.000 -> "12,5 mi". Eixo com sete
  *  dígitos empurra o gráfico para fora da tela no celular. */
