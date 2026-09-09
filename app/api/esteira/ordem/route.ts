@@ -1,19 +1,28 @@
 // ============================================================================
 //  POST /api/esteira/ordem  ·  a PESSOA manda a esteira andar
 //
-//  Quatro ordens, e nenhuma delas executa nada: elas ficam guardadas e o agente
+//  Oito ordens, e nenhuma delas executa nada: elas ficam guardadas e o agente
 //  do notebook vem buscá-las. É o mesmo desenho do Carteiro, pela mesma razão:
 //  o CRM não fala com 127.0.0.1 nem com a máquina de ninguém. O preço é levar
 //  alguns segundos, e a tela diz isso em vez de fingir que já foi.
 //
-//     iniciar    manda o motor começar (ou refazer uma concluída)
-//     pausar     tira da fila e deixa parada
-//     retomar    devolve para a fila
-//     parar      derruba a execução que está rodando agora
+//     iniciar     manda o motor começar (ou refazer uma concluída)
+//     pausar      tira da fila e deixa parada
+//     retomar     devolve para a fila
+//     parar       derruba a execução que está rodando agora
+//     reconferir  relê a pasta: abre o e-mail, refaz a triagem
+//     forcar      relê e, se continuar faltando papel, analisa mesmo assim
+//     ler_pasta   o bibliotecário lê a pasta inteira e escreve o retrato
+//     refazer     devolve para a fila com a ordem escrita (completa ou parcial)
 //
 //  Qual ordem vale em qual situação está em `lib/analise/esteira.ts`, e é a
 //  MESMA regra que a tela usa para desenhar os botões. Escrita duas vezes, ela
 //  vira um botão que aparece e um servidor que recusa.
+//
+//  O QUE VIAJA JUNTO (09/09/2026): "o que observar nesta análise" e o modo
+//  (completa/rápida) ficam na linha, em `instrucao` e `modo`, porque são
+//  decisão da pessoa e o agente os lê quando a ordem chega. O escopo do refazer
+//  vai em `ordem_dados`.
 //
 //  Trava: sessão + RLS (`fam_pode_escrever`). Quem só lê, só lê.
 // ============================================================================
@@ -52,9 +61,21 @@ export async function POST(req: NextRequest) {
       { status: 409 },
     )
   }
+  if (alvo.ordem) {
+    return NextResponse.json(
+      { erro: `Já existe uma ordem ("${ORDEM[alvo.ordem as Ordem]?.rotulo ?? alvo.ordem}") esperando o notebook. Aguarde ela ser aceita.` },
+      { status: 409 },
+    )
+  }
 
   const { data: quem } = await supabase.from('usuarios').select('nome').eq('auth_id', user.id).maybeSingle()
   const nome = quem?.nome ?? user.email ?? 'alguém'
+
+  const dados = (corpo.dados && typeof corpo.dados === 'object') ? corpo.dados as Record<string, unknown> : {}
+  const instrucao = String(dados.instrucao ?? '').trim().slice(0, 2000)
+  const modo = String(dados.modo ?? '').trim() === 'rapida' ? 'rapida' : ''
+  const escopo = String(dados.escopo ?? '').trim() === 'parcial' ? 'parcial' : 'completa'
+  const motivo = String(dados.motivo ?? '').trim().slice(0, 500)
 
   /* PAUSAR E RETOMAR MUDAM A SITUAÇÃO NA HORA, e não esperam a máquina: são
      decisões que valem sozinhas, sem nada precisar rodar. Já `iniciar` e
@@ -63,6 +84,13 @@ export async function POST(req: NextRequest) {
      tela dizer "Analisando" com o notebook desligado. */
   const mudanca: Record<string, unknown> = {
     ordem, ordem_em: new Date().toISOString(), ordem_por: nome,
+    ordem_dados: { instrucao: instrucao || null, modo: modo || null, escopo, motivo: motivo || null },
+    ultima_ordem_resultado: null, ultima_ordem_em: null,
+  }
+  // O que observar e o modo são da linha, e ficam para a próxima vez também.
+  if (ordem === 'iniciar' || ordem === 'forcar' || ordem === 'refazer') {
+    mudanca.instrucao = instrucao || null
+    mudanca.modo = modo || null
   }
   if (ordem === 'pausar') {
     mudanca.situacao = 'pausada'

@@ -16,6 +16,12 @@
 //
 //  A tela não sabe qual motor respondeu. É por isso que trocar de motor amanhã
 //  não mexe em componente nenhum.
+//
+//  A IA DO CARD (09/09/2026) passa pela MESMA tabela, com `escopo = 'analise'`:
+//  com análise no banco responde o auditor do relatório (ia.mjs, a mesma
+//  conversa que aparece dentro do relatório); sem análise, o auditor ancorado
+//  na pasta (ia-card.mjs). Quem decide qual dos dois é o agente, olhando se a
+//  pergunta trouxe `analise_chave`.
 // ============================================================================
 
 export type MotorIA = 'notebook' | 'servidor'
@@ -43,6 +49,15 @@ export const SUGESTOES = [
   'Quais tomadores do acervo são do mesmo grupo econômico e podem somar exposição?',
   'O que se repete nas análises que eu aprovei com ressalva?',
   'Compare os três maiores limites recomendados e diga o que sustenta cada um.',
+]
+
+/* OS ATALHOS DA IA DO CARD, cópia literal do `ATALHOS` do ia-card.mjs. São as
+   quatro perguntas que ele faz olhando uma pasta que acabou de chegar. */
+export const ATALHOS_CARD = [
+  { id: 'oque', txt: 'O que tem nesta pasta?', pergunta: 'Liste o que existe nesta pasta e diga, para cada documento, que documento e, de que empresa e de que periodo. Aponte o que estiver fora do lugar: documento de coligada, periodo velho, arquivo que nao e do tomador.' },
+  { id: 'numeros', txt: 'Os números principais', pergunta: 'Puxe dos documentos contabeis: receita liquida, EBITDA, lucro liquido, patrimonio liquido, divida bruta, caixa e estoque, dos periodos disponiveis. Monte uma tabela com o ano em cada coluna e cite arquivo e pagina de cada linha.' },
+  { id: 'risco', txt: 'O que me preocuparia aqui', pergunta: 'Lendo so o material desta pasta, aponte o que voce sinalizaria num comite de credito: alavancagem, queda de margem, concentracao, passivo relevante, ressalva de auditoria, qualquer coisa que mereca pergunta. Cite a origem de cada ponto.' },
+  { id: 'falta', txt: 'O que está faltando', pergunta: 'Compare o que existe nesta pasta com o que uma analise de credito da FAM precisa (dois exercicios fechados, demonstrativo do ano corrente, Serasa, contrato social). Diga o que falta e o que esta incompleto, com nome de arquivo.' },
 ]
 
 /** O motor de hoje. Enquanto não houver chave de IA no ambiente do CRM, quem

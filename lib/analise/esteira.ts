@@ -1,7 +1,8 @@
 /* A ESTEIRA DA ANÁLISE DE CRÉDITO: o vocabulário, num lugar só.
 
-   Portado de `_sistema/fila.mjs` (a função `avaliar`) e de `_sistema/comum.mjs`
-   (a constante `ETAPAS`), que saem do ar junto com o Sistema de Análise.
+   Portado de `_sistema/fila.mjs` (a função `avaliar`), de `_sistema/comum.mjs`
+   (a constante `ETAPAS`) e de `_sistema/visao.mjs` (as FASES da Mesa e a
+   régua `faseDe`), que saem do ar junto com o Sistema de Análise.
 
    POR QUE ISTO É UM MÓDULO E NÃO UMA LISTA EM CADA LADO:
    três lugares precisam concordar sobre o que é "pausada" e sobre qual ordem
@@ -105,25 +106,72 @@ export const andamentoDaEtapa = (etapa: string | null) => {
   return i < 0 ? 0 : Math.round(((i + 1) / ETAPAS.length) * 100)
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   AS CINCO FASES DA MESA, cópia literal do `FASES` do visao.mjs (26/08/2026).
+
+   As situações acima são o que o MOTOR sabe de uma pasta. A fase é o que a
+   MESA mostra: onde o caso está no caminho da casa (chegou, está sendo
+   conferido, está liberado, está rodando, ficou pronto). Duas réguas sobre o
+   mesmo dado, nunca duas leituras: quem calcula a fase é o motor, com a
+   função `faseDe` de lá, e ela chega ao CRM pela sincronização. A cópia aqui
+   existe para a tela desenhar a coluna quando a linha ainda não tem fase
+   (linha antiga, anterior à Mesa) e para a régua ser uma só nos dois lados.
+   ══════════════════════════════════════════════════════════════════════════ */
+export const FASES = [
+  { id: 'entrada', titulo: 'Entrada', dica: 'Chegou, ainda não passou pela análise documental', cor: '#4a90d0' },
+  { id: 'conferencia', titulo: 'Conferência', dica: 'Documentos lidos, falta documento ou uma decisão sua', cor: '#e8b84b' },
+  { id: 'liberado', titulo: 'Liberado', dica: 'Cadastro em ordem, pode analisar', cor: '#3070c8' },
+  { id: 'analisando', titulo: 'Analisando', dica: 'Rodando agora', cor: '#9878d0' },
+  { id: 'pronta', titulo: 'Pronta', dica: 'Entregue, abrir e editar', cor: '#27a96c' },
+] as const
+
+export type Fase = (typeof FASES)[number]['id']
+
+export const nomeDaFase = (id: string | null | undefined) =>
+  FASES.find(f => f.id === id)?.titulo ?? 'Entrada'
+
+export const corDaFase = (id: string | null | undefined) =>
+  FASES.find(f => f.id === id)?.cor ?? '#4a90d0'
+
+/** A régua do visao.mjs, linha por linha. `cadastro` é o status da triagem
+ *  (`pendente` = nunca triado, `bloqueado`, `em_conferencia`, `aprovado`). */
+export function faseDe(situacao: string, cadastro: string | null | undefined): Fase {
+  if (situacao === 'concluida') return 'pronta'
+  if (situacao === 'em_andamento') return 'analisando'
+  if (cadastro === 'pendente') return 'entrada'
+  if (['aguardando_resposta', 'bloqueada_documentos', 'aguardando_documentos', 'erro', 'pausada'].includes(situacao)
+    || cadastro === 'bloqueado' || cadastro === 'em_conferencia') return 'conferencia'
+  return 'liberado'
+}
+
+/* O PRAZO DE CADA FASE, EM DIAS DE PACIÊNCIA. Cópia do `SLA_PADRAO` do
+   quadro.mjs: passou do prazo, o cartão se acende (o SLA de fase do Pipefy).
+   `pronta` não expira: já acabou. */
+export const SLA_PADRAO: Record<Fase, number> = { entrada: 1, conferencia: 3, liberado: 2, analisando: 1, pronta: 0 }
+
 /* AS ORDENS QUE UMA PESSOA PODE DAR, e em qual situação cada uma vale.
 
    A ordem não EXECUTA nada: ela é uma intenção guardada no banco, que o agente
    do notebook vem buscar. É o mesmo desenho do Carteiro, e pela mesma razão: o
    CRM nunca fala com 127.0.0.1 nem com a máquina de ninguém. O preço é levar
-   alguns segundos, e a tela diz isso em vez de fingir. */
-export const ORDENS = ['iniciar', 'pausar', 'retomar', 'parar'] as const
+   alguns segundos, e a tela diz isso em vez de fingir.
+
+   As quatro últimas entraram com o card (09/09/2026): são os botões da aba
+   Análise do cockpit, um a um, e o agente as executa pelo mesmo caminho que o
+   botão do cockpit executa (o /api/destravar e o /api/analisar do motor). */
+export const ORDENS = ['iniciar', 'pausar', 'retomar', 'parar', 'reconferir', 'forcar', 'ler_pasta', 'refazer'] as const
 export type Ordem = (typeof ORDENS)[number]
 
 export const ORDEM: Record<Ordem, { rotulo: string; de: Situacao[]; explica: string }> = {
   iniciar: {
     rotulo: 'Analisar agora',
-    de: ['pendente', 'erro', 'concluida'],
+    de: ['pendente', 'erro', 'concluida', 'aguardando_documentos'],
     explica: 'Manda o motor começar. Em análise concluída, refaz do zero.',
   },
   pausar: {
     rotulo: 'Parar',
     // Também vale em `em_andamento`: parar no meio é exatamente o caso de uso.
-    de: ['pendente', 'em_andamento', 'aguardando_resposta', 'erro'],
+    de: ['pendente', 'em_andamento', 'aguardando_resposta', 'erro', 'bloqueada_documentos'],
     explica: 'Tira da fila e deixa parada até alguém mandar seguir.',
   },
   retomar: {
@@ -135,6 +183,26 @@ export const ORDEM: Record<Ordem, { rotulo: string; de: Situacao[]; explica: str
     rotulo: 'Interromper agora',
     de: ['em_andamento'],
     explica: 'Derruba a execução que está rodando neste momento.',
+  },
+  reconferir: {
+    rotulo: 'Reler a pasta agora',
+    de: ['bloqueada_documentos', 'aguardando_documentos', 'pendente', 'erro', 'pausada', 'aguardando_resposta'],
+    explica: 'Abre o e-mail que estiver na pasta, refaz a triagem e refaz a lista do que falta.',
+  },
+  forcar: {
+    rotulo: 'Analisar mesmo assim',
+    de: ['bloqueada_documentos', 'aguardando_documentos'],
+    explica: 'Relê a pasta e, se continuar faltando documento, começa a análise do mesmo jeito. Fica registrado que a liberação foi sua.',
+  },
+  ler_pasta: {
+    rotulo: 'Ler a pasta',
+    de: ['pendente', 'erro', 'concluida', 'bloqueada_documentos', 'aguardando_documentos', 'pausada', 'aguardando_resposta'],
+    explica: 'O bibliotecário abre todos os documentos da pasta e escreve o retrato da empresa. Leva alguns minutos.',
+  },
+  refazer: {
+    rotulo: 'Refazer',
+    de: ['concluida'],
+    explica: 'Devolve a pasta para a fila com a sua ordem escrita, e roda de novo.',
   },
 }
 

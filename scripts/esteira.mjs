@@ -15,22 +15,30 @@
 //
 //     1. pergunta ao CRM o que fazer            (GET /api/esteira)
 //     2. MATERIALIZA a pasta de um caso novo    (baixa os documentos do Storage)
-//     3. lê o estado real do disco pelo motor   (fila.mjs `listar`)
-//     4. manda esse retrato para o CRM          (POST sincronizar)
-//     5. executa as ordens que uma pessoa deu
+//     3. executa as ordens que uma pessoa deu   (pelo servidor local, quando ele
+//                                               está de pé; senão pelos módulos)
+//     4. aplica no disco o que o CRM decidiu    (recado lido, alçada, arquivo fora)
+//     5. responde a IA do card e a de Gestão
+//     6. manda o retrato do disco para o CRM    (a Mesa inteira: fichas, arquivos,
+//                                               triagem, linha, notas, mural, alçadas)
+//
+//  A MESA INTEIRA SOBE (09/09/2026). Até aqui o CRM só recebia situação, hash e
+//  contagem de documentos; a tela do card ficava no 127.0.0.1. Agora o mesmo
+//  `visao.mjs montar()` que enche o cockpit enche o CRM: fase, triagem item a
+//  item, lista de arquivos, linha de processos, retrato do bibliotecário, notas,
+//  o mural de recados e as alçadas. O CRM desenha; o disco continua aqui.
 //
 //  O GASTO DE IA CONTINUA ZERO. Quem responde é o `claude.exe` desta máquina,
 //  pela assinatura que já se paga: sem chave de API, sem serviço contratado e
 //  sem fatura de token. Ver o cabeçalho do `_sistema/ponte.mjs`.
 //
 //  ---------------------------------------------------------------------------
-//  RODAR A ANÁLISE SOZINHO NASCE DESLIGADO, e não é cautela: é o mesmo
-//  precedente do Carteiro, escrito lá com todas as letras. Uma análise de
-//  crédito é uma sessão do Claude Code com Write e Bash na máquina dele. Ligar
-//  isso sem ele mandar seria a máquina decidir sozinha mexer no computador de
-//  alguém. De fábrica, o agente prepara tudo e ENTREGA O COMANDO pronto; ele
-//  cola numa sessão e roda, como faz hoje. Ligar o automático é uma linha no
-//  esteira.json, decisão dele.
+//  AS ORDENS PASSAM PELO SERVIDOR LOCAL QUANDO ELE ESTÁ DE PÉ. "Analisar agora"
+//  no CRM vira o MESMO POST /api/analisar que o botão do cockpit faz, com a
+//  seleção de arquivos gravada no _instrucoes.txt e o executar.ps1 subindo o
+//  Claude. Não é a máquina decidindo sozinha: é o clique dele, dado de outra
+//  tela. Com o servidor desligado, vale o que já valia: `rodar_sozinho` nasce
+//  DESLIGADO e o agente ENTREGA O COMANDO pronto para ele colar.
 //  ---------------------------------------------------------------------------
 //
 //  COMO INSTALAR
@@ -83,6 +91,9 @@ function config() {
     raiz: String(arq.raiz || process.env.ANALISES_RAIZ || ''),
     // Ver o cabeçalho: nasce desligado, e ligar é decisão dele.
     rodar_sozinho: !!arq.rodar_sozinho,
+    // O servidor do Sistema de Análise nesta máquina. É por ele que as ordens
+    // do CRM viram o mesmo clique do cockpit.
+    servidor: String(arq.servidor || 'http://127.0.0.1:7311').replace(/\/+$/, ''),
     batida_seg: Number(arq.batida_seg ?? 10),
     sincronia_seg: Number(arq.sincronia_seg ?? 90),
     maquina: String(arq.maquina || os.hostname()),
@@ -104,26 +115,56 @@ async function crm(caminho, corpo) {
   return r.ok ? { ok: true, ...j } : { ok: false, status: r.status, ...j }
 }
 
-/* O MOTOR, carregado por caminho e não por dependência.
+// ── o servidor local do Sistema de Análise, quando está de pé ───────────────
+let servidorVivoAte = 0
+async function servidorLocal() {
+  if (Date.now() < servidorVivoAte) return true
+  try {
+    const r = await fetch(c.servidor + '/api/status', { signal: AbortSignal.timeout(2500) })
+    const j = await r.json()
+    // A raiz tem que ser a mesma que a nossa: subir a cópia errada já custou uma tarde.
+    const ok = !!j && (!c.raiz || String(j.raiz || '').toLowerCase().startsWith(c.raiz.toLowerCase().slice(0, 20)))
+    if (ok) servidorVivoAte = Date.now() + 30_000
+    return ok
+  } catch { return false }
+}
+async function servidor(caminho, corpo) {
+  const r = await fetch(c.servidor + caminho, {
+    method: corpo ? 'POST' : 'GET',
+    headers: corpo ? { 'Content-Type': 'application/json' } : {},
+    body: corpo ? JSON.stringify(corpo) : undefined,
+    signal: AbortSignal.timeout(120_000),
+  })
+  const t = await r.text()
+  let j = {}
+  try { j = JSON.parse(t) } catch { j = { erro: t.slice(0, 300) } }
+  return r.ok ? { ok: true, ...j } : { ok: false, status: r.status, ...j }
+}
+
+/* OS MÓDULOS DO MOTOR, carregados por caminho e não por dependência.
    É a peça de transição: hoje quem sabe olhar uma pasta de análise é o
-   `_sistema/fila.mjs`. No dia em que essa leitura for reescrita dentro do CRM,
-   muda este import e mais nada. Foi assim que o `ponte.mjs` tratou a troca da
-   IA por API, e funcionou. */
-let motor = null
-async function carregarMotor() {
-  if (motor) return motor
+   `_sistema`. No dia em que essa leitura for reescrita dentro do CRM, muda
+   este import e mais nada. Foi assim que o `ponte.mjs` tratou a troca da IA
+   por API, e funcionou. */
+const modulos = new Map()
+async function mod(nome) {
+  if (modulos.has(nome)) return modulos.get(nome)
   if (!c.raiz) {
     console.error('Falta "raiz" no esteira.json: é a pasta Analises FAM, onde o motor mora.')
     return null
   }
-  const alvo = path.join(c.raiz, '_sistema', 'fila.mjs')
+  const alvo = path.join(c.raiz, '_sistema', nome)
   if (!fs.existsSync(alvo)) {
-    console.error(`Não achei o motor em ${alvo}. Confira a "raiz" no esteira.json.`)
+    console.error(`Não achei ${alvo}. Confira a "raiz" no esteira.json.`)
     return null
   }
-  motor = await import(pathToFileURL(alvo).href)
-  return motor
+  const m = await import(pathToFileURL(alvo).href)
+  modulos.set(nome, m)
+  return m
 }
+const carregarMotor = () => mod('fila.mjs')
+
+const digitos = (v) => String(v ?? '').replace(/\D/g, '')
 
 // ── 2. materializar: o caso do CRM vira pasta no disco ──────────────────────
 /* Este é o passo que faltava para a análise COMEÇAR dentro do CRM. O e-mail
@@ -188,95 +229,297 @@ async function materializar(pendentes) {
   }
 }
 
-// ── 3 e 4. o retrato do disco, e ele vai inteiro ────────────────────────────
-async function sincronizar() {
-  const m = await carregarMotor()
-  if (!m) return
+// ── 6. o retrato do disco, e ele vai INTEIRO ────────────────────────────────
+/* Quem monta a Mesa do cockpit é o `visao.mjs montar()`: uma leitura de disco,
+   com a fase, a triagem item a item, a chave do tomador e as páginas (linha de
+   processos, parado há quantos dias). A Mesa do CRM sai da MESMA função, para
+   as duas telas nunca discordarem. Sem o visao.mjs (motor mais antigo), cai
+   no `fila.mjs listar()` de antes, que dá situação, hash e contagem. */
+async function retratoDoDisco() {
+  const Fila = await carregarMotor()
+  if (!Fila) return null
+  let V = null
+  try { V = (await mod('visao.mjs'))?.montar?.() ?? null } catch (e) { console.error('  visao.mjs:', e.message) }
 
-  let lista
-  try {
-    lista = m.listar()
-  } catch (e) {
-    console.error('  O motor não conseguiu ler a fila:', e.message)
-    return
+  const Arquivos = await mod('arquivos.mjs').catch(() => null)
+  const Biblioteca = await mod('biblioteca.mjs').catch(() => null)
+  const Notas = await mod('notas.mjs').catch(() => null)
+  const Marcador = await mod('marcador.mjs').catch(() => null)
+
+  if (!V) {
+    let lista
+    try { lista = Fila.listar() } catch (e) { console.error('  O motor não conseguiu ler a fila:', e.message); return null }
+    return {
+      pastas: (lista.analises ?? []).map((p) => ({
+        pasta: p.pasta, situacao: p.situacao, motivo: p.motivo, hash_documentos: p.hash_atual,
+        documentos: p.documentos ?? 0, documentos_faltando: p.documentos_faltando ?? [],
+        razao_social: p.razao_social ?? '', trava_maquina: c.maquina, trava_pid: process.pid,
+      })),
+      estado: null,
+    }
   }
 
-  /* O `listar()` devolve `{ resumo, a_fazer, travadas, analises }`, e o que
-     interessa é `analises`: as outras chaves são atalhos com só o nome da pasta.
-     Daqui sai só o que o CRM precisa saber, e nada mais: cada campo que
-     atravessa é um campo que os dois lados têm que concordar para sempre.
+  const pastas = (V.esteira ?? []).map((p) => {
+    const a = p.a || {}
+    const pg = (V.paginas || {})[p.chave] || {}
+    const ident = p.ident || {}
+    const cnpj = digitos(p.confiavel ? ident.cnpj : '') || digitos(String(p.chave || '').length >= 14 ? p.chave : '')
 
-     CNPJ e chave NÃO viajam, e a ausência é de propósito: o `avaliar()` do
-     motor não os conhece (quem identifica a empresa é a análise, depois). Se
-     eu mandasse vazio, apagaria no CRM o CNPJ que a Triagem já tinha apurado. */
-  const pastas = (lista.analises ?? []).map((p) => ({
-    pasta: p.pasta,
-    situacao: p.situacao,
-    motivo: p.motivo,
-    hash_documentos: p.hash_atual,
-    documentos: p.documentos ?? 0,
-    documentos_faltando: p.documentos_faltando ?? [],
-    razao_social: p.razao_social ?? '',
-    trava_maquina: c.maquina,
-    trava_pid: process.pid,
-  }))
+    // A lista de arquivos e o retrato do bibliotecário: por pasta viva ou por
+    // retrato guardado, exatamente como o card do cockpit lê.
+    let arquivos = null, biblioteca = null
+    try {
+      const B = Biblioteca?.paraOCard?.(a.pasta || '', p.chave || '') ?? null
+      if (B) {
+        arquivos = B.arquivos ?? null
+        biblioteca = { demonstrativos: B.demonstrativos ?? null, leitura: B.leitura ?? null, leitura_velha: !!B.leitura_velha, pode_ler: !!B.pode_ler }
+      } else if (Arquivos && a.pasta) {
+        arquivos = Arquivos.listar(a.pasta, p.chave || '')
+      }
+    } catch (e) { console.error(`  arquivos de "${a.pasta}":`, e.message) }
 
-  if (!pastas.length) return
-  const r = await crm('/api/esteira', { acao: 'sincronizar', maquina: c.maquina, pastas })
+    let notas = []
+    try { notas = p.chave && Notas ? (Notas.emOrdem(p.chave).notas || []) : [] } catch { notas = [] }
+
+    let substatus = null
+    try { substatus = a.pasta && Marcador ? Marcador.ler(a.pasta) : null } catch { substatus = null }
+
+    return {
+      pasta: a.pasta,
+      situacao: a.situacao,
+      motivo: a.motivo,
+      hash_documentos: a.hash_atual ?? null,
+      documentos: a.documentos ?? 0,
+      documentos_faltando: a.documentos_faltando ?? [],
+      razao_social: a.razao_social ?? '',
+      cnpj,
+      cnpj_confiavel: !!p.confiavel,
+      chave: p.chave || '',
+      fase: p.fase || '',
+      nome: p.nome || '',
+      corretora: ident.corretora || '',
+      produto: ident.produto || '',
+      docs: { feitos: p.emOrdem ?? 0, total: p.total ?? 0, falta: (p.faltando || []).map((x) => x.d?.chip || x.d?.nome || '').filter(Boolean) },
+      cadastro: {
+        status: p.cad?.status || 'pendente', rotulo: p.cad?.rotulo || '', motivo: p.cad?.motivo || '',
+        bloqueios: (p.cad?.bloqueios || []).map((b) => ({ id: b.id, nome: b.nome })),
+        pendencias: (p.cad?.pendencias || []).map((b) => ({ id: b.id, nome: b.nome })),
+        itens: (p.itens || []).map(({ d, item }) => ({
+          id: d.id, nome: d.nome, chip: d.chip, exigencia: d.exigencia,
+          situacao: item?.situacao || 'faltando', obs: item?.obs || '',
+        })),
+        produto: ident.produto || '', corretora: ident.corretora || '',
+      },
+      arquivos,
+      biblioteca,
+      linha: (pg.linha || []).slice(0, 200).map((l) => ({ em: l.em, tipo: l.tipo, txt: l.txt, quem: l.quem || '', abrir: l.abrir || '', id: l.id || '' })),
+      parado_desde: pg.parado_desde || null,
+      analise_chave: pg.analise_atual || '',
+      substatus_motor: substatus,
+      arquivada: !!p.arquivada,
+      concluido_em: a.concluido_em || null,
+      notas: notas.map((n) => ({ id: n.id, titulo: n.titulo || '', html: n.html || '', fixada: !!n.fixada, em: n.em, nome: n.nome || '' })),
+      trava_maquina: c.maquina,
+      trava_pid: process.pid,
+    }
+  })
+
+  const ex = V.execucao || {}
+  const estado = {
+    gerado_em: V.gerado_em,
+    raiz: V.raiz,
+    internet_ok: V.internet_ok !== false,
+    execucao: {
+      rodando: !!ex.rodando,
+      vagas: ex.vagas ?? 0,
+      max: ex.max ?? 0,
+      execucoes: (ex.execucoes || []).map((x) => ({
+        pasta: x.pasta, razao: x.razao, etapa: x.etapa, etapaTxt: x.etapaTxt, idxAtual: x.idxAtual,
+        mensagem: x.mensagem || '', segundosDesde: x.segundosDesde ?? 0, travado: !!x.travado,
+      })),
+    },
+    varredura: V.varredura ? {
+      novidades: V.varredura.novidades ?? 0, quando: V.varredura.quando ?? V.varredura.ultima_varredura ?? null,
+      quando_txt: V.varredura.quando_txt ?? '', pastas: V.varredura.pastas ?? 0,
+    } : null,
+    contas: { ...(V.contas?.porFase || {}), total: V.contas?.total ?? pastas.length },
+  }
+  return { pastas, estado }
+}
+
+async function sincronizar() {
+  const r0 = await retratoDoDisco()
+  if (!r0) return
+  const { pastas, estado } = r0
+  if (!pastas.length && !estado) return
+  const r = await crm('/api/esteira', { acao: 'sincronizar', maquina: c.maquina, pastas, estado })
   if (!r.ok) return console.error('  CRM recusou a sincronização:', r.erro)
   console.log(`  Esteira: ${pastas.length} pastas, ${r.criadas} novas, ${r.atualizadas} atualizadas.`)
   if (r.recusadas?.length) console.log('    Recusadas:', r.recusadas.join(' · '))
 }
 
-// ── 5. as ordens que uma pessoa deu ─────────────────────────────────────────
+/* O MURAL E AS ALÇADAS sobem com a esteira: são o que a aba Recados e a tela
+   de Alçadas do CRM desenham. Recado é lido do disco inteiro (`todos: true`),
+   porque o arquivado continua sendo história. */
+async function sincronizarMural() {
+  const Recados = await mod('recados.mjs').catch(() => null)
+  if (!Recados) return
+  let lista = []
+  try { lista = Recados.listar({ todos: true, limite: 300 }).recados || [] } catch (e) { return console.error('  recados:', e.message) }
+  let relatorio = null, escrevendo = false
+  try {
+    const Auditoria = await mod('auditoria.mjs')
+    relatorio = Auditoria?.ultimo?.() ?? null
+    escrevendo = !!Auditoria?.escrevendoAgora?.()
+  } catch { }
+  const r = await crm('/api/esteira', { acao: 'recados', recados: lista, relatorio, escrevendo })
+  if (!r.ok) console.error('  CRM recusou o mural:', r.erro)
+}
+
+async function sincronizarAlcadas() {
+  const Alcadas = await mod('alcadas.mjs').catch(() => null)
+  if (!Alcadas) return
+  try {
+    const cat = Alcadas.catalogo()
+    const ped = Alcadas.pedidos({})
+    const dia = Alcadas.diario({ limite: 120 })
+    const r = await crm('/api/esteira', { acao: 'alcadas', catalogo: cat.acoes || [], pedidos: ped.pedidos || [], diario: dia.linhas || [] })
+    if (!r.ok) console.error('  CRM recusou as alçadas:', r.erro)
+  } catch (e) { console.error('  alcadas:', e.message) }
+}
+
+// ── 3. as ordens que uma pessoa deu ─────────────────────────────────────────
 async function executarOrdens(ordens) {
-  const m = await carregarMotor()
+  const Fila = await carregarMotor()
   for (const o of ordens) {
     console.log(`  Ordem "${o.ordem}" em "${o.pasta}" (${o.ordem_por ?? 'alguém'})`)
+    const dados = o.ordem_dados || {}
+    const instrucoes = String(o.instrucao || dados.instrucao || '').trim()
+    const modo = String(o.modo || dados.modo || '')
+    const feito = (resultado) => crm('/api/esteira', { acao: 'ordem-aceita', id: o.id, resultado })
+    const falhou = (erro) => crm('/api/esteira', { acao: 'ordem-falhou', id: o.id, erro })
+    const local = await servidorLocal()
 
-    if (o.ordem === 'parar') {
-      try { m?.parar?.(o.pasta, `Interrompida por ${o.ordem_por ?? 'alguém'} pelo CRM.`) }
-      catch (e) { console.error('   ', e.message) }
-      await crm('/api/esteira', { acao: 'ordem-aceita', id: o.id })
-      continue
-    }
-
-    if (o.ordem === 'pausar' || o.ordem === 'retomar') {
-      // Estas duas já mudaram a situação no CRM na hora do clique: valem
-      // sozinhas, sem nada precisar rodar. Aqui é só dar baixa no pedido.
-      await crm('/api/esteira', { acao: 'ordem-aceita', id: o.id })
-      continue
-    }
-
-    if (o.ordem === 'iniciar') {
-      const comando = `/analise ${o.pasta}`
-      if (!c.rodar_sozinho) {
-        /* O CAMINHO DE FÁBRICA: bate na porta com os papéis na mão. Ver o
-           cabeçalho. A ordem some da fila (foi entregue) e a tela mostra o
-           comando pronto para ele colar. */
-        console.log('\n  ┌─ Para rodar esta análise, cole numa sessão do Claude Code:')
-        console.log(`  │  ${comando}`)
-        console.log('  └─ (ligue "rodar_sozinho" no esteira.json para eu fazer isso sozinho)\n')
-        await crm('/api/esteira', {
-          acao: 'progresso', id: o.id, etapa: 'fila',
-          mensagem: `Pasta pronta no notebook. Rode "${comando}" numa sessão do Claude Code.`,
-          maquina: c.maquina, pid: process.pid,
-        })
-        await crm('/api/esteira', { acao: 'ordem-aceita', id: o.id })
+    try {
+      if (o.ordem === 'pausar' || o.ordem === 'retomar') {
+        // Estas duas já mudaram a situação no CRM na hora do clique: valem
+        // sozinhas, sem nada precisar rodar. Aqui é só dar baixa no pedido.
+        await feito(o.ordem === 'pausar' ? 'Parada.' : 'De volta à fila.')
         continue
       }
-      await crm('/api/esteira', { acao: 'ordem-aceita', id: o.id })
-      await rodarAnalise(o)
-      continue
+
+      if (o.ordem === 'parar') {
+        if (local) {
+          const r = await servidor('/api/parar/' + encodeURIComponent(o.pasta), {})
+          await (r.ok ? feito('Interrompida.') : falhou(r.erro || r.motivo || 'o servidor recusou'))
+        } else {
+          const r = Fila?.parar?.(o.pasta, `Interrompida por ${o.ordem_por ?? 'alguém'} pelo CRM.`)
+          await (r?.ok === false ? falhou(r.motivo || 'não consegui parar') : feito('Interrompida.'))
+        }
+        continue
+      }
+
+      if (o.ordem === 'reconferir') {
+        if (local) {
+          const r = await servidor('/api/destravar/' + encodeURIComponent(o.pasta), {})
+          await (r.ok
+            ? feito(r.destravou ? `Reli a pasta e destravou: ${r.motivo || 'os documentos estão aí.'}`
+              : r.anexos_extraidos ? `Abri o e-mail e tirei ${r.anexos_extraidos} anexo(s).`
+                : 'Reli a pasta. ' + (r.motivo || ''))
+            : falhou(r.erro || r.motivo || 'não consegui reler'))
+        } else {
+          const D = await mod('destravar.mjs')
+          const r = D?.destravar?.(o.pasta)
+          try { Fila?.listar?.() } catch { }
+          await (r?.ok ? feito(r.destravou ? 'Reli a pasta e destravou.' : 'Reli a pasta.') : falhou(r?.motivo || 'não consegui reler'))
+        }
+        await sincronizar()
+        continue
+      }
+
+      if (o.ordem === 'forcar') {
+        if (local) {
+          const r = await servidor('/api/destravar/' + encodeURIComponent(o.pasta), {
+            forcar: true, analisar: true, instrucoes, modo, motivo: dados.motivo || '',
+          })
+          await (r.ok && r.analisando
+            ? feito('Comecei a análise.' + (r.liberada ? ' Liberada por você, com o que falta registrado.' : ''))
+            : falhou(r.erro || r.motivo || (r.destravou ? 'destravou, mas a análise não começou' : 'o servidor recusou')))
+        } else {
+          const Cad = await mod('cadastro.mjs')
+          try { Cad?.liberar?.(o.pasta, `Você mandou analisar mesmo assim (${o.ordem_por ?? 'CRM'}).`) } catch (e) { await falhou(e.message); continue }
+          try { Fila?.listar?.() } catch { }
+          await iniciarSemServidor(o, instrucoes, modo, feito, falhou)
+        }
+        continue
+      }
+
+      if (o.ordem === 'refazer') {
+        if (local) {
+          const r = await servidor('/api/refazer/' + encodeURIComponent(o.pasta), { instrucao: instrucoes, escopo: dados.escopo || 'completa' })
+          await (r.ok ? feito('De volta à fila para refazer.') : falhou(r.erro || r.motivo || 'o servidor recusou'))
+        } else {
+          const r = Fila?.refazer?.(o.pasta, { instrucao: instrucoes, escopo: dados.escopo || 'completa' })
+          await (r?.ok === false ? falhou(r.motivo || 'não consegui refazer') : feito('De volta à fila para refazer.'))
+        }
+        await sincronizar()
+        continue
+      }
+
+      if (o.ordem === 'ler_pasta') {
+        const B = await mod('biblioteca.mjs')
+        if (!B?.lerAPasta) { await falhou('este motor não tem o bibliotecário'); continue }
+        await feito('O bibliotecário começou a ler a pasta. Leva alguns minutos; a aba Arquivos avisa quando terminar.')
+        // Vai solto: leva minutos, e a rodada não pode ficar presa nele.
+        B.lerAPasta(o.pasta, o.chave || '').then(() => sincronizar()).catch((e) => console.error('  bibliotecario:', e.message))
+        continue
+      }
+
+      if (o.ordem === 'iniciar') {
+        if (local) {
+          const r = await servidor('/api/analisar', { pastas: [o.pasta], chave: o.chave || '', instrucoes, modo })
+          await (r.ok ? feito(r.mensagem || 'Comecei a análise.') : falhou(r.erro || r.motivo || 'o servidor recusou'))
+          continue
+        }
+        await iniciarSemServidor(o, instrucoes, modo, feito, falhou)
+        continue
+      }
+
+      await falhou(`ordem "${o.ordem}" desconhecida neste agente`)
+    } catch (e) {
+      console.error('   ', e.message)
+      await falhou(e.message)
     }
   }
 }
 
-/* RODAR A ANÁLISE SOZINHO. Só entra aqui com `rodar_sozinho` ligado à mão.
-   É o mesmo `/analise <pasta>` que ele digita hoje, na mesma máquina, com o
-   mesmo binário e a mesma assinatura: nenhum custo novo, nenhuma chave de API.
-   A diferença é que ninguém está olhando, e por isso o progresso sobe a cada
-   evento em vez de ficar só no terminal. */
+/* SEM O SERVIDOR LOCAL, vale o que já valia: com `rodar_sozinho` desligado, o
+   agente ENTREGA o comando para ele colar; ligado, sobe o Claude ele mesmo. */
+async function iniciarSemServidor(o, instrucoes, modo, feito, falhou) {
+  if (instrucoes) {
+    try { fs.writeFileSync(path.join(c.raiz, o.pasta, '_instrucoes.txt'), `[ordem dada pelo CRM, ${new Date().toLocaleString('pt-BR')}]\nO QUE OBSERVAR NESTA ANALISE:\n${instrucoes}\n`, 'utf8') }
+    catch (e) { console.error('    _instrucoes.txt:', e.message) }
+  }
+  const comando = `/analise ${o.pasta}`
+  if (!c.rodar_sozinho) {
+    console.log('\n  ┌─ Para rodar esta análise, cole numa sessão do Claude Code:')
+    console.log(`  │  ${comando}`)
+    console.log('  └─ (ligue "rodar_sozinho" no esteira.json, ou suba o Sistema de Análise, para eu fazer isso sozinho)\n')
+    await crm('/api/esteira', {
+      acao: 'progresso', id: o.id, etapa: 'fila',
+      mensagem: `Pasta pronta no notebook. O Sistema de Análise está desligado: rode "${comando}" numa sessão do Claude Code, ou abra o Analisar.cmd.`,
+      maquina: c.maquina, pid: process.pid,
+    })
+    await feito(`O sistema local está desligado. Entreguei o comando "${comando}" no terminal do agente.`)
+    return
+  }
+  await feito('Subindo o Claude para analisar.')
+  await rodarAnalise(o, modo)
+}
+
+/* RODAR A ANÁLISE SOZINHO. Só entra aqui com `rodar_sozinho` ligado à mão e o
+   servidor local desligado. É o mesmo `/analise <pasta>` que ele digita hoje,
+   na mesma máquina, com o mesmo binário e a mesma assinatura. */
 function rodarAnalise(o) {
   return new Promise(async (resolver) => {
     const { acharClaude } = await import(pathToFileURL(path.join(c.raiz, '_sistema', 'ponte.mjs')).href)
@@ -333,18 +576,113 @@ function rodarAnalise(o) {
   })
 }
 
-/* ── A IA DE GESTÃO ──────────────────────────────────────────────────────────
+// ── 4. o que o CRM decidiu sobre coisa que mora no disco ────────────────────
+async function aplicarDecisoes(ordem) {
+  // recados lidos / arquivados no CRM
+  if (ordem.recados_marcados?.length) {
+    const Recados = await mod('recados.mjs').catch(() => null)
+    if (Recados) {
+      const lidos = ordem.recados_marcados.filter((r) => r.lido_no_crm_em && r.id !== 'relatorio').map((r) => r.id)
+      const arquivados = ordem.recados_marcados.filter((r) => r.arquivado_no_crm_em && r.id !== 'relatorio').map((r) => r.id)
+      try { if (lidos.length) Recados.marcarLido(lidos) } catch (e) { console.error('  lido:', e.message) }
+      try { if (arquivados.length) Recados.arquivar(arquivados) } catch (e) { console.error('  arquivar:', e.message) }
+      await crm('/api/esteira', { acao: 'recados-ok', ids: ordem.recados_marcados.map((r) => r.id) })
+    }
+  }
+
+  // alçadas: autorizar / negar / redefinir
+  if (ordem.alcadas_decisoes?.length || ordem.alcadas_definidas?.length) {
+    const Alcadas = await mod('alcadas.mjs').catch(() => null)
+    const local = await servidorLocal()
+    const pedidosOk = [], acoesOk = []
+    for (const d of ordem.alcadas_decisoes || []) {
+      try {
+        const por = d.decisao_crm_por || 'marco'
+        let r
+        if (d.decisao_crm === 'negar') {
+          r = local ? await servidor(`/api/alcadas/pedido/${encodeURIComponent(d.id)}/negar`, { motivo: d.decisao_crm_motivo || '' })
+            : Alcadas?.negar?.(d.id, { por, motivo: d.decisao_crm_motivo || '' })
+        } else {
+          const sempre = d.decisao_crm === 'autorizar_sempre'
+          // O servidor tem os executores (o `analisar` é injetado por ele); o
+          // módulo sozinho não sabe disparar análise. Por isso o servidor vem
+          // primeiro, e o módulo é a rede para quem não está com ele de pé.
+          r = local ? await servidor(`/api/alcadas/pedido/${encodeURIComponent(d.id)}/autorizar`, { liberar_sempre: sempre })
+            : await Alcadas?.autorizar?.(d.id, { por, liberar_sempre: sempre })
+        }
+        console.log(`  Alçada ${d.decisao_crm} em ${d.id}: ${r?.ok ? 'ok' : (r?.motivo || r?.erro || 'falhou')}`)
+      } catch (e) { console.error('  alcada:', e.message) }
+      pedidosOk.push(d.id)
+    }
+    for (const a of ordem.alcadas_definidas || []) {
+      try {
+        const r = local ? await servidor('/api/alcadas/definir', { acao: a.acao, alcada: a.alcada, motivo: 'definida no CRM' })
+          : Alcadas?.definir?.(a.acao, a.alcada, { por: a.alterado_por || 'marco', motivo: 'definida no CRM' })
+        console.log(`  Alçada de ${a.acao} -> ${a.alcada}: ${r?.ok ? 'ok' : (r?.motivo || 'falhou')}`)
+      } catch (e) { console.error('  definir:', e.message) }
+      acoesOk.push(a.acao)
+    }
+    await crm('/api/esteira', { acao: 'alcadas-ok', pedidos: pedidosOk, acoes: acoesOk })
+    await sincronizarAlcadas()
+  }
+
+  // arquivos tirados da análise pelo CRM
+  if (ordem.arquivos_fora?.length) {
+    const Arquivos = await mod('arquivos.mjs').catch(() => null)
+    if (Arquivos) {
+      for (const f of ordem.arquivos_fora) {
+        try {
+          const lista = Arquivos.listar(f.pasta, f.chave || '')
+          const fora = new Set(f.arquivos_fora || [])
+          let mudou = 0
+          for (const a of lista.arquivos || []) {
+            if (a.ignorado) continue
+            const quer = !fora.has(a.rel)
+            if (a.usar !== quer) { Arquivos.escolher(f.chave || '', a.rel, quer); mudou++ }
+          }
+          if (mudou) console.log(`  Seleção de "${f.pasta}": ${mudou} arquivo(s) ajustado(s).`)
+        } catch (e) { console.error('  selecao:', e.message) }
+      }
+    }
+  }
+
+  // os comandos da Mesa
+  for (const cmd of ordem.comandos || []) {
+    await crm('/api/esteira', { acao: 'comando-aceito', id: cmd.id })
+    try {
+      if (cmd.comando === 'varrer') {
+        const local = await servidorLocal()
+        const r = local ? await servidor('/api/varredura', {}) : (await mod('varredura.mjs'))?.varrer?.()
+        const n = r?.novidades ?? r?.pastas_novas?.length ?? 0
+        await crm('/api/esteira', { acao: 'comando-feito', id: cmd.id, resultado: `Varri. ${n} novidade(s).` })
+        await sincronizar()
+      } else if (cmd.comando === 'relatorio') {
+        const local = await servidorLocal()
+        const r = local ? await servidor('/api/auditoria', {}) : await (await mod('auditoria.mjs'))?.reportar?.()
+        await crm('/api/esteira', { acao: 'comando-feito', id: cmd.id, resultado: r?.ok === false ? (r.motivo || 'não deu') : 'Relatório pedido ao auditor-chefe.' })
+        await sincronizarMural()
+      }
+    } catch (e) {
+      await crm('/api/esteira', { acao: 'comando-feito', id: cmd.id, resultado: 'Não deu: ' + e.message })
+    }
+  }
+}
+
+/* ── 5. A IA ─────────────────────────────────────────────────────────────────
    A pergunta nasce no CRM (de qualquer lugar, inclusive do celular) e é
-   respondida AQUI, pelo `gestao.mjs` do Sistema de Análise, que chama o
-   claude.exe desta máquina pela assinatura que já se paga. Gasto de IA: zero,
-   pelo mesmo motivo do resto da esteira.
+   respondida AQUI, com o claude.exe desta máquina pela assinatura que já se
+   paga. Gasto de IA: zero, pelo mesmo motivo do resto da esteira.
 
-   Uma por rodada, de propósito: uma resposta sobre o acervo inteiro leva de 20
-   a 90 segundos, e enfileirar três aqui deixaria a esteira parada nesse tempo.
+   Três auditores, e a régua do ia-card.mjs decide qual:
+     escopo gestao ............ gestao.mjs, o acervo inteiro
+     escopo analise + análise . ia.mjs, a MESMA conversa do relatório
+     escopo analise sem análise ia-card.mjs, ancorado na pasta do tomador
 
-   Ela SÓ RESPONDE E SUGERE: o gestao.mjs não tem Write, Edit nem Bash na lista
-   de ferramentas (ver o cabeçalho dele). A garantia é técnica, não é promessa
-   escrita no preâmbulo. */
+   Uma por rodada, de propósito: uma resposta leva de 20 a 90 segundos, e
+   enfileirar três aqui deixaria a esteira parada nesse tempo.
+
+   Ela SÓ RESPONDE E SUGERE: nenhum dos três tem Write, Edit nem Bash na lista
+   de ferramentas. A garantia é técnica, não é promessa escrita no preâmbulo. */
 async function responderIA(pedidos) {
   const pedido = pedidos[0]
   if (!pedido) return
@@ -352,25 +690,33 @@ async function responderIA(pedidos) {
   const pego = await crm('/api/esteira', { acao: 'ia-pegar', id: pedido.id, maquina: c.maquina })
   if (!pego.ok || !pego.pegou) return  // outra máquina pegou primeiro
 
-  console.log(`  IA de Gestão: "${String(pedido.pergunta).slice(0, 70)}…"`)
+  console.log(`  IA (${pedido.escopo}): "${String(pedido.pergunta).slice(0, 70)}…"`)
   try {
-    const gestao = await import(pathToFileURL(path.join(c.raiz, '_sistema', 'gestao.mjs')).href)
-    if (typeof gestao.conversar !== 'function') throw new Error('O gestao.mjs desta máquina não expõe `conversar`.')
-
-    /* `conversar` é o mesmo caminho do `node gestao.mjs perguntar "..."`, com o
-       mesmo fio de conversa: a resposta entra no histórico dele, e não numa
-       segunda memória que ninguém revisa. Devolve
-       { ok, resposta, segundos } — ou { ok: false, motivo } quando recusa. */
-    const r = await gestao.conversar(String(pedido.pergunta))
-    if (!r?.ok) throw new Error(r?.motivo ?? 'a IA de Gestão recusou a pergunta')
+    let r
+    if (pedido.escopo === 'analise') {
+      if (pedido.analise_chave) {
+        const Ia = await mod('ia.mjs')
+        r = await Ia.conversar(String(pedido.analise_chave), String(pedido.pergunta))
+      } else if (pedido.pasta) {
+        const IaCard = await mod('ia-card.mjs')
+        r = await IaCard.conversar(String(pedido.chave || pedido.pasta), String(pedido.pasta), String(pedido.pergunta))
+      } else {
+        throw new Error('Este card não tem pasta na raiz nem análise no banco: não há material para a IA ler.')
+      }
+    } else {
+      const gestao = await mod('gestao.mjs')
+      if (typeof gestao?.conversar !== 'function') throw new Error('O gestao.mjs desta máquina não expõe `conversar`.')
+      r = await gestao.conversar(String(pedido.pergunta))
+    }
+    if (!r?.ok) throw new Error(r?.motivo ?? 'a IA recusou a pergunta')
     const texto = String(r.resposta ?? '').trim()
     if (!texto) throw new Error('A IA não devolveu texto.')
 
     await crm('/api/esteira', { acao: 'ia-resposta', id: pedido.id, resposta: texto, maquina: c.maquina })
-    console.log('  IA de Gestão: respondida.')
+    console.log('  IA: respondida.')
   } catch (e) {
     await crm('/api/esteira', { acao: 'ia-resposta', id: pedido.id, erro: String(e.message ?? e), maquina: c.maquina })
-    console.error('  IA de Gestão falhou:', e.message ?? e)
+    console.error('  IA falhou:', e.message ?? e)
   }
 }
 
@@ -384,6 +730,7 @@ async function rodada({ forcar = false } = {}) {
   // Materializar e executar vêm PRIMEIRO: alguém está olhando a tela esperando.
   if (ordem.a_materializar?.length) await materializar(ordem.a_materializar)
   if (ordem.ordens?.length) await executarOrdens(ordem.ordens)
+  await aplicarDecisoes(ordem)
   // Depois das ordens: quem perguntou está olhando a tela, mas quem mandou
   // analisar está esperando há mais tempo.
   if (ordem.ia?.length) await responderIA(ordem.ia)
@@ -391,6 +738,8 @@ async function rodada({ forcar = false } = {}) {
   if (forcar || Date.now() - ultimaSincronia >= c.sincronia_seg * 1000) {
     ultimaSincronia = Date.now()
     await sincronizar()
+    await sincronizarMural()
+    await sincronizarAlcadas()
     // Execução que morreu sem avisar volta para a fila. A conta é do servidor.
     const f = await crm('/api/esteira', { acao: 'faxina' })
     if (f.ok && f.devolvidas) console.log(`  ${f.devolvidas} análise(s) travada(s) voltaram para a fila.`)
@@ -408,15 +757,17 @@ if (!c.token) {
 if (cmd === 'diagnostico') {
   const m = await carregarMotor()
   console.log('Motor           :', m ? 'carregado de ' + path.join(c.raiz, '_sistema', 'fila.mjs') : 'NÃO carregado')
+  console.log('Servidor local  :', (await servidorLocal()) ? c.servidor + ' (de pé)' : c.servidor + ' (desligado)')
   console.log('CRM             :', c.url)
   const r = await crm(`/api/esteira?maquina=${encodeURIComponent(c.maquina)}`)
-  console.log('Resposta do CRM :', r.ok ? `${r.fila?.length ?? 0} na fila, ${r.ordens?.length ?? 0} ordem(ns)` : `NÃO respondeu (${r.erro ?? r.status})`)
+  console.log('Resposta do CRM :', r.ok ? `${r.fila?.length ?? 0} na fila, ${r.ordens?.length ?? 0} ordem(ns), ${r.ia?.length ?? 0} pergunta(s)` : `NÃO respondeu (${r.erro ?? r.status})`)
   console.log('Rodar sozinho   :', c.rodar_sozinho ? 'LIGADO' : 'desligado (entrega o comando para você colar)')
 } else if (cmd === 'uma-vez') {
   await rodada({ forcar: true })
 } else {
   console.log(`Esteira de pé. CRM em ${c.url}.`)
   console.log(`Raiz das análises: ${c.raiz || '(faltando no esteira.json)'}`)
+  console.log(`Sistema de Análise local: ${c.servidor} (${(await servidorLocal()) ? 'de pé' : 'desligado'}).`)
   console.log(`Rodar sozinho: ${c.rodar_sozinho ? 'LIGADO' : 'desligado'}. Deixe esta janela aberta. Ctrl+C para parar.\n`)
   await rodada({ forcar: true })
   let rodando = false
