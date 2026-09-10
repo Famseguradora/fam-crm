@@ -24,8 +24,8 @@ import { type PropsAba } from './comum'
 
 const COR: Record<string, string> = {
   email: '#4a90d0', triagem: '#8ba3c0', decisao: '#e8b84b', pergunta: '#d0743f', resposta: '#27a96c',
-  analise: '#9878d0', edicao: '#e8b84b', encaminhado: '#d0743f', devolvido: '#27a96c',
-  nota: '#a07b1e', ia: '#7c5cd0', ordem: '#1e4080', agente: '#3fae82', aviso: '#3070c8',
+  analise: '#1e4080', edicao: '#e8b84b', encaminhado: '#d0743f', devolvido: '#27a96c',
+  nota: '#a07b1e', ia: '#3070c8', ordem: '#1e4080', agente: '#3fae82', aviso: '#3070c8',
 }
 
 export default function Atividades({ f }: PropsAba) {

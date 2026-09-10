@@ -26,12 +26,12 @@
 //  só aparecem quando o Sistema de Análise responde nesta máquina.
 // ============================================================================
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { maskCNPJ } from '@/lib/utils'
-import { fichaPorId, fichaDaAnalise, type FichaAnalise } from '@/lib/analise/ficha'
+import { fichaPorId, fichaDaAnalise, semMarcador, type FichaAnalise } from '@/lib/analise/ficha'
 import { faseDe, nomeDaFase, SITUACAO, type Ordem } from '@/lib/analise/esteira'
 import { COLUNAS_FILA, nomeDaFicha, iniciaisDe, corDoNome, type FilaRica } from '@/lib/analise/mesa'
 import { IcoVoltar } from '@/components/tomador/icones'
@@ -45,6 +45,7 @@ import AbaIA from './card/AbaIA'
 import Encaminhar from './card/Encaminhar'
 import Atividades from './card/Atividades'
 import { SISTEMA_LOCAL, type Quem } from './card/comum'
+import { PortaDoRelatorio } from './PortaDoRelatorio'
 
 type Aba = 'geral' | 'arquivos' | 'analise' | 'relatorio' | 'ia' | 'encaminhar' | 'atividades'
 
@@ -62,6 +63,171 @@ function useSistemaLocal(): boolean {
   return local
 }
 
+/* A ABA EXISTE, MAS A PASTA NÃO ESTÁ MAIS NA ESTEIRA.
+   Quatro abas do card trabalham sobre a PASTA no disco: Arquivos lê os
+   documentos, Análise manda o motor rodar, Encaminhar e Atividades vivem do
+   histórico daquela pasta. Uma análise publicada já terminou e a pasta foi
+   arquivada — então elas não têm sobre o que agir.
+
+   A aba continua aí (ordem dele: todas as opções na mesma tela), e diz em uma
+   frase o que houve e para onde ir. Silêncio aqui leria como defeito. */
+function SemPasta({ aba, chave, docs, aoIrParaAba }: {
+  aba: 'arquivos' | 'analise' | 'encaminhar' | 'atividades'
+  chave: string | null
+  docs: number
+  aoIrParaAba: (a: string) => void
+}) {
+  const TEXTO = {
+    arquivos: {
+      titulo: 'Os arquivos desta análise estão no Relatório',
+      corpo: docs
+        ? `Esta aba lê a pasta do disco enquanto a análise está na esteira. Esta já terminou e a pasta foi arquivada, mas os ${docs} documentos que a análise LEU continuam registrados, com nome e hash.`
+        : 'Esta aba lê a pasta do disco enquanto a análise está na esteira. Esta já terminou e a pasta foi arquivada. O índice dos documentos que ela leu não chegou a ser publicado.',
+      leva: 'relatorio', rotulo: 'Ver em Relatório · Documentos',
+    },
+    analise: {
+      titulo: 'Esta análise já foi entregue',
+      corpo: 'As ordens desta aba (analisar, refazer, parar, reler a pasta) valem enquanto a pasta está na esteira. Esta análise terminou; para mexer nos números dela, use o relatório.',
+      leva: 'relatorio', rotulo: 'Abrir o Relatório',
+    },
+    encaminhar: {
+      titulo: 'Encaminhar vale para o que está andando',
+      corpo: 'Passar adiante e cobrar resposta são gestos sobre um caso em curso, e este já foi entregue. Para falar sobre esta empresa, o caminho é o card dela no CRM.',
+      leva: 'geral', rotulo: 'Voltar para a visão geral',
+    },
+    atividades: {
+      titulo: 'O histórico é da pasta na esteira',
+      corpo: 'Esta linha do tempo registra o que aconteceu com a pasta enquanto ela andava. A história da EMPRESA, essa sim, está no relatório.',
+      leva: 'relatorio', rotulo: 'Abrir o Relatório',
+    },
+  }[aba]
+
+  return (
+    <div className="an-bloco" style={{ maxWidth: '78ch' }}>
+      <h4>{TEXTO.titulo}</h4>
+      <p className="an-explica">{TEXTO.corpo}</p>
+      <div className="an-bt-linha">
+        <button type="button" className="an-bt azul" onClick={() => aoIrParaAba(TEXTO.leva)}>{TEXTO.rotulo}</button>
+        {chave && <PortaDoRelatorio chave={chave} />}
+      </div>
+    </div>
+  )
+}
+
+/* UMA ANÁLISE DO ACERVO VIRANDO FICHA DE CARD.
+   O card foi desenhado sobre uma PASTA da esteira. Uma análise publicada não
+   tem pasta: já terminou. O que ela tem é tudo o que importa para ler — razão,
+   CNPJ, tomador, decisão — e é isso que é copiado aqui.
+
+   O que NÃO é inventado: documentos, ordens, histórico e triagem ficam vazios,
+   e a bandeira `semEsteira` faz as abas dizerem por quê. Preencher isso com
+   zero seria a tela afirmando "esta análise não tem documento", que é falso: a
+   pasta é que não está mais na esteira. */
+function fichaVirandoFila(fi: FichaAnalise): FilaRica {
+  const agora = fi.data_analise ? `${fi.data_analise}T12:00:00.000Z` : new Date().toISOString()
+  return {
+    semEsteira: true,
+    id: fi.id,
+    caso_id: null,
+    analise_id: fi.id,
+    tomador_id: fi.tomador_id,
+    cnpj: fi.cnpj,
+    cnpj_confiavel: !!fi.cnpj,
+    razao_social: fi.razao_social,
+    chave_local: fi.chave_local,
+    pasta: fi.nome_curto || fi.razao_social,
+    situacao: 'concluida',
+    motivo: null,
+    etapa: null, etapa_texto: null, etapa_em: null,
+    documentos: fi.documentos.length,
+    documentos_faltando: [],
+    hash_documentos: null,
+    trava_maquina: null, trava_em: null,
+    ordem: null, ordem_por: null, ordem_em: null, ordem_dados: null,
+    erro: null,
+    criado_em: agora,
+    criado_por: null,
+    concluido_em: agora,
+    atualizado_em: agora,
+    chave: fi.chave_local,
+    fase: 'pronta',
+    nome: fi.nome_curto || fi.razao_social,
+    corretora: fi.corretora,
+    produto: null,
+    docs: null,
+    cadastro: null,
+    arquivos: null,
+    biblioteca: null,
+    linha: [],
+    parado_desde: null,
+    analise_chave: fi.chave_local,
+    substatus: null, substatus_por: null, substatus_em: null,
+    instrucao: null, modo: null,
+    arquivos_fora: [], arquivos_fora_em: null,
+    arquivada: false,
+    sincronizado_em: null,
+    ultima_ordem_resultado: null, ultima_ordem_em: null,
+  }
+}
+
+/* A ANÁLISE SAIU, MAS NÃO ESTÁ NO BANCO DO CRM.
+   Esta tela é o que ele via como uma aba faltando. Ela diz exatamente onde a
+   análise está (no disco da máquina, entregue), por que o CRM ainda não a
+   mostra (a carga não rodou), e dá o botão que resolve — em vez de mandar
+   abrir o outro sistema. */
+function RelatorioAPublicar({ f, quem, aoMandar }: {
+  f: FilaRica; quem: Quem; aoMandar: (ordem: Ordem) => Promise<void>
+}) {
+  const [mandando, setMandando] = useState(false)
+  const temChave = !!f.analise_chave
+  const pedida = f.ordem === 'publicar'
+
+  return (
+    <div className="an-bloco" style={{ maxWidth: '80ch' }}>
+      <h4>Esta análise está chegando ao CRM</h4>
+      <p className="an-explica">
+        O motor terminou a análise e gravou o resultado no disco da máquina onde ela rodou. O agente
+        da esteira <b>publica sozinho</b> assim que vê uma análise entregue, e a aba passa a mostrar o
+        relatório inteiro — normalmente em menos de dois minutos. Se o notebook estiver desligado, ela
+        espera ele voltar; o botão abaixo serve para não esperar.
+      </p>
+
+      {!temChave ? (
+        <div className="an-aviso aviso">
+          Esta pasta não tem análise no acervo do disco (<b>analise_chave</b> vazia). Não há o que
+          publicar: ou a análise não chegou a gravar o resultado, ou a pasta foi renomeada depois.
+          O caminho aqui é <b>Refazer</b>, na aba Análise.
+        </div>
+      ) : pedida ? (
+        <div className="an-aviso">
+          Já pedi a publicação. O agente do notebook pega a ordem na próxima rodada e a aba se
+          atualiza sozinha quando terminar.
+        </div>
+      ) : (
+        <>
+          <div className="an-bt-linha">
+            <button type="button" className="an-bt azul" disabled={!quem.podeEscrever || mandando}
+              onClick={async () => { setMandando(true); await aoMandar('publicar'); setMandando(false) }}>
+              {mandando ? 'Pedindo…' : 'Publicar agora'}
+            </button>
+            <span className="an-bt-nota">
+              Roda a carga só para esta empresa, na máquina onde a análise está.
+              Leva alguns segundos e nada é sobrescrito sem registro.
+            </span>
+          </div>
+          {!quem.podeEscrever && (
+            <div className="an-dica">Você tem permissão só de leitura: quem publica é um analista.</div>
+          )}
+        </>
+      )}
+
+      {f.ultima_ordem_resultado && (
+        <div className="an-dica">Última ordem: {f.ultima_ordem_resultado}</div>
+      )}
+    </div>
+  )
+}
+
 export default function CardAnalise({ id }: { id: string }) {
   const router = useRouter()
   const { somenteLeitura, editaAnalise } = usePermissoes()
@@ -72,7 +238,15 @@ export default function CardAnalise({ id }: { id: string }) {
   const [ficha, setFicha] = useState<FichaAnalise | null>(null)
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
+  /* VINDO DO ACERVO, A ABA QUE ABRE É O RELATÓRIO. Ele clica numa análise
+     publicada para LER a análise; cair na Visão geral obrigaria um clique a
+     mais toda vez. Vindo da Mesa, continua na Visão geral, que é onde se
+     decide o que fazer com a pasta. */
   const [aba, setAba] = useState<Aba>('geral')
+  /* Uma REF, e não estado: a carga do card precisa saber se ele já escolheu uma
+     aba, mas essa resposta não pode entrar nas dependências do `useCallback` —
+     isso recriaria a função a cada clique e a carga rodaria de novo à toa. */
+  const abaEscolhida = useRef(false)
   const [quem, setQuem] = useState<Quem>({ nome: null, authId: null, podeEscrever: !somenteLeitura, analista: editaAnalise })
   const [abertos, setAbertos] = useState(0)
 
@@ -86,11 +260,40 @@ export default function CardAnalise({ id }: { id: string }) {
     })
   }, [somenteLeitura, editaAnalise])
 
+  /* O CARD ABRE POR DOIS CAMINHOS  ·  09/09/2026
+     Ordem dele: "acessando tanto pela opção Mesa quanto pela opção do Acervo,
+     as duas devem abrir nessa tela, onde tem visão geral, arquivos, análise,
+     Relatório e mais". Antes, o Acervo levava para o relatório pelado e a Mesa
+     para o card de sete abas — duas telas para a mesma empresa, e ele
+     precisava lembrar por onde tinha entrado.
+
+     Agora o `id` da rota pode ser das duas coisas:
+       · o id de uma PASTA da esteira (`analise_fila`), como sempre foi;
+       · o id de uma ANÁLISE do acervo (`analises`), e aí a ficha é montada a
+         partir dela. São 137 das 139 vigentes: a análise terminou e a pasta
+         foi arquivada, então esteira não existe mais para elas.
+
+     A pasta é procurada primeiro. Se ela existir, nada muda. */
   const carregar = useCallback(async () => {
     const supabase = createClient()
     const { data, error } = await supabase.from('analise_fila').select(COLUNAS_FILA).eq('id', id).maybeSingle()
     if (error) { setErro(error.message); setCarregando(false); return }
-    const linha = (data as unknown as FilaRica | null)
+    let linha = (data as unknown as FilaRica | null)
+
+    if (!linha) {
+      // Não é pasta da esteira: será uma análise do acervo?
+      const fi = await fichaPorId(id)
+      if (fi) {
+        setFicha(fi)
+        linha = fichaVirandoFila(fi)
+        setF(linha)
+        setAbertos(0)
+        setAba(a => (abaEscolhida.current ? a : 'relatorio'))
+        setCarregando(false)
+        return
+      }
+    }
+
     setF(linha)
     if (linha) {
       // O resultado: pela ligação direta quando existe, senão pelo tomador/CNPJ.
@@ -147,11 +350,27 @@ export default function CardAnalise({ id }: { id: string }) {
   const fase = f.fase || faseDe(f.situacao, f.cadastro?.status)
   const total = f.arquivos?.total ?? null
   const situacao = SITUACAO[f.situacao]
+  /** A análise já saiu? É o que decide se existe relatório para procurar. */
+  const entregue = f.situacao === 'concluida' || fase === 'pronta'
   const ABAS: { id: Aba; txt: string; n?: number | null; alerta?: boolean; some?: boolean }[] = [
     { id: 'geral', txt: 'Visão geral' },
+    /* AS SETE ABAS APARECEM SEMPRE. Ordem dele em 09/09/2026: "ficaremos com
+       todas as opções nessa tela". Uma aba que some conforme o caminho de
+       entrada é exatamente a confusão que ele mandou acabar.
+
+       O que muda quando a pasta não está mais na esteira é o CONTEÚDO: Arquivos
+       e Análise leem a pasta do disco, e ela foi arquivada quando a análise
+       terminou. Em vez de aparecerem vazias — o que a tela leria como "esta
+       análise não tem documento", que é falso — elas dizem o que houve e para
+       onde ir. */
     { id: 'arquivos', txt: 'Arquivos', n: total, alerta: !!(f.arquivos?.avisos ?? []).some(v => v.nivel === 'erro') },
     { id: 'analise', txt: 'Análise', alerta: f.situacao === 'aguardando_resposta' || f.situacao === 'erro' },
-    { id: 'relatorio', txt: 'Relatório', some: !ficha },
+    /* A ABA RELATÓRIO APARECE QUANDO A ANÁLISE FOI ENTREGUE, e não quando ela
+       já está publicada no banco (09/09/2026). Escondê-la por falta de linha em
+       `analises` fazia a Rialma abrir sem Relatório nenhum: a análise tinha
+       rodado, concluído e ficado invisível, e o único caminho era abrir o outro
+       sistema. Agora a aba existe e diz o que falta — publicar. */
+    { id: 'relatorio', txt: 'Relatório', some: !ficha && !entregue, alerta: !ficha && entregue },
     { id: 'ia', txt: 'IA' },
     { id: 'encaminhar', txt: 'Encaminhar', n: abertos || null, alerta: abertos > 0 },
     { id: 'atividades', txt: 'Atividades' },
@@ -160,13 +379,18 @@ export default function CardAnalise({ id }: { id: string }) {
   const props = { f, ficha, quem, local, recarregar: carregar }
 
   return (
-    <div style={{ padding: 'clamp(12px, 2vw, 20px) clamp(10px, 2.5vw, 28px) 30px' }}>
+    <div className="an-area" style={{ padding: 'clamp(12px, 2vw, 20px) clamp(10px, 2.5vw, 28px) 30px' }}>
       <EstiloAnalises />
       <BarraAnalises atual="mesa" contagens={contagens} />
 
       <div className="mt-card" style={{ marginTop: 12 }}>
         <div className="an-card-topo">
-          <button type="button" className="an-bt" onClick={() => router.push('/analises')} title="Voltar para a Mesa (a página anterior)">← Voltar</button>
+          {/* Volta para de onde ele veio: análise sem esteira só existe no
+              Acervo, e mandá-lo para a Mesa seria devolver a uma lista que não
+              contém o que ele estava vendo. */}
+          <button type="button" className="an-bt"
+            onClick={() => router.push(f.semEsteira ? '/analises?aba=acervo' : '/analises')}
+            title={f.semEsteira ? 'Voltar para o acervo' : 'Voltar para a Mesa'}>← Voltar</button>
           <span className="an-selo gr" style={{ ['--cor' as string]: corDoNome(nome) }}>{iniciaisDe(nome)}</span>
           <div style={{ minWidth: 0 }}>
             <h1 className="an-card-nome">{nome}</h1>
@@ -182,7 +406,7 @@ export default function CardAnalise({ id }: { id: string }) {
               : <span className={`an-tag ${f.situacao === 'em_andamento' ? 'rodando' : f.situacao === 'erro' ? 'ruim' : fase === 'conferencia' ? 'voce' : fase === 'pronta' ? 'pronta' : ''}`}>{situacao?.rotulo ?? nomeDaFase(fase)}</span>}
             <span className="an-tag">{nomeDaFase(fase)}</span>
             {f.substatus && <span className="an-tag sub" title={`Substatus escrito por ${f.substatus_por ?? 'Marco'}`}>📌 {f.substatus}</span>}
-            {(f.corretora || ficha?.corretora) && <span style={{ fontSize: 13, color: '#6080a0' }}>{f.corretora || ficha?.corretora}</span>}
+            {semMarcador(f.corretora || ficha?.corretora) && <span style={{ fontSize: 13, color: '#6080a0' }}>{semMarcador(f.corretora || ficha?.corretora)}</span>}
             {f.tomador_id && (
               <button type="button" className="an-bt mini" onClick={() => router.push(`/tomadores/${f.tomador_id}`)} title="O cadastro deste tomador no CRM, com as operações">Cadastro no CRM</button>
             )}
@@ -191,7 +415,8 @@ export default function CardAnalise({ id }: { id: string }) {
 
         <nav className="an-card-abas" role="tablist" aria-label="O card do tomador">
           {ABAS.filter(a => !a.some).map(a => (
-            <button key={a.id} type="button" role="tab" aria-selected={aba === a.id} className={`an-card-aba${aba === a.id ? ' on' : ''}`} onClick={() => setAba(a.id)}>
+            <button key={a.id} type="button" role="tab" aria-selected={aba === a.id} className={`an-card-aba${aba === a.id ? ' on' : ''}`}
+              onClick={() => { abaEscolhida.current = true; setAba(a.id) }}>
               {a.txt}{a.n ? <i>{a.n}</i> : null}{a.alerta ? <b className="ponto" /> : null}
             </button>
           ))}
@@ -200,12 +425,22 @@ export default function CardAnalise({ id }: { id: string }) {
         <div className="an-card-corpo">
           {erro && <div className="alert-error" style={{ marginBottom: 12 }}>{erro}</div>}
           {aba === 'geral' && <VisaoGeral {...props} aoIrParaAba={a => setAba(a as Aba)} />}
-          {aba === 'arquivos' && <Arquivos {...props} aoMandar={o => mandar(o)} />}
-          {aba === 'analise' && <AbaAnalise {...props} aoMandar={mandar} />}
-          {aba === 'relatorio' && ficha && <RelatorioCompleto analiseId={ficha.id} semCabecalho aoCarregar={fi => { if (fi) setFicha(fi) }} />}
+          {aba === 'arquivos' && (f.semEsteira
+            ? <SemPasta aba="arquivos" chave={f.chave_local} docs={ficha?.documentos.length ?? 0} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
+            : <Arquivos {...props} aoMandar={o => mandar(o)} />)}
+          {aba === 'analise' && (f.semEsteira
+            ? <SemPasta aba="analise" chave={f.chave_local} docs={ficha?.documentos.length ?? 0} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
+            : <AbaAnalise {...props} aoMandar={mandar} />)}
+          {aba === 'relatorio' && (ficha
+            ? <RelatorioCompleto analiseId={ficha.id} semCabecalho aoCarregar={fi => { if (fi) setFicha(fi) }} />
+            : <RelatorioAPublicar f={f} quem={quem} aoMandar={mandar} />)}
           {aba === 'ia' && <AbaIA {...props} />}
-          {aba === 'encaminhar' && <Encaminhar {...props} />}
-          {aba === 'atividades' && <Atividades {...props} />}
+          {aba === 'encaminhar' && (f.semEsteira
+            ? <SemPasta aba="encaminhar" chave={f.chave_local} docs={0} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
+            : <Encaminhar {...props} />)}
+          {aba === 'atividades' && (f.semEsteira
+            ? <SemPasta aba="atividades" chave={f.chave_local} docs={0} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
+            : <Atividades {...props} />)}
         </div>
       </div>
     </div>

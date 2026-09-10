@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
      alguém olhando a tela esperando acontecer. */
   const { data: ordens } = await sb
     .from('analise_fila')
-    .select('id, pasta, chave, ordem, ordem_por, ordem_em, ordem_dados, situacao, caso_id, cnpj, razao_social, instrucao, modo, arquivos_fora')
+    .select('id, pasta, chave, analise_chave, ordem, ordem_por, ordem_em, ordem_dados, situacao, caso_id, cnpj, razao_social, instrucao, modo, arquivos_fora')
     .not('ordem', 'is', null)
     .order('ordem_em', { ascending: true })
     .limit(20)
@@ -364,7 +364,28 @@ export async function POST(req: NextRequest) {
       }, { onConflict: 'id' })
     }
 
-    return NextResponse.json({ ok: true, criadas, atualizadas, total: entrada.length, recusadas })
+    /* O QUE ESTÁ ANALISADO E NÃO ESTÁ PUBLICADO (09/09/2026).
+       A Rialma foi analisada, concluída, e o card dela abriu sem Relatório
+       porque `analises` não tinha linha nenhuma daquele CNPJ: faltava alguém
+       lembrar de rodar a carga. Enquanto isso, do lado de dentro do CRM, a
+       análise simplesmente não existia — e o caminho virava abrir o sistema
+       antigo, que é exatamente o que não pode.
+
+       A resposta da sincronização passa a dizer quais chaves estão nesse
+       estado. Quem age é o agente, na máquina onde as análises moram: ele roda
+       a carga sozinho. Aqui só se responde à pergunta. */
+    const entregues = entrada
+      .filter((p) => p.situacao === 'concluida' && p.analise_chave)
+      .map((p) => String(p.analise_chave))
+    let publicar_pendentes: string[] = []
+    if (entregues.length) {
+      const { data: jaTem } = await sb
+        .from('analises').select('chave_local').in('chave_local', entregues)
+      const conhecidas = new Set(((jaTem ?? []) as { chave_local: string }[]).map((a) => a.chave_local))
+      publicar_pendentes = entregues.filter((c) => !conhecidas.has(c))
+    }
+
+    return NextResponse.json({ ok: true, criadas, atualizadas, total: entrada.length, recusadas, publicar_pendentes })
   }
 
   // ── recados: o mural inteiro, como está no disco ──────────────────────────

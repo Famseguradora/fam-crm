@@ -12,9 +12,19 @@
 //  sessão do lado do motor, e trocar de conversa troca a memória junto. As 37
 //  que ele já tinha no notebook aparecem aqui, com o fio inteiro.
 //
-//  Flutuante, e não uma aba: ele pediu para tirar dúvida, e dúvida aparece no
-//  meio de outra coisa. Aba obrigaria a sair da Mesa para perguntar e voltar
-//  depois para ver a resposta.
+//  O PAINEL É FLUTUANTE, e não uma aba: ele pediu para tirar dúvida, e dúvida
+//  aparece no meio de outra coisa. Aba obrigaria a sair da Mesa para perguntar
+//  e voltar depois para ver a resposta.
+//
+//  O GATILHO DEIXOU DE FLUTUAR EM 09/09/2026. Com a IA Gestor passando a
+//  existir em toda tela do CRM, o canto inferior direito tinha DOIS botões de
+//  IA, um por cima do outro. Um canto, um botão: o flutuante do CRM é o da IA
+//  Gestor, e esta aqui virou um botão do cabeçalho de Análises, onde ela é o
+//  que sempre foi (uma ferramenta daquela tela).
+//
+//  AS DUAS NÃO SÃO A MESMA COISA, e por isso as duas ficaram:
+//    IA de Gestão (esta)   o acervo de análises, pelo notebook, custo zero
+//    IA Gestor             o CRM inteiro, pela API, custo por token
 //
 //  A TELA NÃO FALA COM 127.0.0.1. Ela escreve no banco e espera: é isso que faz
 //  a pergunta poder ser feita do celular, a resposta ficar para a equipe, e o
@@ -195,22 +205,26 @@ export default function IaGestao() {
 
   return (
     <>
-      {/* o botão flutuante, como na tela dele */}
+      {/* O GATILHO, agora no cabeçalho e não no canto. O dourado é o mesmo da
+          tela dele: o que mudou foi o lugar, não a identidade. */}
       <button type="button" onClick={() => setAberto(v => !v)}
+        title="Pergunte sobre o acervo inteiro de análises. Responde pelo notebook, sem custo de API."
         style={{
-          position: 'fixed', right: 22, bottom: 22, zIndex: 50,
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '12px 18px', borderRadius: 30, border: 'none', cursor: 'pointer',
-          background: 'linear-gradient(135deg, #e8b84b, #d9a72f)', color: '#2a1f05',
-          fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
-          boxShadow: '0 6px 20px rgba(30,64,128,.22)',
+          display: 'inline-flex', alignItems: 'center', gap: 7,
+          padding: '7px 13px', borderRadius: 8, cursor: 'pointer',
+          border: '1px solid ' + (aberto ? '#b8851f' : '#e0cd94'),
+          background: aberto ? 'linear-gradient(135deg, #e8b84b, #d9a72f)' : '#fdf8e6',
+          color: '#5c460a', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700,
         }}>
         ✦ IA de Gestão
       </button>
 
       {aberto && (
         <div style={{
-          position: 'fixed', right: 22, bottom: 78, zIndex: 50,
+          /* O painel continua flutuando: a dúvida nasce olhando a lista, e ele
+             não pode empurrar o conteúdo da Mesa para baixo. Subiu para 84 para
+             não encostar no botão da IA Gestor, que mora no mesmo canto. */
+          position: 'fixed', right: 22, bottom: 84, zIndex: 50,
           width: 'min(900px, calc(100vw - 44px))', maxHeight: 'min(76vh, 720px)',
           display: 'flex', flexDirection: 'column',
           background: '#fff', border: '1px solid var(--border)', borderRadius: 12,

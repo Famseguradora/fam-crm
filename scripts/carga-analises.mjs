@@ -440,7 +440,11 @@ function exercicios(rev, ger) {
 let CORRETORAS_CRM = []
 
 function corretoraDaCasa(a, avisos) {
-  const cru = semTags(a.corretora_canonica || a.corretora) || null
+  /* Marcador do template nao e corretora. O relatorio nasce com "[Corretora]"
+     no lugar do nome, e quando ninguem preenche ele chegava aqui e virava o
+     nome da corretora no banco (a Renova, em 09/09/2026). Vazio e a verdade. */
+  const bruto = semTags(a.corretora_canonica || a.corretora) || null
+  const cru = bruto && /^\s*[[【][^\]】]*[\]】]\s*$/.test(bruto) ? null : bruto
   if (!cru || !CORRETORAS_CRM.length) return cru
   const par = casarCorretora(cru, CORRETORAS_CRM)
   if (!par.achou) {
@@ -453,6 +457,162 @@ function corretoraDaCasa(a, avisos) {
     avisos.push({ id: a.id, razao: a.razao_social, aviso: `corretora "${cru}" gravada como "${par.nome}" (${par.como})` })
   }
   return par.nome
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   OS BLOCOS QUE FALTAVAM  ·  09/09/2026
+   Pergunta dele: "cade o relatorio que consta da analise de credito?". O CRM
+   trazia a decisao, os 3 C's, o Serasa, o grupo e as demonstracoes, e parava
+   ali. O resto do relatorio que ele edita ficava so no disco.
+
+   Tudo abaixo le do MESMO json (`rev` a versao revisada, `ger` a gerada), sem
+   inventar nada: o que a analise nao escreveu vira null, e a tela nao desenha
+   a secao. Preferencia sempre pela REVISADA, que e a que ele corrigiu.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* AS DUAS VERSOES NAO USAM OS MESMOS NOMES, e isso custou uma rodada.
+   A `revisada` e o estado do TEMPLATE (nomes curtos: `ident`, `kal`, `tl`,
+   `cxe`, `limiteBase`); a `gerada` e a saida do MOTOR (nomes por extenso:
+   `verificacao_resseguro`, `score_capital`, `linha_do_tempo`, `caixa_estoque`,
+   `limite_base`). Analise que nunca foi aberta no template tem SO a gerada —
+   foi o caso da Rialma, analisada em 09/09/2026, que veio com todos os blocos
+   novos vazios porque so se procurava pelo nome do template.
+
+   Por isso cada bloco declara os DOIS nomes, nesta ordem: a revisada primeiro,
+   porque e a que ele corrigiu. */
+const vale = (v) => v != null && (typeof v !== 'object' || Object.keys(v).length > 0)
+
+function doisLados(rev, ger, noTemplate, noMotor = noTemplate) {
+  const pegar = (o, caminho) => caminho.split('.').reduce((x, k) => (x == null ? x : x[k]), o)
+  const a = pegar(rev, noTemplate)
+  if (vale(a)) return a
+  const b = pegar(ger, noMotor)
+  return vale(b) ? b : null
+}
+
+/** Limpa marcacao HTML de todo texto de um objeto ou array, ate o fundo. */
+function limpoFundo(v, nivel = 0) {
+  if (nivel > 6) return null
+  if (typeof v === 'string') return semTags(v) || null
+  if (Array.isArray(v)) { const r = v.map((x) => limpoFundo(x, nivel + 1)).filter((x) => x != null); return r.length ? r : null }
+  if (v && typeof v === 'object') {
+    const o = {}
+    for (const k of Object.keys(v)) { const x = limpoFundo(v[k], nivel + 1); if (x != null) o[k] = x }
+    return Object.keys(o).length ? o : null
+  }
+  return v === undefined ? null : v
+}
+
+/* A ficha da empresa. No template e um objeto `ident`; no motor os campos vem
+   SOLTOS na raiz, um a um. Por isso este e o unico que monta o objeto. */
+function identificacao(rev, ger) {
+  const doTemplate = limpoFundo(rev?.ident)
+  if (vale(doTemplate)) return doTemplate
+  if (!ger) return null
+  const f = {
+    fundacao: semTags(ger.fundacao || '') || null,
+    regime: semTags(ger.regime || '') || null,
+    capital: semTags(ger.capital_social || '') || null,
+    endereco: semTags(ger.endereco || '') || null,
+    cnae: semTags(ger.cnae || '') || null,
+    funcionarios: ger.funcionarios == null ? null : String(ger.funcionarios),
+    filiais: ger.filiais == null ? null : String(ger.filiais),
+  }
+  return Object.values(f).some(Boolean) ? f : null
+}
+
+/* Classe, porte e a ponderacao. No template e o objeto `enq`; no motor sao
+   cinco campos soltos com outros nomes. O formato de SAIDA e sempre o do
+   template, para a tela conhecer um so. */
+function enquadramento(rev, ger) {
+  const doTemplate = limpoFundo(rev?.enq)
+  if (vale(doTemplate)) return doTemplate
+  if (!ger) return null
+  const f = {
+    classe: semTags(ger.enquadramento_classe || '') || null,
+    porte: semTags(ger.enquadramento_porte || '') || null,
+    tipo: semTags(ger.tipo_analise || '') || null,
+    obs: semTags(ger.enquadramento_obs || '') || null,
+    pObj: Number.isFinite(Number(ger.perc_objetivo)) ? Number(ger.perc_objetivo) : null,
+    pSubj: Number.isFinite(Number(ger.perc_subjetivo)) ? Number(ger.perc_subjetivo) : null,
+  }
+  return Object.values(f).some((x) => x !== null) ? f : null
+}
+
+/** As linhas do contrato de resseguro. So vale array de objetos com `item`. */
+function resseguro(rev, ger) {
+  const r = doisLados(rev, ger, 'resseguro', 'verificacao_resseguro')
+  if (!Array.isArray(r) || !r.length) return null
+  const linhas = r.map((x) => limpoFundo(x)).filter((x) => x && x.item)
+  return linhas.length ? linhas : null
+}
+
+/** A historia, ano a ano. */
+function linhaTempo(rev, ger) {
+  const t = doisLados(rev, ger, 'tl', 'linha_do_tempo')
+  if (!Array.isArray(t) || !t.length) return null
+  const linhas = t.map((x) => limpoFundo(x)).filter((x) => x && (x.ano || x.evento))
+  return linhas.length ? linhas : null
+}
+
+/** Caixa e estoque dos dois exercicios, com a leitura. */
+const caixaEstoque = (rev, ger) => limpoFundo(doisLados(rev, ger, 'cxe', 'caixa_estoque'))
+
+/* A MEMORIA DE CALCULO DO SCORE, e e ela que torna o numero auditavel.
+   Sao quatro grupos de indicadores no relatorio, com nomes curtos que so quem
+   escreveu o sistema entende. Aqui eles ganham o nome que aparece na tela:
+     cap  -> capacidade   (tempo de atividade, apolices emitidas)
+     kal  -> indicadores  (liquidez, endividamento, crescimento, margem)
+     car  -> cadastral    (protestos, pefin/refin, acoes judiciais)
+     subj -> subjetivo    (tempo de mercado, ISO, socios, setor)
+   Cada indicador vem com valor bruto, formula, classificacao, pontos, peso% e
+   score parcial: e exatamente o que uma auditoria pede. */
+function scoreMemoria(rev, ger, a) {
+  const g = (t, m) => limpoFundo(doisLados(rev, ger, t, m))
+  const capacidade = g('cap', 'score_capacidade')
+  const indicadores = g('kal', 'score_capital')
+  const cadastral = g('car', 'score_carater')
+  const subjetivo = g('subj', 'score_subjetivo')
+  const calculo = semTags(doisLados(rev, ger, 'calcTxt', 'calculo_score_final') || '') || null
+  const objetivo = Number(doisLados(rev, ger, 'scoreObj', 'score_objetivo_total'))
+  const enq = enquadramento(rev, ger) || {}
+  if (!capacidade && !indicadores && !cadastral && !subjetivo && !calculo) return null
+  return {
+    capacidade, indicadores, cadastral, subjetivo, calculo,
+    score_objetivo: Number.isFinite(objetivo) ? objetivo : null,
+    score_final: Number.isFinite(Number(a.score_final)) ? Number(a.score_final) : null,
+    peso_obj: Number.isFinite(Number(enq.pObj)) ? Number(enq.pObj) : null,
+    peso_subj: Number.isFinite(Number(enq.pSubj)) ? Number(enq.pSubj) : null,
+  }
+}
+
+/* OS DOCUMENTOS QUE A ANALISE LEU. Nao estao no `registro/json`: moram no
+   `_status.json` de cada pasta, que e onde o motor grava o retrato (nome,
+   bytes, sha256 cortado em 16 hex) de quando a analise comecou. A tabela
+   `analise_documentos` existia desde 30/08 e estava vazia para as 153
+   analises do acervo porque ninguem nunca leu este arquivo.
+
+   `a.onde` e o caminho da pasta no disco, absoluto. Pasta que sumiu (movida,
+   arquivada) simplesmente nao tem documento: nao e erro de carga. */
+function documentosLidos(a) {
+  if (!a.onde) return []
+  let j
+  try {
+    const p = path.join(a.onde, '_status.json')
+    if (!fs.existsSync(p)) return []
+    j = JSON.parse(fs.readFileSync(p, 'utf8'))
+  } catch { return [] }
+  const docs = Array.isArray(j?.documentos) ? j.documentos : []
+  const retrato = j?.concluido_em || null
+  return docs
+    .filter((d) => d && d.nome)
+    .map((d) => ({
+      nome: String(d.nome).slice(0, 300),
+      bytes: Number.isFinite(Number(d.bytes)) ? Number(d.bytes) : null,
+      hash16: d.sha256 ? String(d.sha256).slice(0, 16) : null,
+      retrato_em: retrato,
+      pasta: a.pasta || null,
+    }))
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -556,8 +716,22 @@ function montar(a, avisos) {
       onde: a.onde || null,
       registrado_em: a.registrado_em || null,
       publicado_por: 'carga-analises.mjs',
+
+      // ── o resto do relatorio (09/09/2026) ──────────────────────────────
+      identificacao: identificacao(rev, ger),
+      enquadramento: enquadramento(rev, ger),
+      resseguro: resseguro(rev, ger),
+      score_memoria: scoreMemoria(rev, ger, a),
+      linha_tempo: linhaTempo(rev, ger),
+      caixa_estoque: caixaEstoque(rev, ger),
+      limite_base: semTags(doisLados(rev, ger, 'limiteBase', 'limite_base') || '') || null,
+      limite_perc: Number.isFinite(Number(doisLados(rev, ger, 'limitePerc', 'limite_perc'))) ? Number(doisLados(rev, ger, 'limitePerc', 'limite_perc')) : null,
+      base_df: semTags(doisLados(rev, ger, 'baseDF', 'base_demonstracoes') || '') || null,
+      base_df_obs: semTags(doisLados(rev, ger, 'baseDFObs', 'base_demonstracoes_obs') || '') || null,
+      unidade: semTags(doisLados(rev, ger, 'unidade') || '') || null,
     },
     exercicios: exercicios(rev, ger),
+    documentos: documentosLidos(a),
     candidatos,
     // Quando a escala do balanco nao pode ser lida, os numeros ficaram nulos e
     // isso PRECISA aparecer no relatorio: silencio aqui seria um balanco vazio
@@ -1133,6 +1307,58 @@ async function principal() {
     exOk += lote.length
   }
   console.log(`exercicios gravados: ${exOk} de ${exLinhas.length}`)
+
+  /* OS DOCUMENTOS LIDOS (09/09/2026). A tabela existia desde 30/08 e estava
+     vazia: o relatorio dizia "a indexar" nas 153 analises do acervo, porque
+     ninguem lia o `_status.json` das pastas. */
+  const docLinhas = []
+  for (const m of paraGravar) {
+    const id = idPorChave.get(m.linha.chave_local)
+    if (!id) {
+      if (m.documentos?.length) falhas.push(`${m.linha.chave_local}: ${m.documentos.length} documentos ficaram de fora, a analise nao voltou do banco`)
+      continue
+    }
+    for (const d of (m.documentos ?? [])) docLinhas.push({ analise_id: id, ...d })
+  }
+  let docOk = 0
+  for (let i = 0; i < docLinhas.length; i += 200) {
+    const lote = docLinhas.slice(i, i + 200)
+    const { error } = await sb.from('analise_documentos').upsert(lote, { onConflict: 'analise_id,nome' })
+    if (error) { falhas.push(`documentos, lote ${i}: ${error.message}`); continue }
+    docOk += lote.length
+  }
+  console.log(`documentos indexados: ${docOk} de ${docLinhas.length}`)
+
+  /* ENRIQUECER O QUE ESTA PROTEGIDO  ·  09/09/2026
+     A trava de `editado_no_crm` existe para a carga nao apagar o que ele
+     corrigiu na tela. Mas os blocos novos (resseguro, memoria do Score,
+     identificacao, linha do tempo, caixa e estoque, base do limite) NUNCA
+     foram editaveis no CRM: nao ha nada dele ali para proteger, e deixa-los de
+     fora significaria que justamente a analise que ele mais trabalhou seria a
+     unica sem o relatorio completo. Foi o caso da Renova.
+
+     Entao aqui se escreve SO essas colunas, e nenhuma das de decisao. Se um
+     dia algum desses blocos virar editavel na tela, ele sai desta lista. */
+  const SO_LEITURA = ['identificacao', 'enquadramento', 'resseguro', 'score_memoria',
+    'linha_tempo', 'caixa_estoque', 'limite_base', 'limite_perc', 'base_df', 'base_df_obs', 'unidade']
+  let enriquecidas = 0
+  for (const m of montadas) {
+    const guardada = protegidas.get(m.linha.chave_local)
+    if (!guardada) continue
+    const so = {}
+    for (const k of SO_LEITURA) if (m.linha[k] != null) so[k] = m.linha[k]
+    if (!Object.keys(so).length) continue
+    const { data, error } = await sb.from('analises').update(so).eq('id', guardada.id).select('id')
+    if (error) { falhas.push(`enriquecer ${m.linha.chave_local}: ${error.message}`); continue }
+    if (data?.length) enriquecidas++
+    // e os documentos dela, que tambem nunca foram editaveis aqui
+    const docs = (m.documentos ?? []).map((d) => ({ analise_id: guardada.id, ...d }))
+    if (docs.length) {
+      const { error: e2 } = await sb.from('analise_documentos').upsert(docs, { onConflict: 'analise_id,nome' })
+      if (e2) falhas.push(`documentos de ${m.linha.chave_local}: ${e2.message}`)
+    }
+  }
+  if (enriquecidas) console.log(`editadas no CRM que ganharam so os blocos de leitura: ${enriquecidas}`)
 
   const confLinhas = confl.map(c => ({
     tipo: c.tipo,

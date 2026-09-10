@@ -56,6 +56,19 @@ interface CampoDef {
 /** As decisões que a análise publica. É o mesmo vocabulário do relatório do
  *  sistema atual: mudar o nome de um campo aqui é mudar o que o CRM promete. */
 const BLOCOS: { titulo: string; cor: string; nota?: string; campos: CampoDef[] }[] = [
+  /* QUEM TROUXE O NEGÓCIO  ·  09/09/2026
+     A corretora vinha do relatório e não tinha onde ser corrigida no CRM. Na
+     Renova ela chegou como "[Corretora]", o marcador do template que ninguém
+     preencheu, e o card mostrava isso como se fosse o nome. Agora ele digita
+     aqui, e o que ele digita passa a ser a verdade daquela análise. */
+  {
+    titulo: 'Quem trouxe', cor: '#6080a0',
+    nota: 'A corretora que apresentou o tomador. Se o relatório veio sem ela, é aqui que se escreve.',
+    campos: [
+      { k: 'corretora', rotulo: 'Corretora', tipo: 'texto', largo: true, dica: 'O nome como está no cadastro do CRM' },
+      { k: 'grupo', rotulo: 'Grupo econômico', tipo: 'texto', largo: true },
+    ],
+  },
   {
     titulo: 'A decisão', cor: '#1e4080',
     campos: [
@@ -298,14 +311,13 @@ export default function EditorAnalise({ ficha, aoSalvar }: {
                   <label key={c.k} style={{ display: 'block', gridColumn: c.largo ? '1 / -1' : undefined }}>
                     <span style={{
                       display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4,
-                      fontSize: 11, fontWeight: 700, letterSpacing: '.06em',
-                      textTransform: 'uppercase', color: 'var(--soft)',
+                      fontSize: 11.5, fontWeight: 600, color: 'var(--soft)',
                     }}>
                       {c.rotulo}
-                      {st === 'salvando' && <span style={{ color: '#a07b1e', textTransform: 'none', letterSpacing: 0 }}>salvando…</span>}
-                      {st === 'salvo' && <span style={{ color: '#1a7a50', textTransform: 'none', letterSpacing: 0 }}>✓ salvo</span>}
+                      {st === 'salvando' && <span style={{ color: '#a07b1e' }}>salvando…</span>}
+                      {st === 'salvo' && <span style={{ color: '#1a7a50' }}>✓ salvo</span>}
                       {st !== 'salvando' && st !== 'salvo' && mudou(c.k) && (
-                        <span style={{ color: '#a07b1e', textTransform: 'none', letterSpacing: 0 }}>a salvar</span>
+                        <span style={{ color: '#a07b1e' }}>a salvar</span>
                       )}
                     </span>
 

@@ -38,7 +38,7 @@ export const situacaoDe = (d: string | null): 'Aprovar' | 'Aprovar com ressalvas
 }
 
 export const COR_DECISAO: Record<string, string> = {
-  'Aprovar': '#27a96c', 'Aprovar com ressalvas': '#b8851f', 'Reprovar': '#d64545', 'Bloqueio': '#9878d0', 'Sem decisão': '#8ba3c0',
+  'Aprovar': '#27a96c', 'Aprovar com ressalvas': '#b8851f', 'Reprovar': '#d64545', 'Bloqueio': '#c76f3a', 'Sem decisão': '#8ba3c0',
 }
 
 /* O NÍVEL DE RISCO CHEGA EM SETE GRAFIAS do acervo ("Médio-Baixo", "Medio-Baixo",

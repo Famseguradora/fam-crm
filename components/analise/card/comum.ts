@@ -10,6 +10,16 @@ import type { FichaAnalise } from '@/lib/analise/ficha'
  *  que botão nenhum. */
 export const SISTEMA_LOCAL = 'http://127.0.0.1:7311'
 
+/** O relatório de verdade, onde a análise é EDITADA. Enquanto o CRM não tiver
+ *  toda a tecnologia do template (organograma, memória, recálculo), é aqui que
+ *  o trabalho acontece, e toda tela que mostra uma análise precisa desta porta. */
+export const linkRelatorio = (chave: string) =>
+  `${SISTEMA_LOCAL}/analise/${encodeURIComponent(chave)}`
+export const linkGerencial = (chave: string) =>
+  `${SISTEMA_LOCAL}/gerencial/${encodeURIComponent(chave)}`
+export const linkComoEntregue = (chave: string) =>
+  `${SISTEMA_LOCAL}/analise/${encodeURIComponent(chave)}?versao=gerada`
+
 export interface Quem {
   nome: string | null
   authId: string | null

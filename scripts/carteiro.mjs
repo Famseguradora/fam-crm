@@ -41,8 +41,14 @@
 //       processo bate no CRM e não lê e-mail nenhum.
 //
 //  Ninguém digita o endereço da caixa: ele é perguntado ao próprio Outlook. Só
-//  se escreve `"conta"` no carteiro.json para caixa COMPARTILHADA (uma caixa de
-//  setor aberta dentro do Outlook de alguém).
+//  se escreve `"conta"` no carteiro.json (ou CARTEIRO_CONTA no ambiente) para
+//  caixa COMPARTILHADA (uma caixa de setor aberta dentro do Outlook de alguém).
+//
+//  UM PROCESSO, UMA CAIXA. Para ler duas na mesma máquina, sobem-se dois:
+//     node scripts/carteiro.mjs                                  (a sua)
+//     set CARTEIRO_CONTA=comercial@famseguradora.com.br & node scripts/carteiro.mjs
+//  Quem VÊ cada caixa no CRM é outra conversa, e é decidida na tela de
+//  Usuários: a máquina lê, as pessoas autorizadas dão as ordens.
 //
 //  O COM exige sessão de usuário aberta: máquina com a sessão encerrada não
 //  responde, mesmo ligada. Máquina que fica logada resolve; serviço do Windows
@@ -116,9 +122,20 @@ function config() {
     olhada_max: Number(arq.olhada_max ?? 25),
     batida_seg: Number(arq.batida_seg ?? 5),
     por: String(arq.por || `Carteiro (${os.hostname()})`),
-    // Vazio = pergunta ao Outlook em qual conta ele está logado. Só se preenche
-    // para caixa compartilhada (uma caixa de setor aberta no Outlook de alguém).
-    conta: String(arq.conta || '').trim().toLowerCase(),
+    /* Vazio = pergunta ao Outlook em qual conta ele está logado. Só se preenche
+       para caixa compartilhada (uma caixa de setor aberta no Outlook de alguém).
+
+       CADA PROCESSO LÊ UMA CAIXA (09/09/2026). Para ler a pessoal E a do
+       Comercial na mesma máquina, sobem-se dois processos. Como o
+       `carteiro.json` mora ao lado do script, duplicar a pasta seria a única
+       saída — e duas cópias do mesmo script divergem no terceiro mês. Por isso
+       o ambiente manda mais que o arquivo:
+
+           set CARTEIRO_CONTA=comercial@famseguradora.com.br
+           node scripts/carteiro.mjs
+
+       Assim a segunda caixa é uma janela a mais, e não uma segunda instalação. */
+    conta: String(process.env.CARTEIRO_CONTA || arq.conta || '').trim().toLowerCase(),
   }
 }
 

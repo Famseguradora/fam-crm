@@ -35,11 +35,17 @@ import { maskCNPJ } from '@/lib/utils'
 import { FASES, SLA_PADRAO, faseDe, corDaFase, nomeDaFase, SITUACAO, ORDEM, ETAPAS, type Fase } from '@/lib/analise/esteira'
 import {
   COLUNAS_MESA, nomeDaFicha, diasParado, iniciaisDe, corDoNome, desde, corta,
+  agruparPorEmpresa, nomeDoGrupo, type GrupoEmpresa,
   type FilaRica, type EstadoEsteira, type Encaminhamento,
 } from '@/lib/analise/mesa'
 import { nomeArea } from '@/lib/card/secoes'
+import { semMarcador } from '@/lib/analise/ficha'
 
 type Layout = 'kanban' | 'tabela' | 'galeria'
+
+/** Uma análise rodando agora, do jeito que o notebook a escreve em
+ *  `analise_estado`. É o que o painel de missão desenha. */
+type Execucao = NonNullable<EstadoEsteira['execucao']>['execucoes'][number]
 
 const CHAVE_LAYOUT = 'fam-mesa-layout'
 
@@ -64,6 +70,12 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
   // O relógio da tela: anda a cada volta da carga, e não a cada render. É o
   // que faz "parado há Xd" e "sem sinal" serem contas puras no render.
   const [agora, setAgora] = useState(() => Date.now())
+  /* O SEGUNDO RELÓGIO, e ele é de UM segundo. O painel de missão mostra um
+     cronômetro correndo contra a meta de 5:00, e meta sem relógio andando na
+     tela não cobra ninguém (é a razão escrita no cockpit). Este tique só
+     existe enquanto há análise rodando: parado, não acorda o React à toa. */
+  const [tique, setTique] = useState(() => Date.now())
+  const [parando, setParando] = useState<string | null>(null)
 
   useEffect(() => {
     try {
@@ -121,13 +133,21 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     return () => { vivo.atual = false; clearInterval(t); supabase.removeChannel(canal) }
   }, [carregar])
 
-  // ── as contas da faixa ──────────────────────────────────────────────────
+  /* O TIQUE DE UM SEGUNDO do painel de missão. Só existe quando há execução na
+     tela: sem análise rodando ele não é montado, e a Mesa volta a acordar de
+     20 em 20 segundos como sempre foi. */
+  const temExecucao = (estado?.execucao?.execucoes?.length ?? 0) > 0 || fila.some(f => f.situacao === 'em_andamento')
+  useEffect(() => {
+    if (!temExecucao) return
+    const t = setInterval(() => setTique(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [temExecucao])
+
   const rodando = useMemo(() => fila.filter(f => f.situacao === 'em_andamento'), [fila])
   const execucoes = estado?.execucao?.execucoes ?? []
   const analisando = Math.max(execucoes.length, rodando.length)
   const max = estado?.execucao?.max ?? 3
   const vagas = Math.max(0, max - analisando)
-  const esperando = fila.filter(esperaOrdem).length
   const novidades = estado?.varredura?.novidades ?? 0
   const semSinal = !estadoEm || agora - new Date(estadoEm).getTime() > 5 * 60 * 1000
   const revPct = acervo?.total ? Math.round((acervo.revisadas / acervo.total) * 100) : 0
@@ -145,6 +165,39 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
 
   const faseDa = (f: FilaRica): Fase => (f.fase as Fase) || faseDe(f.situacao, f.cadastro?.status)
 
+  /* UMA EMPRESA, UM CARD (09/09/2026). A ficha da Mesa é uma PASTA, e a análise
+     renomeia a pasta enquanto trabalha: a Renova aparecia três vezes no quadro
+     ("Renova", "Renova Energia S a", "Renova Energia"), como se fossem três
+     negócios. Agora as pastas da mesma empresa vêm juntas, e o card fica na
+     coluna da MAIS ADIANTADA: "a Renova já fez a análise" tem que se ler no
+     quadro sem abrir nada.
+
+     A regra mora em lib/analise/mesa.ts, e não aqui, porque o Acervo e a
+     Gestão vão precisar da mesma conta. */
+  const grupos = useMemo(() => agruparPorEmpresa(fichas, faseDa), [fichas])
+
+  /* A FAIXA CONTA O QUE O QUADRO DESENHA (09/09/2026).
+     Ele abriu a Mesa com "Esperando sua ordem: 6" em cima de um quadro com
+     QUATRO cartões, e disse a frase certa: "você precisa buscar do mesmo
+     lugar". A faixa contava PASTAS e o quadro desenha EMPRESAS — a Renova tem
+     três pastas e a Rialma tem três, porque a análise renomeia a pasta
+     enquanto trabalha. Dois números verdadeiros medindo coisas diferentes, um
+     do lado do outro, é a tela discordando dela mesma.
+
+     Agora sai tudo de `grupos`, que é exatamente a lista que vira cartão, e o
+     rodapé do cartão mostra a soma por coluna: qualquer número da faixa se
+     confere olhando o quadro logo abaixo. */
+  const porColuna = useMemo(() => {
+    const c: Record<string, number> = { entrada: 0, conferencia: 0, liberado: 0, analisando: 0, pronta: 0 }
+    for (const g of grupos) c[faseDa(g.principal)] = (c[faseDa(g.principal)] ?? 0) + 1
+    return c
+  }, [grupos])
+  // "Esperando sua ordem": as empresas que não estão rodando nem entregues.
+  const esperando = grupos.filter(g => esperaOrdem(g.principal)).length
+  const esperandoOnde = FASES
+    .filter(f => f.id !== 'analisando' && f.id !== 'pronta' && porColuna[f.id])
+    .map(f => `${f.titulo} ${porColuna[f.id]}`).join(' · ')
+
   const abrir = (f: FilaRica) => router.push(`/analises/mesa/${f.id}`)
 
   const varrer = async () => {
@@ -160,6 +213,37 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     const { error } = await supabase.from('analise_comandos').insert({ comando: 'varrer', por: nome })
     if (error) setErro(error.message)
     setVarrendo(false)
+    carregar()
+  }
+
+  /* PARAR ESTA ANÁLISE. O botão é do cartão da própria análise, e não de uma
+     barra geral, pelo motivo escrito no cockpit: são até três rodando ao mesmo
+     tempo, e parar "a análise" sem dizer qual seria uma roleta.
+
+     A execução ao vivo conhece a PASTA; a ordem se dá pelo id da ficha. Quando
+     a pasta não casa com nenhuma ficha da esteira (a análise renomeia a pasta
+     enquanto trabalha), o botão não aparece — é melhor não ter botão do que ter
+     um que manda parar a análise errada. */
+  const fichaDaPasta = (pasta: string) => fila.find(f => f.pasta === pasta) ?? null
+
+  const parar = async (pasta: string, nome: string) => {
+    const alvo = fichaDaPasta(pasta)
+    if (!alvo || somenteLeitura || parando) return
+    if (!window.confirm(`Interromper a análise de ${nome} agora?
+
+Nada do que já foi salvo se perde.`)) return
+    setParando(pasta); setErro('')
+    try {
+      const r = await fetch('/api/esteira/ordem', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: alvo.id, ordem: 'parar', dados: {} }),
+      })
+      const j = await r.json()
+      if (!r.ok) setErro(j.erro ?? 'Não consegui parar.')
+    } catch {
+      setErro('A conexão caiu. Tente de novo.')
+    }
+    setParando(null)
     carregar()
   }
 
@@ -231,20 +315,46 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     )
   }
 
-  const ficha = (f: FilaRica) => {
+  const ficha = (g: GrupoEmpresa) => {
+    const f = g.principal
     const fase = faseDa(f)
     const ultimo = f.linha?.[0] ?? null
     const s = SITUACAO[f.situacao]
+    const nome = nomeDoGrupo(g)
+    /* O CNPJ pode estar em QUALQUER pasta do grupo. A pasta mais adiantada
+       muitas vezes é a que a análise renomeou e a que veio pelo e-mail é a que
+       tem o CNPJ: mostrar só o da principal escondia o número que existe. */
+    const comCnpj = g.fichas.find(x => x.cnpj)
+    const outras = g.fichas.slice(1)
     return (
-      <button key={f.id} type="button" className="an-ficha" style={{ ['--cor' as string]: corDaFase(fase) }}
-        onClick={() => abrir(f)} title={`${nomeDaFicha(f)} · ${s?.rotulo ?? f.situacao}`}>
+      <button key={g.chave} type="button" className="an-ficha" style={{ ['--cor' as string]: corDaFase(fase) }}
+        onClick={() => abrir(f)}
+        title={outras.length
+          ? `${nome} · ${s?.rotulo ?? f.situacao}\n\n${g.fichas.length} pastas desta empresa:\n${g.fichas.map(x => '· ' + x.pasta).join('\n')}`
+          : `${nome} · ${s?.rotulo ?? f.situacao}`}>
         <div className="an-fi-cab">
           {selo(f)}
           <div className="an-fi-nome">
-            <b>{nomeDaFicha(f)}</b>
-            <small>{f.cnpj && (f.cnpj_confiavel || f.analise_id) ? maskCNPJ(f.cnpj) : 'CNPJ a confirmar'}</small>
+            <b>{nome}</b>
+            <small>{comCnpj?.cnpj && (comCnpj.cnpj_confiavel || comCnpj.analise_id) ? maskCNPJ(comCnpj.cnpj) : 'CNPJ a confirmar'}</small>
           </div>
         </div>
+
+        {/* AS OUTRAS PASTAS DA MESMA EMPRESA. Ficam à vista de propósito: unir
+            calado seria esconder trabalho que existe no disco. */}
+        {outras.length > 0 && (
+          <div className="an-fi-pastas">
+            <span className="an-chip" style={{ background: '#eef3f9', color: '#26374a' }}>
+              {g.fichas.length} pastas
+            </span>
+            <span className="an-fi-pastas-txt">{corta(outras.map(x => nomeDaFicha(x)).join(' · '), 52)}</span>
+            {g.palpite && (
+              <span className="an-fi-palpite" title="Juntei pelo nome parecido, e não pelo CNPJ. Se não for a mesma empresa, me diga.">
+                unidas pelo nome
+              </span>
+            )}
+          </div>
+        )}
         {medidor(f)}
         {f.situacao === 'em_andamento' && (
           <div style={{ marginTop: 8 }}>
@@ -264,7 +374,9 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     return (
       <div className="an-kb">
         {FASES.map(fase => {
-          const das = fichas.filter(f => faseDa(f) === fase.id)
+          // A coluna conta EMPRESAS, e não pastas: é o número que ele lê para
+          // saber quanto trabalho tem, e três pastas da Renova são um trabalho.
+          const das = grupos.filter(g => faseDa(g.principal) === fase.id)
           return (
             <section key={fase.id} className="an-col" aria-label={fase.titulo}>
               <div className="an-col-cab" title={fase.dica}>
@@ -272,7 +384,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
                 <b>{fase.titulo}</b>
                 <i>{das.length}</i>
               </div>
-              {das.length ? das.map(f => ficha(f)) : <div className="an-col-vazia">{fase.dica}</div>}
+              {das.length ? das.map(g => ficha(g)) : <div className="an-col-vazia">{fase.dica}</div>}
             </section>
           )
         })}
@@ -285,7 +397,9 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     return (
       <>
         <div className="an-gl">
-          {fichas.map(f => {
+          {/* A galeria segue a mesma regra do quadro: uma empresa, um card. */}
+          {grupos.map(g => {
+            const f = g.principal
             const fase = faseDa(f)
             const dias = diasParado(f, agora)
             const limite = SLA_PADRAO[fase] || 0
@@ -293,17 +407,21 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
             const feitos = f.docs?.feitos ?? 0, total = f.docs?.total ?? 0
             const pct = total ? Math.round((feitos / total) * 100) : 0
             return (
-              <button key={f.id} type="button" className="an-gl-card" onClick={() => abrir(f)}>
+              <button key={g.chave} type="button" className="an-gl-card" onClick={() => abrir(f)}>
                 <div className="an-gl-cab">
                   {selo(f, true)}
                   <div style={{ minWidth: 0 }}>
-                    <b>{nomeDaFicha(f)}</b>
-                    <small>{corta(f.corretora || 'sem corretora', 30)}</small>
+                    <b>{nomeDoGrupo(g)}</b>
+                    <small>
+                      {g.fichas.length > 1
+                        ? `${g.fichas.length} pastas · ${corta(semMarcador(f.corretora) || 'sem corretora', 18)}`
+                        : corta(semMarcador(f.corretora) || 'sem corretora', 30)}
+                    </small>
                   </div>
                 </div>
                 <div className="an-gl-fase">
                   <span className="an-chip fase" style={{ ['--cor' as string]: corDaFase(fase) }}>{nomeDaFase(fase)}</span>
-                  {f.situacao === 'em_andamento' && <span className="an-chip" style={{ background: '#f0eafa', color: '#6030a0' }}>{f.etapa_texto || 'rodando'}</span>}
+                  {f.situacao === 'em_andamento' && <span className="an-chip" style={{ background: '#fdf6e3', color: '#8a6410' }}>{f.etapa_texto || 'rodando'}</span>}
                 </div>
                 <div className="an-med">
                   <span className={`an-med-txt${feitos === total && total ? ' ok' : ''}`} style={{ marginTop: 0, marginBottom: 4, fontSize: 12.5 }}>
@@ -319,7 +437,13 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
             )
           })}
         </div>
-        <div className="an-pe">{fichas.length} de {fila.length} na esteira</div>
+        {/* O numero conta EMPRESAS e diz quantas pastas sao, porque os dois
+            numeros diferem desde que o card passou a agrupar. */}
+        <div className="an-pe">
+          {grupos.length} empresa{grupos.length === 1 ? '' : 's'}
+          {fichas.length !== grupos.length ? ` em ${fichas.length} pastas` : ''}
+          {fichas.length !== fila.length ? ` (de ${fila.length} na esteira)` : ''}
+        </div>
       </>
     )
   }
@@ -371,6 +495,20 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
       ? `${novidades} novidade${novidades === 1 ? '' : 's'} na Entrada · ${quandoVarr}`
       : `${quandoVarr} · nada novo${estado?.varredura?.pastas ? ` em ${estado.varredura.pastas} pasta${estado.varredura.pastas === 1 ? '' : 's'}` : ''}`
 
+  /* O RELÓGIO E O ARCO. `segundosDesde` é o instante em que o banco foi
+     escrito; o tique de um segundo soma o que passou desde então, para o
+     número andar sem depender de o notebook reescrever a linha. */
+  const META_SEG = 300
+  const fmtSeg = (t: number) => {
+    const n = Math.max(0, Math.floor(t))
+    return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`
+  }
+  const custoDe = (etapas: { etapa: string; segundos: number }[] | undefined) =>
+    (etapas ?? []).map(t => {
+      const mm = Math.floor(t.segundos / 60), ss = t.segundos % 60
+      return `${t.etapa} ${mm ? `${mm}m` : ''}${mm && ss < 10 ? '0' : ''}${ss}s`
+    }).join(' · ')
+
   return (
     <div>
       {/* ── 1. a faixa de comando ── */}
@@ -383,7 +521,9 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
         <div className="an-kpi">
           <div className="r">Esperando sua ordem</div>
           <div className={`v ${esperando ? 'atencao' : 'bom'}`}>{esperando}</div>
-          <div className="n">{esperando ? 'pastas conferidas ou a conferir' : 'nada parado na sua mesa'}</div>
+          <div className="n" title="A mesma conta do quadro abaixo: uma empresa, um cartão">
+            {esperando ? (esperandoOnde || 'empresas na sua mesa') : 'nada parado na sua mesa'}
+          </div>
         </div>
         <div className="an-kpi">
           <div className="r">Chegou de novo</div>
@@ -402,26 +542,111 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
         </div>
       </div>
 
-      {/* ── 2. a execução ao vivo ── */}
-      {(execucoes.length > 0 || rodando.length > 0) && (
-        <div className="an-exec">
-          {(execucoes.length ? execucoes : rodando.map(f => ({
+      {/* ── 2. A EXECUÇÃO AO VIVO, no painel de missão ──────────────────────
+          Porte do `blocoExecucao()` do cockpit, na ordem em que ele o vê:
+          título com a contagem e as vagas, o anel contra a meta de 5:00, o
+          marco da etapa, o nome, a última notícia, os três quadrinhos, o
+          trilho, o custo por etapa, os recados de retomada e de travamento, e
+          o botão de parar com a frase que o acompanha. Nada foi tirado; o que
+          mudou foi só a pele, que agora é a de papel do CRM.
+
+          Enquanto o notebook não subir os campos novos (`paradoHa`,
+          `etapas_seg`), o painel desenha sem eles em vez de sumir: a peça mais
+          importante da tela não pode depender de uma sincronização a mais. */}
+      {(execucoes.length > 0 || rodando.length > 0) && (() => {
+        const lista: Execucao[] =
+          execucoes.length ? execucoes : rodando.map(f => ({
             pasta: f.pasta, razao: nomeDaFicha(f), etapa: f.etapa ?? 'fila', etapaTxt: f.etapa_texto ?? '',
             idxAtual: Math.max(0, ETAPAS.findIndex(([id]) => id === f.etapa)), mensagem: '', segundosDesde: 0, travado: false,
-          }))).map(x => (
-            <div key={x.pasta} style={{ marginBottom: 8 }}>
-              <div className="an-exec-l">
-                <span className="an-pulso" />
-                <b>{x.razao}</b>
-                <span className="et">{x.etapaTxt || x.etapa}</span>
-                <span style={{ color: '#6080a0' }}>etapa {x.idxAtual + 1} de {ETAPAS.length - 1}{x.segundosDesde ? ` · ${Math.floor(x.segundosDesde / 60)} min` : ''}</span>
-                {x.mensagem && <span style={{ color: '#6080a0', flex: '1 1 200px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.mensagem}</span>}
-              </div>
-              <div className="an-barra"><i className={x.travado ? 'ruim' : ''} style={{ width: `${Math.round(((x.idxAtual + 1) / ETAPAS.length) * 100)}%` }} /></div>
+          }))
+        const passos = Math.max(1, ETAPAS.length - 1)
+        return (
+          <>
+            <h2 className="an-tit">
+              Analisando agora <span className="q">{lista.length}</span>
+              {vagas ? <span className="dica">{vagas} vaga{vagas === 1 ? '' : 's'} livre{vagas === 1 ? '' : 's'}</span> : null}
+            </h2>
+            <div className="an-rodando">
+              {lista.map(x => {
+                // O relógio anda aqui, e não no banco: `segundosDesde` é o que
+                // o notebook contou na última escrita, e o tique soma o resto.
+                const base = x.segundosDesde ?? 0
+                const seg = base > 0 ? base + Math.max(0, Math.floor((tique - agora) / 1000)) : 0
+                const arco = Math.min(360, Math.round((seg / META_SEG) * 360))
+                const custo = custoDe(x.etapas_seg)
+                const alvo = fichaDaPasta(x.pasta)
+                return (
+                  <div key={x.pasta} className={`an-missao${x.travado ? ' travado' : ''}`}>
+                    <div className="m2">
+                      <div className="anel" style={{ ['--arco' as string]: `${arco}deg` }} role="img"
+                        aria-label={`relógio da análise: ${fmtSeg(seg)} de uma meta de 5:00`}>
+                        <div className="miolo">
+                          <div className="tmais">T+<span>{fmtSeg(seg)}</span></div>
+                          <div className="de">meta 5:00</div>
+                        </div>
+                      </div>
+                      <div className="m2-tx">
+                        <span className="marco">{String(x.etapaTxt || x.etapa || '').toUpperCase()}</span>
+                        <h3>{x.razao}</h3>
+                        <div className="msg">{x.mensagem}</div>
+
+                        <div className="telemetria">
+                          <div className="tele">
+                            <span className="r">Etapa</span>
+                            <b>{(x.idxAtual || 0) + 1}<span className="u">/{passos}</span></b>
+                            <div className="u">{x.etapaTxt || ''}</div>
+                          </div>
+                          <div className="tele">
+                            <span className="r">Última notícia</span>
+                            <b>{x.paradoHa && x.paradoHa > 0 ? <>há {x.paradoHa}<span className="u"> min</span></> : 'agora'}</b>
+                            <div className="u">{corta(x.mensagem || '', 42)}</div>
+                          </div>
+                          <div className="tele">
+                            <span className="r">Vagas</span>
+                            <b>{vagas}</b>
+                            <div className="u">livres na esteira</div>
+                          </div>
+                        </div>
+
+                        <div className="trilho">
+                          {Array.from({ length: passos }, (_, i) => (
+                            <i key={i} className={i < (x.idxAtual || 0) ? 'feito' : i === (x.idxAtual || 0) ? 'agora' : ''} />
+                          ))}
+                        </div>
+                        {custo && <div className="custo">{custo}</div>}
+                      </div>
+                    </div>
+
+                    {!!x.retomadas && (
+                      <div className="recado">A execução caiu no meio e o vigia do servidor retomou sozinho, de onde parou.</div>
+                    )}
+                    {x.travado && (
+                      <div className="recado para">
+                        <b>Parada há {x.paradoHa ?? 0} minutos na mesma etapa.</b> Cada etapa costuma mudar de nome em
+                        poucos minutos. Se este número continuar subindo, a execução travou.
+                      </div>
+                    )}
+
+                    {!somenteLeitura && alvo && (
+                      <div className="pe">
+                        <button type="button" className="an-bt forcar" disabled={parando === x.pasta}
+                          onClick={() => parar(x.pasta, x.razao)}>
+                          {parando === x.pasta ? 'Parando…' : 'Parar esta análise'}
+                        </button>
+                        <span className="obs">Interrompe agora. Nada do que já foi salvo se perde.</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
-          ))}
-        </div>
-      )}
+            <div className="an-obs-rodando">
+              Enquanto roda: deixe o notebook ligado, com internet e com a tampa aberta. Se a máquina dormir ou a rede
+              cair, o vigia retoma sozinho de onde parou.
+            </div>
+          </>
+        )
+      })()}
 
       {/* ── 3. a barra da mesa ── */}
       <div className="an-mesabar">

@@ -62,6 +62,9 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url))
+/** A raiz do repositório do CRM (este arquivo mora em `scripts/`). É de onde a
+ *  carga é chamada quando alguém manda publicar uma análise pelo card. */
+const RAIZ_CRM = path.resolve(AQUI, '..')
 
 function doEnvLocal(chave) {
   try {
@@ -336,6 +339,12 @@ async function retratoDoDisco() {
       execucoes: (ex.execucoes || []).map((x) => ({
         pasta: x.pasta, razao: x.razao, etapa: x.etapa, etapaTxt: x.etapaTxt, idxAtual: x.idxAtual,
         mensagem: x.mensagem || '', segundosDesde: x.segundosDesde ?? 0, travado: !!x.travado,
+        // O painel de missão da Mesa desenha estes três; o cockpit já os lia
+        // do mesmo lugar. Levar campo a mais não custa nada e evita que a tela
+        // do CRM seja para sempre mais pobre que a da máquina.
+        paradoHa: x.paradoHa ?? 0,
+        etapas_seg: (x.etapas_seg || []).map((t) => ({ etapa: t.etapa, segundos: t.segundos })),
+        retomadas: x.retomadas ?? 0,
       })),
     },
     varredura: V.varredura ? {
@@ -356,6 +365,53 @@ async function sincronizar() {
   if (!r.ok) return console.error('  CRM recusou a sincronização:', r.erro)
   console.log(`  Esteira: ${pastas.length} pastas, ${r.criadas} novas, ${r.atualizadas} atualizadas.`)
   if (r.recusadas?.length) console.log('    Recusadas:', r.recusadas.join(' · '))
+  if (r.publicar_pendentes?.length) await publicarPendentes(r.publicar_pendentes)
+}
+
+/* PUBLICAR SOZINHO O QUE JÁ FOI ANALISADO  ·  09/09/2026
+   ---------------------------------------------------------------------------
+   Antes disto, uma análise terminava e ficava invisível no CRM até alguém
+   lembrar de rodar `npm run publicar`. Foi o que aconteceu com a Rialma: o
+   card abriu sem Relatório, e o único caminho para ler e corrigir era abrir o
+   sistema antigo. Um passo manual entre terminar a análise e poder trabalhar
+   nela não é uma regra, é um tropeço.
+
+   O CRM diz quais chaves estão analisadas e não publicadas; aqui elas são
+   publicadas, uma a uma, com o mesmo `carga-analises.mjs --so <chave>
+   --gravar` de sempre. Não sobrescreve edição feita no CRM: a carga respeita
+   `editado_no_crm` e manda a divergência para `analise_conflitos`.
+
+   Duas travas para isto não virar um moinho: uma chave que falha entra na
+   lista negra da rodada (não se tenta de novo em looping), e nunca há duas
+   cargas ao mesmo tempo. */
+const naoPublicar = new Set()
+let publicando = false
+
+async function publicarPendentes(chaves) {
+  const fila = chaves.filter((k) => !naoPublicar.has(k))
+  if (!fila.length || publicando) return
+  const carga = path.join(RAIZ_CRM, 'scripts', 'carga-analises.mjs')
+  if (!fs.existsSync(carga)) return
+  publicando = true
+  try {
+    for (const chave of fila) {
+      const cod = await new Promise((resolve) => {
+        const proc = spawn(process.execPath, [carga, '--so', chave, '--gravar'], {
+          cwd: RAIZ_CRM, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'],
+        })
+        let erro = ''
+        proc.stderr.on('data', (b) => { erro += b.toString() })
+        proc.on('close', (c2) => {
+          if (c2 === 0) console.log(`  Publicada sozinha no CRM: ${chave}`)
+          else console.error(`  Nao consegui publicar ${chave}: ${erro.trim().split(/\r?\n/).slice(-1)[0] || 'codigo ' + c2}`)
+          resolve(c2)
+        })
+      })
+      if (cod !== 0) naoPublicar.add(chave)
+    }
+  } finally {
+    publicando = false
+  }
 }
 
 /* O MURAL E AS ALÇADAS sobem com a esteira: são o que a aba Recados e a tela
@@ -506,6 +562,39 @@ async function executarOrdens(ordens) {
         await feito('O bibliotecário começou a ler a pasta. Leva alguns minutos; a aba Arquivos avisa quando terminar.')
         // Vai solto: leva minutos, e a rodada não pode ficar presa nele.
         B.lerAPasta(o.pasta, o.chave || '').then(() => sincronizar()).catch((e) => console.error('  bibliotecario:', e.message))
+        continue
+      }
+
+      /* PUBLICAR: roda a carga SÓ para esta análise (`--so <chave>`), que é o
+         mesmo `npm run publicar` de sempre, com um filtro. A chave é o id da
+         análise no acervo (`analise_chave`), e sem ela não há o que publicar:
+         a pasta terminou sem gravar o resultado no disco.
+
+         Vai solto e a rodada não espera: a carga leva dezenas de segundos, e
+         segurar o agente aqui atrasaria tudo o mais. Quem avisa o fim é o
+         `ultima_ordem_resultado`, como em toda ordem. */
+      if (o.ordem === 'publicar') {
+        const chave = String(o.analise_chave || dados.chave || '').trim()
+        if (!chave) { await falhou('esta pasta não tem análise no acervo para publicar'); continue }
+        const carga = path.join(RAIZ_CRM, 'scripts', 'carga-analises.mjs')
+        if (!fs.existsSync(carga)) { await falhou('não achei o scripts/carga-analises.mjs nesta máquina'); continue }
+        await feito('Publicando no banco do CRM. Leva alguns segundos.')
+        const proc = spawn(process.execPath, [carga, '--so', chave, '--gravar'], {
+          cwd: RAIZ_CRM, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        let saida = ''
+        proc.stdout.on('data', (b) => { saida += b.toString() })
+        proc.stderr.on('data', (b) => { saida += b.toString() })
+        proc.on('close', async (cod) => {
+          const cauda = saida.trim().split(/\r?\n/).slice(-3).join(' · ').slice(0, 400)
+          if (cod === 0) console.log(`  Publicada: ${chave}`)
+          else console.error(`  Carga falhou (${cod}): ${cauda}`)
+          await crm('/api/esteira', {
+            acao: cod === 0 ? 'ordem-aceita' : 'ordem-falhou', id: o.id,
+            [cod === 0 ? 'resultado' : 'erro']: cod === 0 ? 'Publicada no banco do CRM.' : `a carga não gravou: ${cauda}`,
+          }).catch(() => { })
+          await sincronizar().catch(() => { })
+        })
         continue
       }
 

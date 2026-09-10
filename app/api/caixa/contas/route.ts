@@ -125,12 +125,28 @@ export async function POST(req: NextRequest) {
     const { data: alvo } = await supabase
       .from('email_contas').select('dono_auth_id, conta').eq('id', id).maybeSingle()
     if (!alvo) return NextResponse.json({ erro: 'Caixa não encontrada.' }, { status: 404 })
-    if (alvo.dono_auth_id !== user.id) {
+
+    /* CAIXA DE SETOR NÃO TEM DONO, e é de propósito (09/09/2026).
+       `comercial@famseguradora.com.br` não é de ninguém: é da área. A regra
+       acima a deixaria desligada para sempre, pedindo um dono que não existe —
+       e inventar um dono seria pior, porque daria a UMA pessoa a decisão sobre
+       um e-mail que é do time.
+
+       Então: caixa SEM dono é ligada pelo proprietário do CRM. Caixa COM dono
+       continua exatamente como estava, e nem o proprietário liga por ele. */
+    const semDono = !alvo.dono_auth_id
+    let podeLigar = alvo.dono_auth_id === user.id
+    if (semDono) {
+      const { data: eu } = await supabase
+        .from('usuarios').select('proprietario').eq('auth_id', user.id).maybeSingle()
+      podeLigar = !!eu?.proprietario
+    }
+    if (!podeLigar) {
       return NextResponse.json(
         {
-          erro: alvo.dono_auth_id
-            ? `Só ${alvo.conta} liga a própria caixa. Você pode atribuir o dono, não ligar por ele.`
-            : 'Esta caixa não tem dono. Defina o dono primeiro, e é ele quem liga.',
+          erro: semDono
+            ? `${alvo.conta} é uma caixa de setor: quem liga é o proprietário do CRM.`
+            : `Só ${alvo.conta} liga a própria caixa. Você pode atribuir o dono, não ligar por ele.`,
         },
         { status: 403 },
       )

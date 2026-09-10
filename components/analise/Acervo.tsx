@@ -31,9 +31,14 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fmtMoeda, fmtData, maskCNPJ, semEntidadesHtml } from '@/lib/utils'
 import { fmtScore } from '@/components/analise/Relatorio'
+import { semMarcador } from '@/lib/analise/ficha'
+import { PortaDoRelatorio, SemSistemaLocal } from '@/components/analise/PortaDoRelatorio'
 
 interface LinhaAcervo {
   id: string
+  /** CNPJ + data. É como o Sistema de Análise conhece esta análise, e o que
+   *  abre o relatório de verdade em 127.0.0.1:7311. */
+  chave_local: string | null
   cnpj: string | null
   razao_social: string
   nome_curto: string | null
@@ -57,7 +62,7 @@ interface LinhaAcervo {
 }
 
 const COLUNAS = `
-  id, cnpj, razao_social, nome_curto, corretora, grupo, data_analise, versao,
+  id, chave_local, cnpj, razao_social, nome_curto, corretora, grupo, data_analise, versao,
   vigente, revisada, score_final, classe, porte, rating_cod, rating_txt,
   nivel_risco, recomendacao, limite_recomendado_num, limite_recomendado_motivo,
   tomador_id, serasa_score
@@ -144,6 +149,7 @@ export default function Acervo() {
 
   useEffect(() => {
     const vivo = { atual: true }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     carregar(vivo)
     return () => { vivo.atual = false }
   }, [carregar])
@@ -180,7 +186,7 @@ export default function Acervo() {
     if (soSemTomador) r = r.filter(l => !l.tomador_id)
     if (q) {
       r = r.filter(l => {
-        const texto = chave(semEntidadesHtml([l.razao_social, l.nome_curto, l.corretora, l.grupo].filter(Boolean).join(' ')))
+        const texto = chave(semEntidadesHtml([l.razao_social, l.nome_curto, semMarcador(l.corretora), semMarcador(l.grupo)].filter(Boolean).join(' ')))
         const achouTexto = texto.includes(q)
         // CNPJ casa por dígito, para funcionar com ou sem máscara digitada.
         const achouCnpj = soDigitos.length >= 3 && !!l.cnpj?.includes(soDigitos)
@@ -206,7 +212,7 @@ export default function Acervo() {
       { rot: 'Empresas', num: vistas.length, pe: 'uma linha por análise', cor: '#0a1628' },
       { rot: 'Aprovadas', num: conta('Aprovar'), pe: 'sem ressalva', cor: '#1a7a50' },
       { rot: 'Reprovadas', num: conta('Reprovar'), pe: 'crédito negado', cor: '#a02020' },
-      { rot: 'Bloqueios', num: conta('Bloqueio'), pe: 'parada por documento ou risco', cor: '#a05010' },
+      { rot: 'Bloqueios', num: conta('Bloqueio'), pe: 'parada por documento ou risco', cor: '#a07b1e' },
       {
         rot: 'Revisadas por você', num: vistas.filter(l => l.revisada).length,
         pe: vistas.length ? `${Math.round((vistas.filter(l => l.revisada).length / vistas.length) * 100)}% do que está na lista` : '—',
@@ -234,7 +240,9 @@ export default function Acervo() {
       }}>
         {kpis.map(k => (
           <div key={k.rot} className="card-panel" style={{ padding: '13px 16px' }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--soft)', textTransform: 'uppercase', letterSpacing: '.6px' }}>
+            {/* Sem caixa alta espaçada: era o rótulo que abria a tela com
+                EMPRESAS · APROVADAS · REPROVADAS e dava a cara de máquina. */}
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--soft)' }}>
               {k.rot}
             </div>
             <div style={{ fontSize: 24, fontWeight: 700, marginTop: 4, color: k.cor, fontVariantNumeric: 'tabular-nums' }}>
@@ -280,7 +288,7 @@ export default function Acervo() {
             }}>
             {a.rot}
             <span style={{
-              background: foco === a.id ? '#e8f0fa' : '#eef3f9', color: '#1a3560',
+              background: foco === a.id ? '#e8f0fa' : '#eef3f9', color: '#26374a',
               borderRadius: 10, padding: '1px 8px', fontSize: 11.5,
             }}>{a.n}</span>
           </button>
@@ -311,15 +319,15 @@ export default function Acervo() {
               border: '1px solid var(--border)', borderRadius: 8, background: '#fff',
             }}
           />
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#22344d' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#26374a' }}>
             <input type="checkbox" checked={soVigentes} onChange={e => setSoVigentes(e.target.checked)} />
             Só as vigentes
           </label>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#22344d' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#26374a' }}>
             <input type="checkbox" checked={soRevisadas} onChange={e => setSoRevisadas(e.target.checked)} />
             Só as revisadas
           </label>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#22344d' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#26374a' }}>
             Ordenar por
             <select value={ordem} onChange={e => setOrdem(e.target.value as Ordem)}
               style={{ padding: '6px 9px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 7, background: '#fff' }}>
@@ -360,6 +368,11 @@ export default function Acervo() {
                       minha leitura da coluna "Espera" da tela dele; se o
                       significado lá for outro, é uma linha para mudar. */}
                   <th style={{ textAlign: 'center' }}>Espera</th>
+                  {/* A PORTA PARA O RELATÓRIO. Análise de dias anteriores não
+                      aparece na Mesa, então o Acervo é por onde ele chega nela
+                      — e daqui tem que dar para ir direto editar, sem abrir o
+                      sistema antigo na mão. Ordem dele em 09/09/2026. */}
+                  <th style={{ textAlign: 'right' }}>Editar</th>
                 </tr>
               </thead>
               <tbody>
@@ -367,13 +380,18 @@ export default function Acervo() {
                   const lim = limiteConfiavel(l)
                   const score = num(l.score_final)
                   return (
-                    /* ABRIR PELO TOMADOR quando ele existe: o resultado da
-                       análise já mora na gaveta do card, e é lá que estão os
-                       outros dados da empresa. O relatório avulso fica para a
-                       análise que nenhum tomador do CRM alcança. */
+                    /* CLICAR NA LINHA ABRE O CARD DE SETE ABAS (09/09/2026).
+                       Ordem dele: "acessando tanto pela opção Mesa quanto pela
+                       opção do Acervo, as duas devem abrir nessa tela, onde tem
+                       visão geral, arquivos, análise, Relatório e mais".
+
+                       Duas portas para a mesma empresa, cada uma com uma cara,
+                       obrigava ele a lembrar por onde tinha entrado. O card
+                       aceita o id da análise desde hoje, então é o mesmo
+                       endereço da Mesa. */
                     <tr key={l.id} style={{ cursor: 'pointer' }}
-                      onClick={() => router.push(l.tomador_id ? `/tomadores/${l.tomador_id}` : `/analises/${l.id}`)}
-                      title={l.tomador_id ? 'Abrir o card do tomador' : 'Abrir o relatório (esta análise não tem tomador no CRM)'}>
+                      onClick={() => router.push(`/analises/mesa/${l.id}`)}
+                      title="Abrir o card desta empresa: visão geral, arquivos, análise e relatório">
                       <td>
                         <div style={{ fontWeight: 700, color: '#0a1628' }}>
                           {semEntidadesHtml(l.razao_social)}
@@ -389,7 +407,7 @@ export default function Acervo() {
                           {l.grupo && ` · ${semEntidadesHtml(l.grupo)}`}
                         </div>
                       </td>
-                      <td style={{ whiteSpace: 'normal', maxWidth: 190 }}>{l.corretora ?? '—'}</td>
+                      <td style={{ whiteSpace: 'normal', maxWidth: 190 }}>{semMarcador(l.corretora) ?? '—'}</td>
                       <td className="dim">{fmtData(l.data_analise)}</td>
                       <td className="n">{fmtScore(score)}</td>
                       <td>{l.rating_cod ?? l.rating_txt ?? '—'}</td>
@@ -408,7 +426,13 @@ export default function Acervo() {
                       </td>
                       <td>
                         {l.tomador_id
-                          ? <span className="badge badge-green" style={{ fontSize: 10 }}>ligada</span>
+                          /* O CARD DO TOMADOR continua a um clique daqui: a
+                             linha inteira passou a abrir a análise, então este
+                             é o caminho para quem quer a empresa e não o
+                             relatório. Para o clique não abrir as duas coisas. */
+                          ? <button type="button" className="badge badge-green" style={{ fontSize: 10, border: 'none', cursor: 'pointer', font: 'inherit' }}
+                              title="Abrir o card deste tomador no CRM"
+                              onClick={e => { e.stopPropagation(); router.push(`/tomadores/${l.tomador_id}`) }}>ligada</button>
                           : <span className="badge badge-orange" style={{ fontSize: 10 }}>sem tomador</span>}
                       </td>
                       <td style={{ textAlign: 'center' }}
@@ -417,6 +441,9 @@ export default function Acervo() {
                           display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
                           background: l.revisada ? '#27a96c' : diasDe(l.data_analise) > 30 ? '#d64545' : '#e8b84b',
                         }} />
+                      </td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <PortaDoRelatorio chave={l.chave_local} compacto />
                       </td>
                     </tr>
                   )
@@ -432,9 +459,9 @@ export default function Acervo() {
                 return (
                   <tbody key={sit}>
                     <tr>
-                      <td colSpan={9} style={{
+                      <td colSpan={10} style={{
                         background: '#eef3f9', fontWeight: 700, fontSize: 12,
-                        color: '#1a3560', textTransform: 'uppercase', letterSpacing: '.6px',
+                        color: '#26374a', textTransform: 'uppercase', letterSpacing: '.6px',
                       }}>
                         {sit} · {doGrupo.length}
                       </td>
@@ -444,15 +471,15 @@ export default function Acervo() {
                       const score = num(l.score_final)
                       return (
                         <tr key={l.id} style={{ cursor: 'pointer' }}
-                          onClick={() => router.push(l.tomador_id ? `/tomadores/${l.tomador_id}` : `/analises/${l.id}`)}
-                          title={l.tomador_id ? 'Abrir o card do tomador' : 'Abrir o relatório (esta análise não tem tomador no CRM)'}>
+                          onClick={() => router.push(`/analises/mesa/${l.id}`)}
+                          title="Abrir o card desta empresa: visão geral, arquivos, análise e relatório">
                           <td>
                             <div style={{ fontWeight: 700, color: '#0a1628' }}>{semEntidadesHtml(l.razao_social)}</div>
                             <div style={{ fontSize: 11.5, color: 'var(--soft)', fontVariantNumeric: 'tabular-nums' }}>
                               {l.cnpj ? maskCNPJ(l.cnpj) : 'sem CNPJ'}
                             </div>
                           </td>
-                          <td style={{ whiteSpace: 'normal', maxWidth: 190 }}>{l.corretora ?? '—'}</td>
+                          <td style={{ whiteSpace: 'normal', maxWidth: 190 }}>{semMarcador(l.corretora) ?? '—'}</td>
                           <td className="dim">{fmtData(l.data_analise)}</td>
                           <td className="n">{fmtScore(score)}</td>
                           <td>{l.rating_cod ?? l.rating_txt ?? '—'}</td>
@@ -466,7 +493,13 @@ export default function Acervo() {
                           </td>
                           <td>
                             {l.tomador_id
-                              ? <span className="badge badge-green" style={{ fontSize: 10 }}>ligada</span>
+                              /* O CARD DO TOMADOR continua a um clique daqui: a
+                             linha inteira passou a abrir a análise, então este
+                             é o caminho para quem quer a empresa e não o
+                             relatório. Para o clique não abrir as duas coisas. */
+                          ? <button type="button" className="badge badge-green" style={{ fontSize: 10, border: 'none', cursor: 'pointer', font: 'inherit' }}
+                              title="Abrir o card deste tomador no CRM"
+                              onClick={e => { e.stopPropagation(); router.push(`/tomadores/${l.tomador_id}`) }}>ligada</button>
                               : <span className="badge badge-orange" style={{ fontSize: 10 }}>sem tomador</span>}
                           </td>
                           <td style={{ textAlign: 'center' }}
@@ -475,6 +508,9 @@ export default function Acervo() {
                               display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
                               background: l.revisada ? '#27a96c' : diasDe(l.data_analise) > 30 ? '#d64545' : '#e8b84b',
                             }} />
+                          </td>
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <PortaDoRelatorio chave={l.chave_local} compacto />
                           </td>
                         </tr>
                       )
@@ -488,6 +524,7 @@ export default function Acervo() {
       )}
 
       <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 12, lineHeight: 1.5, maxWidth: '92ch' }}>
+        <SemSistemaLocal chave={vistas[0]?.chave_local ?? null} />{' '}
         Mostrando {vistas.length} de {contagem.total}. O acervo é o que a carga publicou no banco
         (<b>npm run publicar</b>) — <b>nada roda essa carga por horário</b>, então uma análise
         editada hoje aparece aqui depois que alguém publicar.

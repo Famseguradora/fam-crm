@@ -239,6 +239,34 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
      fazia o contrário: um pedido de texto feito com o Carteiro desligado
      deixava `em voo` ligado para sempre, e a tela recarregava de 6 em 6
      segundos pelo resto do dia esperando uma máquina que não ia responder. */
+  /* POR QUE A LISTA ESTÁ VAZIA  ·  09/09/2026
+     A frase antiga ("o que a régua recusou na caixa de um colega só ele
+     enxerga") era de quando TODO e-mail marcado como serve era legível por
+     qualquer usuário do CRM. Desde que o acesso passou a ser por caixa, ela
+     virou uma explicação errada — e foi o que ele leu ao abrir a caixa do
+     Comercial, que estava vazia por um motivo completamente diferente:
+     ninguém a está lendo ainda.
+
+     Vazio tem quatro motivos, e a tela deve dizer QUAL: nenhuma caixa
+     autorizada, caixa desligada, caixa ligada que nenhuma máquina leu ainda,
+     ou lida mesmo e sem nada que a régua aceitasse. */
+  const vazioTudo = () => {
+    if (!contas.length) {
+      return 'Você não tem acesso a nenhuma caixa. Quem libera é o dono da caixa, na tela de Usuários.'
+    }
+    const desligadas = contas.filter((c) => !c.ligado)
+    if (!contas.some((c) => c.ligado)) {
+      return desligadas.length === 1
+        ? `A caixa ${nomeDaCaixa(desligadas[0])} está desligada: ninguém a está lendo. Ligue em ⚙ Caixas.`
+        : 'Nenhuma das suas caixas está ligada. Enquanto estiverem desligadas, ninguém as lê. Ligue em ⚙ Caixas.'
+    }
+    const nuncaLidas = contas.filter((c) => c.ligado && !c.ultima_varredura)
+    if (nuncaLidas.length) {
+      return `${nomeDaCaixa(nuncaLidas[0])} está ligada, mas nenhuma máquina a leu ainda: o Carteiro precisa estar rodando no computador que tem essa caixa aberta no Outlook.`
+    }
+    return 'A caixa foi lida e não havia nada que a régua aceitasse. A régua está em ⚙ Caixas.'
+  }
+
   const ligadas = contas.filter((c) => c.ligado)
   const dePe = ligadas.filter((c) => !estaParado(c.ultimo_contato))
   const minhas = contas.filter((c) => c.sou_dono)
@@ -406,7 +434,7 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
               {aba === 'serve'
                 ? 'Nenhum e-mail marcado como pedido de análise. Todos continuam em "Todos os e-mails".'
                 : aba === 'tudo'
-                  ? 'Nada aqui ainda. Lembrando: o que a régua recusou na caixa de um colega só ele enxerga.'
+                  ? vazioTudo()
                   : 'Nenhum e-mail trazido ainda.'}
             </p>
           ) : (

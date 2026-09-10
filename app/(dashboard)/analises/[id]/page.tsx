@@ -17,6 +17,7 @@ export const dynamic = 'force-dynamic'
 import { use } from 'react'
 import { useRouter } from 'next/navigation'
 import RelatorioCompleto from '@/components/analise/RelatorioCompleto'
+import EstiloAnalises from '@/components/analise/Estilo'
 import { IcoVoltar } from '@/components/tomador/icones'
 
 export default function RelatorioDaAnalisePage({ params }: { params: Promise<{ id: string }> }) {
@@ -25,7 +26,11 @@ export default function RelatorioDaAnalisePage({ params }: { params: Promise<{ i
   const router = useRouter()
 
   return (
-    <div style={{ padding: '14px 0 26px' }}>
+    /* A pele da Análise vale aqui também: esta é a tela onde ele LÊ e EDITA a
+       análise, e ela estava fora da remodelagem — abria com os rótulos em caixa
+       alta espaçada que ele mandou tirar. */
+    <div className="an-area" style={{ padding: '14px 0 26px' }}>
+      <EstiloAnalises />
       <button type="button" className="mt-voltar" onClick={() => router.push('/analises?aba=acervo')}>
         <IcoVoltar /> Acervo de análises
       </button>

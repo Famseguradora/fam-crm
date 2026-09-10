@@ -22,7 +22,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { recadoLido, recadoArquivado, type Recado } from '@/lib/analise/mesa'
+import { recadoLido, recadoArquivado, agruparPorEmpresa, type Recado, type FilaRica } from '@/lib/analise/mesa'
 
 export type AbaAnalises = 'mesa' | 'recados' | 'gestao' | 'acervo' | 'sala' | 'equipe' | 'alcadas' | 'sistema'
 
@@ -45,7 +45,10 @@ export function useContagensBarra(): ContagensBarra {
     const supabase = createClient()
     const ler = async () => {
       const [fila, recados, acervo, pedidos, estado] = await Promise.all([
-        supabase.from('analise_fila').select('id, criado_em', { count: 'exact' }),
+        /* AS COLUNAS DO AGRUPAMENTO vêm junto (09/09/2026). A barra dizia
+           "8 na esteira" com quatro cartões no quadro: contava PASTAS, e a
+           mesa desenha EMPRESAS. Uma empresa, um número, em toda a tela. */
+        supabase.from('analise_fila').select('id, criado_em, cnpj, tomador_id, nome, razao_social, pasta').limit(300),
         supabase.from('analise_recados').select('id, lido_em, arquivado_em, lido_no_crm_em, arquivado_no_crm_em').limit(400),
         supabase.from('analises').select('id', { count: 'exact', head: true }).eq('vigente', true),
         supabase.from('agente_pedidos').select('id', { count: 'exact', head: true }).eq('status', 'aberto').is('decisao_crm', null),
@@ -54,10 +57,16 @@ export function useContagensBarra(): ContagensBarra {
       if (!vivo) return
       const rs = (recados.data ?? []) as Recado[]
       const desde = Date.now() - 24 * 3600 * 1000
-      const novidades = (fila.data ?? []).filter(f => new Date(f.criado_em).getTime() > desde).length
+      const linhas = (fila.data ?? []) as unknown as FilaRica[]
+      /* A MESMA conta da Mesa, e pela mesma função: `agruparPorEmpresa`. A fase
+         não importa aqui (só se conta quantos grupos existem), então vai uma
+         constante — o que não pode é esta contagem ter regra própria. */
+      const empresas = agruparPorEmpresa(linhas, () => 'entrada')
+      const novas = linhas.filter(f => new Date(f.criado_em).getTime() > desde)
+      const novidades = agruparPorEmpresa(novas, () => 'entrada').length
       const ultimo = estado.data?.atualizado_em ? new Date(estado.data.atualizado_em).getTime() : 0
       setC({
-        esteira: fila.count ?? fila.data?.length ?? 0,
+        esteira: empresas.length,
         novidades,
         naoLidos: rs.filter(r => !recadoLido(r) && !recadoArquivado(r)).length,
         acervo: acervo.count ?? 0,

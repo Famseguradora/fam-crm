@@ -131,3 +131,11 @@ crm-servidor.log
 /PROMPT-*.md
 scripts/ensaio-*.mjs
 scripts/teste-*.cjs
+
+# A SAIDA dos ensaios, e nao so o codigo deles (09/09/2026). Os scripts ja
+# estavam travados acima; a pasta de prints nao estava, e ela e pior: sao
+# fotos de tela cheia com razao social, CNPJ e numero de credito de tomador
+# de verdade (Rialma, Renova, e o acervo inteiro no Acervo). Print nao passa
+# por revisao de codigo, e num repositorio publico basta um `git add` para o
+# dado sair de casa. Regerada a cada `node scripts/ensaio-*.mjs`.
+/ensaios/

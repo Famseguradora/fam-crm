@@ -88,13 +88,23 @@ export default function AnaliseCreditoPage() {
   const [tit, sub] = TITULO[aba]
 
   return (
-    <div style={{ padding: 'clamp(12px, 2vw, 20px) clamp(10px, 2.5vw, 28px) 30px' }}>
+    <div className="an-area" style={{ padding: 'clamp(12px, 2vw, 20px) clamp(10px, 2.5vw, 28px) 30px' }}>
       <EstiloAnalises />
       <BarraAnalises atual={aba} aoTrocar={trocar} contagens={contagens} />
 
-      <div style={{ margin: '14px 0 6px' }}>
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: '#0a1628', margin: 0 }}>{tit}</h1>
-        <div style={{ fontSize: 12.5, color: '#6080a0', marginTop: 2 }}>{sub}</div>
+      <div style={{
+        margin: '14px 0 6px', display: 'flex', alignItems: 'flex-start',
+        gap: 12, flexWrap: 'wrap',
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 style={{ fontSize: 18, fontWeight: 700, color: '#0a1628', margin: 0 }}>{tit}</h1>
+          <div style={{ fontSize: 12.5, color: '#6080a0', marginTop: 2 }}>{sub}</div>
+        </div>
+        {/* A IA DO ACERVO mora aqui desde 09/09/2026. Ela flutuava no canto
+            inferior direito, e passou a dividir aquele canto com o botão da IA
+            Gestor (que existe em toda tela do CRM): dois botões de IA, um em
+            cima do outro. Um canto, um botão. */}
+        <IaGestao />
       </div>
 
       {/* A Mesa fica montada e escondida: trocar de aba não pode recomeçar a
@@ -108,9 +118,6 @@ export default function AnaliseCreditoPage() {
       {aba === 'alcadas' && <Alcadas nomeUsuario={nome} />}
       {aba === 'sistema' && <SistemaLocal />}
 
-      {/* A IA que olha o acervo inteiro. Fica na tela toda, e não numa aba:
-          a pergunta dele costuma nascer olhando a lista. */}
-      <IaGestao />
     </div>
   )
 }

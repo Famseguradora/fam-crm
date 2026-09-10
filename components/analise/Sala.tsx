@@ -121,7 +121,7 @@ export default function Sala({ aoAbrirMesa }: { aoAbrirMesa?: () => void }) {
         <div className="an-grade" style={{ gridTemplateColumns: 'repeat(2, minmax(0,1fr))' }}>
           <div className="an-cartao"><h2>Entregas por mês</h2><div className="nota">Pela data da análise.</div><Colunas meses={g.porMes} /></div>
           <div className="an-cartao"><h2>Decisões do comitê</h2><div className="nota">A ressalva separada da aprovação limpa.</div><Barras itens={g.decisao} /></div>
-          <div className="an-cartao"><h2>Nível de risco</h2><div className="nota">Na vigente de cada empresa.</div><Barras itens={g.nivel} cor="#9878d0" /></div>
+          <div className="an-cartao"><h2>Nível de risco</h2><div className="nota">Na vigente de cada empresa.</div><Barras itens={g.nivel} cor="#3070c8" /></div>
           <div className="an-cartao"><h2>Setores</h2><div className="nota">Os oito com mais análises.</div><Barras itens={g.setor} cor="#3fae82" /></div>
           <div className="an-cartao"><h2>Corretoras que mais trazem caso</h2><div className="nota">{g.corretoras.quantas} ativas · as 5 maiores concentram {fmt1(g.corretoras.top5Pct)}%.</div><Barras itens={g.corretoras.top.map(c => ({ rot: c.nome, n: c.n }))} cor="#e8b84b" /></div>
         </div>

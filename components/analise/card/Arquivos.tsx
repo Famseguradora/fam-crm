@@ -79,7 +79,7 @@ export default function Arquivos({ f, quem, recarregar, aoMandar }: PropsAba & {
                 <b style={{ fontSize: 13.5, color: '#0a1628' }}>{t.titulo || 'Exercício corrente'}</b>
                 {t.em && <span style={{ fontSize: 11.5, color: '#6080a0' }}>{dataCurta(t.em)}</span>}
               </div>
-              {t.texto && <div style={{ fontSize: 13, color: '#22344d', whiteSpace: 'pre-wrap', lineHeight: 1.5, marginTop: 4 }}>{t.texto}</div>}
+              {t.texto && <div style={{ fontSize: 13, color: '#26374a', whiteSpace: 'pre-wrap', lineHeight: 1.5, marginTop: 4 }}>{t.texto}</div>}
               {t.tabela?.colunas?.length ? (
                 <div className="mt-tab-wrap"><table className="an-cp-tab">
                   <thead><tr>{t.tabela.colunas.map((c, j) => <th key={j}>{c}</th>)}</tr></thead>
@@ -116,7 +116,7 @@ export default function Arquivos({ f, quem, recarregar, aoMandar }: PropsAba & {
               const fichas = Object.entries(e).filter(([k, v]) => typeof v === 'string' && String(v).trim() && !['retrato', 'resumo'].includes(k)).slice(0, 10)
               return (
                 <>
-                  {typeof e.retrato === 'string' && <div style={{ fontSize: 13.5, lineHeight: 1.6, color: '#22344d', marginBottom: 10 }}>{e.retrato}</div>}
+                  {typeof e.retrato === 'string' && <div style={{ fontSize: 13.5, lineHeight: 1.6, color: '#26374a', marginBottom: 10 }}>{e.retrato}</div>}
                   {fichas.length > 0 && (
                     <div className="an-emp-fichas">
                       {fichas.map(([k, v]) => <div key={k}><span>{k.replace(/_/g, ' ')}</span>{String(v)}</div>)}

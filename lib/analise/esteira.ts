@@ -118,11 +118,11 @@ export const andamentoDaEtapa = (etapa: string | null) => {
    (linha antiga, anterior à Mesa) e para a régua ser uma só nos dois lados.
    ══════════════════════════════════════════════════════════════════════════ */
 export const FASES = [
-  { id: 'entrada', titulo: 'Entrada', dica: 'Chegou, ainda não passou pela análise documental', cor: '#4a90d0' },
-  { id: 'conferencia', titulo: 'Conferência', dica: 'Documentos lidos, falta documento ou uma decisão sua', cor: '#e8b84b' },
-  { id: 'liberado', titulo: 'Liberado', dica: 'Cadastro em ordem, pode analisar', cor: '#3070c8' },
-  { id: 'analisando', titulo: 'Analisando', dica: 'Rodando agora', cor: '#9878d0' },
-  { id: 'pronta', titulo: 'Pronta', dica: 'Entregue, abrir e editar', cor: '#27a96c' },
+  { id: 'entrada', titulo: 'Entrada', dica: 'Chegou, ainda não passou pela análise documental', cor: '#8a95a3' },
+  { id: 'conferencia', titulo: 'Conferência', dica: 'Documentos lidos, falta documento ou uma decisão sua', cor: '#a8760f' },
+  { id: 'liberado', titulo: 'Liberado', dica: 'Cadastro em ordem, pode analisar', cor: '#2c5aa0' },
+  { id: 'analisando', titulo: 'Analisando', dica: 'Rodando agora', cor: '#1e4080' },
+  { id: 'pronta', titulo: 'Pronta', dica: 'Entregue, abrir e editar', cor: '#2f7d55' },
 ] as const
 
 export type Fase = (typeof FASES)[number]['id']
@@ -131,7 +131,7 @@ export const nomeDaFase = (id: string | null | undefined) =>
   FASES.find(f => f.id === id)?.titulo ?? 'Entrada'
 
 export const corDaFase = (id: string | null | undefined) =>
-  FASES.find(f => f.id === id)?.cor ?? '#4a90d0'
+  FASES.find(f => f.id === id)?.cor ?? '#8a95a3'
 
 /** A régua do visao.mjs, linha por linha. `cadastro` é o status da triagem
  *  (`pendente` = nunca triado, `bloqueado`, `em_conferencia`, `aprovado`). */
@@ -159,7 +159,7 @@ export const SLA_PADRAO: Record<Fase, number> = { entrada: 1, conferencia: 3, li
    As quatro últimas entraram com o card (09/09/2026): são os botões da aba
    Análise do cockpit, um a um, e o agente as executa pelo mesmo caminho que o
    botão do cockpit executa (o /api/destravar e o /api/analisar do motor). */
-export const ORDENS = ['iniciar', 'pausar', 'retomar', 'parar', 'reconferir', 'forcar', 'ler_pasta', 'refazer'] as const
+export const ORDENS = ['iniciar', 'pausar', 'retomar', 'parar', 'reconferir', 'forcar', 'ler_pasta', 'refazer', 'publicar'] as const
 export type Ordem = (typeof ORDENS)[number]
 
 export const ORDEM: Record<Ordem, { rotulo: string; de: Situacao[]; explica: string }> = {
@@ -178,6 +178,20 @@ export const ORDEM: Record<Ordem, { rotulo: string; de: Situacao[]; explica: str
     rotulo: 'Voltar para a fila',
     de: ['pausada'],
     explica: 'Devolve para a fila. O motor pega quando chegar a vez.',
+  },
+  /* PUBLICAR (09/09/2026). A análise terminava na esteira e parava ali: o
+     resultado só chegava ao CRM quando alguém lembrasse de rodar a carga na
+     mão (`npm run publicar`). Enquanto isso o card do tomador não tinha aba
+     Relatório, porque `analises` não tinha linha nenhuma daquela empresa — foi
+     exatamente o que aconteceu com a Rialma, analisada e invisível.
+
+     Continua NÃO rodando sozinho: é um botão que uma pessoa aperta. O que
+     mudou é que agora existe o botão, dentro do CRM, em vez de o caminho ser
+     abrir o outro sistema. */
+  publicar: {
+    rotulo: 'Publicar no CRM',
+    de: ['concluida'],
+    explica: 'Leva o resultado desta análise para o banco do CRM. É a carga, rodada só para esta empresa.',
   },
   parar: {
     rotulo: 'Interromper agora',

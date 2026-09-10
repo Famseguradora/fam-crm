@@ -27,9 +27,16 @@ import {
   IcoVisao, IcoDoc, IcoEscudo, IcoRede, IcoGrafico,
 } from '@/components/tomador/icones'
 import EditorAnalise from '@/components/analise/EditorAnalise'
+import { SecaoResseguro, SecaoScore, SecaoEmpresa } from '@/components/analise/RelatorioBlocos'
+import { PortaDoRelatorio, SemSistemaLocal } from '@/components/analise/PortaDoRelatorio'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 
-type Secao = 'analise' | 'tres' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos'
+/* A ORDEM DAS SEÇÕES É A DO RELATÓRIO DELE, e não a de quando cada uma foi
+   construída: quem abre isto está lendo uma análise de crédito, e a leitura
+   vai da decisão para o fundamento. As quatro do meio (empresa, score,
+   resseguro) entraram em 09/09/2026, quando ele perguntou "cadê o relatório
+   que consta da análise de crédito?" e a resposta era que faltava metade. */
+type Secao = 'analise' | 'tres' | 'score' | 'empresa' | 'resseguro' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos'
 
 /** As iniciais do brasão. Mesmo desenho da Mesa do Tomador. */
 function iniciaisDe(nome: string): string {
@@ -92,6 +99,9 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
   const ITENS: { s: Secao; nome: string; ico: React.ReactNode; meta?: string }[] = [
     { s: 'analise', nome: 'A análise', ico: <IcoVisao /> },
     { s: 'tres', nome: "Os 3 C's", ico: <IcoEscudo />, meta: ficha.tres_cs ? undefined : 'sem registro' },
+    { s: 'score', nome: 'Como o Score foi formado', ico: <IcoGrafico />, meta: ficha.scoreMemoria ? undefined : 'sem memoria' },
+    { s: 'empresa', nome: 'A empresa', ico: <IcoVisao />, meta: ficha.identificacao ? undefined : 'sem ficha' },
+    { s: 'resseguro', nome: 'Resseguro', ico: <IcoEscudo />, meta: ficha.resseguro.length ? String(ficha.resseguro.length) : 'sem quadro' },
     { s: 'serasa', nome: 'Serasa', ico: <IcoGrafico />, meta: ficha.serasa ? (ficha.serasa.score !== null ? String(ficha.serasa.score) : undefined) : 'sem registro' },
     { s: 'grupo', nome: 'Grupo econômico', ico: <IcoRede />, meta: ficha.estrutura ? String(ficha.estrutura.entidades.length) : 'sem organograma' },
     { s: 'demonstracoes', nome: 'Demonstrações', ico: <IcoGrafico />, meta: ficha.exercicios.length ? String(ficha.exercicios.length) : 'sem exercício' },
@@ -143,6 +153,11 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
         <span className="badge badge-gray">Análise de {fmtData(ficha.data_analise)}</span>
         {ficha.recomendacao && <span className="badge badge-purple">{ficha.recomendacao}</span>}
         <span style={{ flex: 1 }} />
+        {/* A PORTA PARA O RELATÓRIO DE VERDADE vem ANTES do "Editar a análise"
+            do CRM, e é de propósito: enquanto o template tiver tecnologia que
+            estas seções não têm, ele é o caminho principal, e não a alternativa.
+            Ordem dele em 09/09/2026. */}
+        <PortaDoRelatorio chave={ficha.chave_local} />
         {editaAnalise && (
           <button type="button" className={editando ? 'btn-primary' : 'btn-secondary'}
             style={{ padding: '6px 13px', fontSize: 13 }}
@@ -160,6 +175,7 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
             Sem tomador ligado no CRM{ficha.cnpj ? ' para este CNPJ' : ' (a análise não apurou CNPJ)'}.
           </span>
         )}
+        <SemSistemaLocal chave={ficha.chave_local} />
       </div>
 
       {/* ══════════ RAIL + PAINEL ══════════ */}
@@ -205,6 +221,9 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
             </Bloco>
           )}
 
+          {!editando && secao === 'score' && <SecaoScore ficha={ficha} />}
+          {!editando && secao === 'empresa' && <SecaoEmpresa ficha={ficha} />}
+          {!editando && secao === 'resseguro' && <SecaoResseguro ficha={ficha} />}
           {!editando && secao === 'demonstracoes' && <SecaoDemonstracoes ficha={ficha} />}
           {!editando && secao === 'documentos' && <SecaoDocumentos ficha={ficha} />}
         </div>

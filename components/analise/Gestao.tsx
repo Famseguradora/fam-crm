@@ -69,7 +69,7 @@ export default function Gestao({ aoAbrirSistema }: { aoAbrirSistema?: () => void
         <div className="an-cartao">
           <h2>Nível de risco</h2>
           <div className="nota">Como a análise classificou, na vigente de cada empresa.</div>
-          <Barras itens={g.nivel} cor="#9878d0" />
+          <Barras itens={g.nivel} cor="#3070c8" />
         </div>
 
         <div className="an-cartao">
@@ -87,7 +87,7 @@ export default function Gestao({ aoAbrirSistema }: { aoAbrirSistema?: () => void
         <div className="an-cartao">
           <h2>Sua performance e a Análise prévia</h2>
           <div className="nota">As duas outras telas da Gestão do cockpit.</div>
-          <p style={{ fontSize: 13, lineHeight: 1.55, color: '#22344d', margin: 0 }}>
+          <p style={{ fontSize: 13, lineHeight: 1.55, color: '#26374a', margin: 0 }}>
             <b>Sua performance</b> compara o que eu entreguei com o que você reescreveu, análise a análise. <b>Análise prévia</b> lê um documento avulso antes de gastar a esteira. As duas dependem de material que só existe no disco do notebook (a versão gerada e o documento solto), e por isso continuam no Sistema local até esse dado subir para o banco.
           </p>
           {aoAbrirSistema && <div className="an-bt-linha" style={{ marginTop: 10 }}><button type="button" className="an-bt" onClick={aoAbrirSistema}>Abrir no Sistema local</button></div>}

@@ -8,6 +8,7 @@ import { maskTelefone, badgeClassPerfil, badgeClassStatus, fmtData, titleCase, l
 import type { Usuario, Perfil } from '@/types'
 // As cinco áreas do fluxo do card, para não repetir a lista aqui.
 import { AREAS, type AreaId } from '@/lib/card/secoes'
+import CaixasDeEmail from './CaixasDeEmail'
 
 interface FormData {
   nome: string
@@ -68,6 +69,7 @@ export default function UsuariosPage() {
     setTogglingAvisoId(null)
   }
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { carregarUsuarios() }, [carregarUsuarios])
 
   function abrirNovo() {
@@ -571,6 +573,15 @@ export default function UsuariosPage() {
           </tbody>
         </table>
       </div>
+
+      {/* ── QUEM VÊ CADA CAIXA DE E-MAIL (09/09/2026) ──────────────────────
+          Fica na tela de Usuários porque é disso que se trata: quem, nome a
+          nome, trabalha o e-mail do Comercial. A trava de verdade é a RLS; o
+          painel só evita que alguém digite em vão. */}
+      <div style={{ marginTop: 26 }}>
+        <CaixasDeEmail souProprietario={souProprietario} />
+      </div>
+
     </>
   )
 }

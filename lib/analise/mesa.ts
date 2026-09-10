@@ -110,6 +110,17 @@ export interface LinhaItem {
 /** A linha de `analise_fila`, com as colunas do card. */
 export interface FilaRica {
   id: string
+  /* ANÁLISE SEM ESTEIRA (09/09/2026).
+     O card do tomador nasceu lendo `analise_fila`: uma PASTA no disco, com
+     documentos, ordens e histórico. Mas o Acervo tem 139 análises vigentes e só
+     2 têm pasta na esteira — as outras 137 terminaram e a pasta foi arquivada.
+
+     Ordem dele: abrir pelo Acervo e abrir pela Mesa têm que cair na MESMA tela,
+     a das sete abas. Então o card passa a aceitar também o id de uma ANÁLISE, e
+     monta uma ficha a partir dela. Esta bandeira diz que é esse o caso, e as
+     abas que dependem da pasta (Arquivos, ordens da Análise) explicam por que
+     não têm o que mostrar, em vez de aparecerem quebradas ou vazias. */
+  semEsteira?: boolean
   caso_id: string | null
   analise_id: string | null
   tomador_id: string | null
@@ -194,6 +205,16 @@ export interface EstadoEsteira {
     execucoes: {
       pasta: string; razao: string; etapa: string; etapaTxt: string
       idxAtual: number; mensagem: string; segundosDesde: number; travado?: boolean
+      /* OS TRÊS QUE O PAINEL DE MISSÃO PEDE (09/09/2026). Vêm do mesmo
+         `/api/visao` do notebook que já enchia os campos de cima; a esteira só
+         não os estava carregando para o CRM porque a tela antiga era uma
+         linha de texto e não tinha onde mostrá-los.
+           paradoHa ..... minutos desde a última notícia (o "há 1 min")
+           etapas_seg ... quanto custou cada etapa JÁ FECHADA desta corrida
+           retomadas .... o vigia derrubou e retomou do zero? */
+      paradoHa?: number
+      etapas_seg?: { etapa: string; segundos: number }[]
+      retomadas?: number
     }[]
   }
   varredura?: { novidades: number; quando: string | null; quando_txt?: string; pastas?: number } | null
@@ -230,7 +251,11 @@ export function iniciaisDe(nome: string): string {
 /* A COR DO SELO SAI DO NOME, então não muda de uma rodada para a outra: o olho
    aprende a achar a empresa antes de ler. As oito cores são as do selo.mjs, a
    mesma paleta das colunas do quadro e das áreas do encaminhamento. */
-export const CORES_SELO = ['#2E6DB4', '#2F8F6B', '#A8762B', '#8B4A9C', '#B5484A', '#3E7A8C', '#7A6BC4', '#8C6239']
+/* AS CORES DO SELO, dessaturadas em 09/09/2026 junto com a paleta da Análise.
+   Eram oito cores cheias, e as duas roxas (#8B4A9C e #7A6BC4) eram o que mais
+   puxava a tela para a "cara de IA" que ele mandou tirar. Continuam oito e
+   continuam distinguíveis entre si; o que saiu foi o brilho. */
+export const CORES_SELO = ['#3A6491', '#3C7A60', '#8A6A2E', '#7A5470', '#96504E', '#41697A', '#5D6390', '#7A5C3C']
 
 export function corDoNome(nome: string): string {
   let h = 0
@@ -340,4 +365,167 @@ export function idadeDoEncaminhamento(e: Encaminhamento): { dias: number; atrasa
   const dias = Math.max(0, Math.floor((Date.now() - new Date(e.criado_em).getTime()) / 86400000))
   const atrasado = e.estado === 'aberto' && !!e.prazo && new Date(e.prazo + 'T23:59:59').getTime() < Date.now()
   return { dias, atrasado }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   UMA EMPRESA, UM CARD  ·  09/09/2026
+
+   O QUE ESTAVA ERRADO. A ficha da Mesa é uma PASTA, e a análise renomeia a
+   pasta enquanto trabalha. Então a mesma empresa aparecia três vezes no
+   quadro: "Renova" (como chegou), "Renova Energia S a" (depois que a análise
+   apurou o nome) e "Renova Energia" (a pasta concluída). Olhando a Mesa, dava
+   a impressão de três negócios diferentes com o mesmo cliente.
+
+   É a mesma regra que o funil já ensina, e agora vale aqui: uma empresa, um
+   card. Cada pasta continua existindo, e continua clicável: o que muda é que
+   elas passam a se apresentar juntas.
+
+   COMO SE DECIDE QUE É A MESMA EMPRESA, e a diferença entre as duas regras
+   está na tela, não escondida aqui:
+
+     PROVA     mesmo CNPJ, ou mesmo tomador do CRM, ou nome idêntico depois de
+               tirar acento, pontuação e sufixo societário. Une calado.
+     PALPITE   o nome de uma é o começo do nome da outra ("Renova" dentro de
+               "Renova Energia"). Une, mas o card DIZ que uniu por semelhança,
+               porque isto pode errar e quem confere é gente.
+
+   Palavra genérica não vira palpite: "Construtora" é o começo do nome de meia
+   dúzia de empresas diferentes, e uni-las seria pior do que deixar separadas.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/** Sufixos societários e ruído de nome de pasta. Tirados antes de comparar:
+ *  "Rialma S.a |" e "Rialma" são a mesma empresa escrita de dois jeitos. */
+const RUIDO = /\b(s\s*\/?\s*a|sa|ltda|me|epp|eireli|spe|mei|s\s*s|cia|companhia)\b/g
+
+/** Palavra que não identifica empresa nenhuma sozinha: nunca vira palpite. */
+const GENERICAS = new Set([
+  'construtora', 'construcoes', 'empresa', 'grupo', 'engenharia', 'incorporadora',
+  'participacoes', 'holding', 'comercio', 'industria', 'servicos', 'transportes',
+  'energia', 'empreendimentos', 'agropecuaria', 'distribuidora', 'logistica',
+  'tecnologia', 'consultoria', 'administradora', 'usina', 'fazenda', 'cadastro',
+])
+
+/** O nome reduzido ao que ele tem de próprio. */
+export function nomeCru(s: string | null | undefined): string {
+  return String(s ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(RUIDO, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export interface GrupoEmpresa {
+  /** A chave do grupo. CNPJ quando existe; senão o nome cru mais completo. */
+  chave: string
+  /** A ficha que representa o grupo: a mais adiantada da esteira. */
+  principal: FilaRica
+  /** Todas as pastas, da mais adiantada para a menos. */
+  fichas: FilaRica[]
+  /** Uniu por semelhança de nome, e não por prova. O card avisa. */
+  palpite: boolean
+}
+
+const PESO_FASE: Record<string, number> = {
+  entrada: 0, conferencia: 1, liberado: 2, analisando: 3, pronta: 4,
+}
+
+/**
+ * Junta as pastas da mesma empresa. `fase` é a mesma função que a tela usa,
+ * passada de fora para não haver duas réguas de fase no sistema.
+ */
+export function agruparPorEmpresa(
+  fila: FilaRica[],
+  fase: (f: FilaRica) => string,
+): GrupoEmpresa[] {
+  const n = fila.length
+  /* Union-find: "Renova" casa com "Renova Energia S a" por palpite, que casa
+     com "Renova Energia" por CNPJ. As três têm que cair no mesmo grupo mesmo
+     sem a primeira e a última se conhecerem. */
+  const pai = Array.from({ length: n }, (_, i) => i)
+  const acha = (i: number): number => (pai[i] === i ? i : (pai[i] = acha(pai[i])))
+  const une = (a: number, b: number) => { const x = acha(a), y = acha(b); if (x !== y) pai[x] = y }
+
+  const cru = fila.map(f => nomeCru(f.nome || f.razao_social || f.pasta))
+  const porPalpite = new Set<number>()
+
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = fila[i], b = fila[j]
+
+      // ── PROVA ──────────────────────────────────────────────────────────
+      if (a.cnpj && b.cnpj && a.cnpj === b.cnpj) { une(i, j); continue }
+      if (a.tomador_id && b.tomador_id && a.tomador_id === b.tomador_id) { une(i, j); continue }
+      if (cru[i] && cru[i] === cru[j]) { une(i, j); continue }
+
+      // ── PALPITE ────────────────────────────────────────────────────────
+      // CNPJ diferente é prova de que NÃO são a mesma: nem tenta o palpite.
+      if (a.cnpj && b.cnpj && a.cnpj !== b.cnpj) continue
+      const [curto, longo] = cru[i].length <= cru[j].length ? [cru[i], cru[j]] : [cru[j], cru[i]]
+      if (curto.length < 5) continue
+      if (GENERICAS.has(curto.split(' ')[0])) continue
+      // Começo em limite de palavra: "renova" casa com "renova energia",
+      // e não com "renovacao".
+      if (longo === curto || longo.startsWith(curto + ' ')) {
+        une(i, j)
+        porPalpite.add(i); porPalpite.add(j)
+      }
+    }
+  }
+
+  const grupos = new Map<number, number[]>()
+  for (let i = 0; i < n; i++) {
+    const r = acha(i)
+    const lista = grupos.get(r) ?? []
+    lista.push(i)
+    grupos.set(r, lista)
+  }
+
+  return [...grupos.values()].map(indices => {
+    /* A MAIS ADIANTADA REPRESENTA O GRUPO, e é ela que decide em que coluna o
+       card aparece. Empate de fase: a mais recente. É a leitura que ele fez em
+       voz alta ("a Renova já fez a análise"): o que interessa é onde a empresa
+       chegou, não onde a pasta mais velha parou. */
+    const ordenadas = indices
+      .map(i => fila[i])
+      .sort((a, b) => {
+        const d = (PESO_FASE[fase(b)] ?? 0) - (PESO_FASE[fase(a)] ?? 0)
+        if (d) return d
+        return String(b.atualizado_em || '').localeCompare(String(a.atualizado_em || ''))
+      })
+
+    const principal = ordenadas[0]
+    const comCnpj = ordenadas.find(f => f.cnpj)
+    return {
+      chave: comCnpj?.cnpj ?? nomeCru(nomeDaFicha(principal)) ?? principal.id,
+      principal,
+      fichas: ordenadas,
+      // Só avisa quando o palpite foi necessário: grupo de uma pasta só, ou
+      // unido por CNPJ, não tem o que avisar.
+      palpite: ordenadas.length > 1 && indices.some(i => porPalpite.has(i)),
+    }
+  })
+}
+
+/** O nome do grupo é o da pasta MAIS ADIANTADA, e não o mais comprido.
+ *
+ *  A tentação é pegar o nome mais completo, e ela erra: o nome mais comprido
+ *  costuma ser o do assunto do e-mail, com sobra ("Rialma S.a |", com a barra
+ *  do assunto colada). Quem apurou o nome de verdade foi a análise, e a pasta
+ *  mais adiantada é justamente a que ela mais trabalhou.
+ *
+ *  Só cai para a mais comprida quando a principal ficou com um nome curto
+ *  demais para identificar alguém ("Renova", antes de a análise apurar). */
+export function nomeDoGrupo(g: GrupoEmpresa): string {
+  const limpo = (s: string) => String(s ?? '').replace(/[\s|·\-–—,.]+$/, '').trim()
+
+  const daPrincipal = limpo(nomeDaFicha(g.principal))
+  if (daPrincipal.length >= 8) return daPrincipal
+
+  const maisLongo = g.fichas
+    .map(f => limpo(nomeDaFicha(f)))
+    .reduce((melhor, atual) => (atual.length > melhor.length ? atual : melhor), '')
+
+  return maisLongo || daPrincipal || nomeDaFicha(g.principal)
 }

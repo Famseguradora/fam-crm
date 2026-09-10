@@ -20,6 +20,23 @@
 import { createClient } from '@/lib/supabase/client'
 import { soDigitos } from './local'
 import { semEntidadesHtml } from '@/lib/utils'
+
+/* O MARCADOR DO TEMPLATE NÃO É DADO  ·  09/09/2026
+   ---------------------------------------------------------------------------
+   O relatório do sistema de análise nasce com marcadores entre colchetes no
+   lugar do que ainda falta preencher: `[Corretora]`, `[Analista]`, `[Grupo]`.
+   Quando o campo não é preenchido, o marcador viaja no JSON, a carga o grava
+   ao pé da letra e o CRM o desenha como se fosse o nome da corretora. Foi o
+   que ele viu no card da Renova: um "[Corretora]" onde devia estar um nome.
+
+   Um marcador na tela é pior que um campo vazio: campo vazio se lê como "falta
+   isso", e o marcador se lê como dado errado. Aqui ele volta a ser nada, e a
+   tela diz "sem corretora na análise", que é a verdade. */
+const MARCADOR = /^\s*[[【][^\]】]*[\]】]\s*$/
+export const semMarcador = (v: string | null | undefined): string | null => {
+  const t = (v ?? '').trim()
+  return !t || MARCADOR.test(t) ? null : t
+}
 import type { EstruturaSocietaria } from '@/components/tomador/OrganogramaAnalise'
 
 /** Um exercício do resumo financeiro. Valores SEMPRE em reais (a carga já
@@ -133,9 +150,211 @@ export interface FichaAnalise {
 
   exercicios: ExercicioFicha[]
   documentos: DocumentoFicha[]
+
+  /* ── O RESTO DO RELATÓRIO (09/09/2026) ────────────────────────────────
+     Pergunta dele: "cadê o relatório que consta da análise de crédito?".
+     Estes blocos existiam só no disco. São de LEITURA: a análise os escreveu,
+     e o CRM os mostra. Análise publicada antes da carga nova vem com null, e
+     a tela simplesmente não desenha a seção. */
+  identificacao: IdentificacaoFicha | null
+  enquadramento: EnquadramentoFicha | null
+  resseguro: LinhaResseguro[]
+  scoreMemoria: ScoreMemoria | null
+  linhaTempo: { ano: string; evento: string }[]
+  caixaEstoque: CaixaEstoque | null
+  limite_base: string | null
+  limite_perc: number | null
+  base_df: string | null
+  base_df_obs: string | null
+  unidade: string | null
+}
+
+/** A ficha da empresa como a análise a apurou. */
+export interface IdentificacaoFicha {
+  fundacao: string | null
+  regime: string | null
+  capital: string | null
+  endereco: string | null
+  cnae: string | null
+  funcionarios: string | null
+  filiais: string | null
+}
+
+/** Classe, porte, e COMO a ponderação objetivo/subjetivo foi decidida. */
+export interface EnquadramentoFicha {
+  classe: string | null
+  porte: string | null
+  tipo: string | null
+  obs: string | null
+  pesoObj: number | null
+  pesoSubj: number | null
+}
+
+/** Uma linha do contrato automático de resseguro. */
+export interface LinhaResseguro {
+  item: string
+  regra: string | null
+  resultado: string | null
+  /** Enquadrado · Bloqueio · Aceitação especial — como a análise escreveu. */
+  status: string | null
+  obs: string | null
+}
+
+/** Um indicador da memória de cálculo, com tudo o que uma auditoria pede. */
+export interface IndicadorScore {
+  id: string
+  rotulo: string
+  valor: string | null
+  formula: string | null
+  classificacao: string | null
+  pontos: number | null
+  peso: number | null
+  parcial: number | null
+  obs: string | null
+}
+
+/** A memória de cálculo do Score, em quatro grupos. */
+export interface ScoreMemoria {
+  grupos: { id: string; nome: string; dica: string; indicadores: IndicadorScore[]; subtotal: number | null }[]
+  calculo: string | null
+  scoreObjetivo: number | null
+  scoreFinal: number | null
+  pesoObj: number | null
+  pesoSubj: number | null
+}
+
+export interface CaixaEstoque {
+  caixaA1: string | null
+  caixaA2: string | null
+  estoquesA1: string | null
+  estoquesA2: string | null
+  observacao: string | null
 }
 
 /** O que a ficha escreve quando o número não é limite de verdade. */
+/* ══════════════════════════════════════════════════════════════════════════
+   OS LEITORES DOS BLOCOS NOVOS
+   O banco guarda jsonb como a análise escreveu, com os nomes curtos do sistema
+   de análise (`kal`, `car`, `cxe`, `pObj`). Aqui eles viram nome de gente, uma
+   vez só, para nenhuma tela precisar saber o que é `kal`.
+   Bloco que a análise não escreveu volta null, e a seção não é desenhada.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const txt = (v: unknown): string | null => {
+  const t = typeof v === 'string' ? v.trim() : (v == null ? '' : String(v))
+  return t ? semMarcador(semEntidadesHtml(t)) : null
+}
+const numeroOuNulo = (v: unknown): number | null => {
+  const n = Number(v)
+  return v === null || v === undefined || v === '' || !Number.isFinite(n) ? null : n
+}
+const obj = (v: unknown): Record<string, unknown> | null =>
+  v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null
+
+function leIdentificacao(v: unknown): IdentificacaoFicha | null {
+  const o = obj(v); if (!o) return null
+  const f = {
+    fundacao: txt(o.fundacao), regime: txt(o.regime), capital: txt(o.capital),
+    endereco: txt(o.endereco), cnae: txt(o.cnae),
+    funcionarios: txt(o.funcionarios), filiais: txt(o.filiais),
+  }
+  return Object.values(f).some(Boolean) ? f : null
+}
+
+function leEnquadramento(v: unknown): EnquadramentoFicha | null {
+  const o = obj(v); if (!o) return null
+  const f = {
+    classe: txt(o.classe), porte: txt(o.porte), tipo: txt(o.tipo), obs: txt(o.obs),
+    pesoObj: numeroOuNulo(o.pObj), pesoSubj: numeroOuNulo(o.pSubj),
+  }
+  return Object.values(f).some(x => x !== null) ? f : null
+}
+
+function leResseguro(v: unknown): LinhaResseguro[] {
+  if (!Array.isArray(v)) return []
+  return v.map(x => {
+    const o = obj(x); if (!o) return null
+    const item = txt(o.item); if (!item) return null
+    return { item, regra: txt(o.regra), resultado: txt(o.resultado), status: txt(o.status), obs: txt(o.obs) }
+  }).filter((x): x is LinhaResseguro => x !== null)
+}
+
+function leLinhaTempo(v: unknown): { ano: string; evento: string }[] {
+  if (!Array.isArray(v)) return []
+  return v.map(x => {
+    const o = obj(x); if (!o) return null
+    const evento = txt(o.evento); if (!evento) return null
+    return { ano: txt(o.ano) ?? '', evento }
+  }).filter((x): x is { ano: string; evento: string } => x !== null)
+}
+
+function leCaixaEstoque(v: unknown): CaixaEstoque | null {
+  const o = obj(v); if (!o) return null
+  const f = {
+    caixaA1: txt(o.caixa_a1), caixaA2: txt(o.caixa_a2),
+    estoquesA1: txt(o.estoques_a1), estoquesA2: txt(o.estoques_a2),
+    observacao: txt(o.observacao),
+  }
+  return Object.values(f).some(Boolean) ? f : null
+}
+
+/* A MEMÓRIA DE CÁLCULO. Os quatro grupos do relatório, com o nome que aparece
+   na tela e a dica que explica o que cada um mede. A ORDEM É A DO RELATÓRIO:
+   capacidade, indicadores financeiros, cadastral, subjetivo — é a ordem em que
+   a metodologia soma, e trocar a ordem é tornar a conta difícil de conferir. */
+const GRUPOS_SCORE: { chave: string; id: string; nome: string; dica: string }[] = [
+  { chave: 'capacidade', id: 'capacidade', nome: 'Capacidade', dica: 'tempo de atividade e apólices já emitidas' },
+  { chave: 'indicadores', id: 'indicadores', nome: 'Indicadores financeiros', dica: 'liquidez, endividamento, margem e crescimento' },
+  { chave: 'cadastral', id: 'cadastral', nome: 'Cadastral', dica: 'protestos, PEFIN/REFIN e ações judiciais' },
+  { chave: 'subjetivo', id: 'subjetivo', nome: 'Subjetivo', dica: 'mercado de garantia, ISO, sócios e o setor' },
+]
+
+/** "liq_corrente" vira "Liquidez corrente": o nome curto é do motor, não dele. */
+const ROTULOS_SCORE: Record<string, string> = {
+  tempo_atividade: 'Tempo de atividade', apolices_emitidas: 'Apólices emitidas',
+  liq_corrente: 'Liquidez corrente', liq_geral: 'Liquidez geral',
+  end_geral: 'Endividamento geral', end_oneroso: 'Endividamento oneroso',
+  cresc_pl: 'Crescimento do PL', cresc_rol: 'Crescimento da receita',
+  margem_ebitda: 'Margem EBITDA', cresc_ll: 'Crescimento do lucro líquido',
+  protestos: 'Protestos', pefin_refin: 'PEFIN e REFIN', acoes_judiciais: 'Ações judiciais',
+  tempo_mercado_garantia: 'Tempo no mercado de garantia', certificado_iso: 'Certificado ISO',
+  tempo_socios_empresa: 'Tempo dos sócios na empresa', situacao_setor: 'Situação do setor',
+}
+
+function leScoreMemoria(v: unknown): ScoreMemoria | null {
+  const o = obj(v); if (!o) return null
+  const grupos = GRUPOS_SCORE.map(g => {
+    const bloco = obj(o[g.chave]); if (!bloco) return null
+    const indicadores: IndicadorScore[] = []
+    for (const k of Object.keys(bloco)) {
+      // `subtotal` é a soma, e `aplicavel` é uma bandeira: nenhum dos dois é indicador.
+      if (k === 'subtotal' || k === 'aplicavel') continue
+      const i = obj(bloco[k]); if (!i) continue
+      const valor = i.valor_bruto ?? i.valor_rs ?? i.valor_anos ?? i.quantidade ?? i.possui
+      indicadores.push({
+        id: k,
+        rotulo: ROTULOS_SCORE[k] ?? k.replace(/_/g, ' '),
+        valor: typeof valor === 'boolean' ? (valor ? 'sim' : 'não') : (valor == null ? null : String(valor).replace('.', ',')),
+        formula: txt(i.formula), classificacao: txt(i.classificacao),
+        pontos: numeroOuNulo(i.pontos), peso: numeroOuNulo(i.peso_perc),
+        parcial: numeroOuNulo(i.score_parcial), obs: txt(i.obs ?? i.fonte),
+      })
+    }
+    if (!indicadores.length) return null
+    return { id: g.id, nome: g.nome, dica: g.dica, indicadores, subtotal: numeroOuNulo(bloco.subtotal) }
+  }).filter((g): g is NonNullable<typeof g> => g !== null)
+
+  const calculo = txt(o.calculo)
+  if (!grupos.length && !calculo) return null
+  return {
+    grupos, calculo,
+    scoreObjetivo: numeroOuNulo(o.score_objetivo),
+    scoreFinal: numeroOuNulo(o.score_final),
+    pesoObj: numeroOuNulo(o.peso_obj),
+    pesoSubj: numeroOuNulo(o.peso_subj),
+  }
+}
+
 const AVISO_TIPO: Record<string, string> = {
   teorico: 'teórico',
   teto: 'teto da FAM',
@@ -155,7 +374,9 @@ const COLUNAS = `
   serasa_score, serasa_risco, serasa_interpretacao, serasa_prob,
   serasa_limite_txt, serasa_limite_num, serasa_pefin, serasa_protestos,
   serasa_acoes, serasa_recuperacao, serasa_consultas, serasa_consultas_qtd,
-  serasa_fonte, estrutura_societaria
+  serasa_fonte, estrutura_societaria,
+  identificacao, enquadramento, resseguro, score_memoria, linha_tempo,
+  caixa_estoque, limite_base, limite_perc, base_df, base_df_obs, unidade
 `
 
 interface LinhaCrua {
@@ -206,6 +427,17 @@ interface LinhaCrua {
   serasa_consultas_qtd: number | null
   serasa_fonte: string | null
   estrutura_societaria: EstruturaSocietaria | null
+  identificacao: Record<string, unknown> | null
+  enquadramento: Record<string, unknown> | null
+  resseguro: Record<string, unknown>[] | null
+  score_memoria: Record<string, unknown> | null
+  linha_tempo: Record<string, unknown>[] | null
+  caixa_estoque: Record<string, unknown> | null
+  limite_base: string | null
+  limite_perc: number | string | null
+  base_df: string | null
+  base_df_obs: string | null
+  unidade: string | null
 }
 
 /** O Postgres devolve `numeric` como string. Converter sem inventar zero. */
@@ -386,11 +618,11 @@ async function montarFicha(
       tomador_id: linha.tomador_id,
       // Mesma limpeza da razao social: e tudo texto do mesmo relatorio HTML,
       // e proteger um campo e deixar o vizinho de fora e so esperar a vez.
-      corretora: linha.corretora ? semEntidadesHtml(linha.corretora) : null,
+      corretora: semMarcador(linha.corretora ? semEntidadesHtml(linha.corretora) : null),
 
       razao_social: semEntidadesHtml(linha.razao_social),
       nome_curto: linha.nome_curto ? semEntidadesHtml(linha.nome_curto) : null,
-      grupo: linha.grupo ? semEntidadesHtml(linha.grupo) : null,
+      grupo: semMarcador(linha.grupo ? semEntidadesHtml(linha.grupo) : null),
       segmento: linha.segmento,
       setor: linha.setor,
 
@@ -417,6 +649,19 @@ async function montarFicha(
       tres_cs: linha.tres_cs,
       serasa,
       estrutura: linha.estrutura_societaria?.entidades?.length ? linha.estrutura_societaria : null,
+
+      // ── o resto do relatório ──────────────────────────────────────────
+      identificacao: leIdentificacao(linha.identificacao),
+      enquadramento: leEnquadramento(linha.enquadramento),
+      resseguro: leResseguro(linha.resseguro),
+      scoreMemoria: leScoreMemoria(linha.score_memoria),
+      linhaTempo: leLinhaTempo(linha.linha_tempo),
+      caixaEstoque: leCaixaEstoque(linha.caixa_estoque),
+      limite_base: semMarcador(linha.limite_base),
+      limite_perc: numeroOuNulo(linha.limite_perc),
+      base_df: semMarcador(linha.base_df),
+      base_df_obs: semMarcador(linha.base_df_obs),
+      unidade: semMarcador(linha.unidade),
 
       exercicios,
       documentos: (docs ?? []) as DocumentoFicha[],
