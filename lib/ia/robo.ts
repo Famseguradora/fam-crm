@@ -26,6 +26,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { BlocoIA } from './servidor'
 import { anosVig } from '@/lib/comite/calculo'
+import { lmgFam, mundoDa } from './regras-operacao'
 
 /* ══════════════════════════════════════════════════════════════════════════
    O QUE UM CARTÃO É
@@ -136,16 +137,12 @@ const num = (v: unknown): number => {
       O funil é definido por EXCLUSÃO, como na tela: etapa nova entra nele
       sozinha, sem ninguém precisar lembrar de mexer neste arquivo.
    ══════════════════════════════════════════════════════════════════════════ */
-const CAP_LMG = 80_000_000
-
-/** O LMG que a FAM de fato carrega. Todo lugar deste arquivo usa este, e nunca
- *  o `o.lmg` cru. */
-const lmgFam = (o: { lmg: number | null }): number => Math.min(num(o.lmg), CAP_LMG)
-
-const ENCERRADAS = ['Perdido', 'Recusado']
-const eEmitida = (o: { status: string | null }) => o.status === 'Emitido'
-const eEncerrada = (o: { status: string | null }) => ENCERRADAS.includes(o.status ?? '')
-const noFunil = (o: { status: string | null }) => !eEmitida(o) && !eEncerrada(o)
+/* O cap do LMG (`lmgFam`) e os três mundos (`mundoDa`) moram em
+   lib/ia/regras-operacao.ts desde 10/09/2026, quando a IA pela API passou a
+   somar operação também. Todo lugar deste arquivo usa `lmgFam`, nunca `o.lmg`. */
+const eEmitida = (o: { status: string | null }) => mundoDa(o.status) === 'emitida'
+const eEncerrada = (o: { status: string | null }) => mundoDa(o.status) === 'encerrada'
+const noFunil = (o: { status: string | null }) => mundoDa(o.status) === 'funil'
 
 /** Nome de corretora cabe em 28 caracteres no eixo de um gráfico. Mais que
  *  isso empurra o desenho para fora da moldura. */
