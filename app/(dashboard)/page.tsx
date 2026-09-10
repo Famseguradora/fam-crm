@@ -75,7 +75,7 @@ interface DashDados {
 // ── color palettes ────────────────────────────────────────────────────────────
 
 const AZUIS = ['#1e4080', '#2255a4', '#3070c8', '#4a90d8', '#6ab0e8', '#8acaf8', '#aadaff', '#c0e8ff']
-const VERDES = ['#065f46', '#047857', '#15803d', '#16a34a', '#22c55e', '#4ade80', '#86efac', '#bbf7d0', '#166534', '#6ee7b7']
+const VERDES = ['#065f46', '#166534', '#047857', '#15803d', '#16a34a', '#22c55e', '#4ade80', '#6ee7b7', '#86efac', '#bbf7d0']
 
 // ── card visibility config ────────────────────────────────────────────────────
 
@@ -227,7 +227,6 @@ export default function DashboardPage() {
     .sort(([, a], [, b]) => b - a)
     .slice(0, 8)
     .map(([nome, valor]) => ({ nome: nome.length > 24 ? nome.slice(0, 22) + '…' : nome, valor }))
-    .reverse()
 
   const tmPorStatus: Record<string, number> = {}
   for (const t of tomadores) {
@@ -248,7 +247,6 @@ export default function DashboardPage() {
     .sort(([, a], [, b]) => b - a)
     .slice(0, 10)
     .map(([nome, valor]) => ({ nome: nome.length > 20 ? nome.slice(0, 18) + '…' : nome, valor }))
-    .reverse()
 
   const opPorStatus: Record<string, number> = {}
   for (const o of operacoes) {

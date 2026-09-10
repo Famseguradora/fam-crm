@@ -10,6 +10,7 @@ import AvisosAoVivo from './AvisosAoVivo'
 import InstallPrompt from './InstallPrompt'
 import NewsTicker from './NewsTicker'
 import MarketTicker from './MarketTicker'
+import GestorGlobal from '@/components/ia/GestorGlobal'
 
 const IS_SANDBOX = process.env.NEXT_PUBLIC_SANDBOX === 'true'
 
@@ -725,6 +726,13 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
 
       {/* Banner de instalação do app (mobile) */}
       <InstallPrompt />
+
+      {/* A IA GESTOR, EM TODA TELA. Ela mora aqui e não numa página porque a
+          ordem dele em 09/09/2026 foi essa: "em todo o sistema, em todo o CRM".
+          Ela sabe de que tela foi chamada (lê o pathname) e lê o banco com as
+          permissões de quem está logado. No sandbox não entra: as rotas dela
+          falam com o Supabase de verdade e responderiam 401. */}
+      {!IS_SANDBOX && <GestorGlobal />}
 
     </div>
   )
