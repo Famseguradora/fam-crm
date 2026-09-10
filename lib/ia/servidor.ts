@@ -16,10 +16,8 @@
 //      escrever no cache   1,25x o preço do token de entrada
 //      ler do cache        0,10x o preço do token de entrada
 //
-//  Ou seja: a partir da segunda pergunta, o prefixo custa um DÉCIMO. É por isso
-//  que a 1ª chamada fica na casa de US$ 0,25 e as seguintes na de US$ 0,08 (o
-//  que sobra nas seguintes é quase todo a RESPOSTA, que nunca é cacheada).
-//  A conta exata sai medida em `ia_pedidos.custo_usd`, e não de estimativa.
+//  A conta exata sai medida em `ia_pedidos.custo_usd`, e não de estimativa. A
+//  primeira pergunta real em produção (10/09/2026, um gráfico) custou US$ 0,09.
 //
 //  O CACHE SÓ FUNCIONA SE O PREFIXO NÃO MUDAR NEM UM BYTE. Por isso o sistema
 //  mora inteiro em `lib/ia/esquema.ts`, sem data, sem nome de usuário, sem
@@ -27,9 +25,17 @@
 //  Se `cache_leitura` vier zero em perguntas seguidas, alguma coisa está
 //  entrando no prefixo que não devia: é o primeiro lugar para olhar.
 //
+//  ─── A SOMA NÃO É MAIS DA IA (10/09/2026) ──────────────────────────────────
+//
+//  A primeira pergunta real saiu com número errado: `consultar` devolve no
+//  máximo 200 linhas, o CRM tem 298 operações, e o prompt mandava a IA somar o
+//  que viesse. Agora existe `agregar`, que lê a tabela INTEIRA em páginas e faz
+//  a conta em Node (lib/ia/agregar.ts), e `painel_do_robo`, que devolve os
+//  mesmos números do Painel. A IA não soma linha nenhuma: pede a conta pronta.
+//
 //  ─── GOVERNANÇA ────────────────────────────────────────────────────────────
 //
-//  A ferramenta `consultar` recebe o cliente Supabase DA SESSÃO DE QUEM
+//  Toda ferramenta que lê o banco recebe o cliente Supabase DA SESSÃO DE QUEM
 //  PERGUNTOU. Não existe caminho aqui para a service role. Toda a RLS do CRM
 //  vale igual para a IA, e o catálogo de `esquema.ts` é uma segunda trava por
 //  cima dela. A IA não é um usuário com poderes: é o próprio usuário.
@@ -37,6 +43,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { PODE_LER, SISTEMA } from './esquema'
+import { agregarLinhas, colunasNecessarias, validar, type Metrica } from './agregar'
+import { lerAcervo, montarCartoes } from './robo'
 
 /* Preço por milhão de tokens, em dólar. Entrada e saída da tabela oficial; o
    cache é derivado dela (1,25x escrever, 0,10x ler) porque é assim que a
@@ -82,12 +90,35 @@ export type ResultadoIA = RespostaIA | { ok: false; erro: string; status: number
    tools -> system -> messages). Então esta constante é montada uma vez e nunca
    é reordenada nem montada dinamicamente: tool list que varia é cache perdido.
    ══════════════════════════════════════════════════════════════════════════ */
+
+/** O formato de filtro, igual nas duas ferramentas que leem o banco. */
+const SCHEMA_FILTROS = {
+  type: 'array',
+  description: 'Condições combinadas com E.',
+  items: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      coluna: { type: 'string' },
+      op: {
+        type: 'string',
+        enum: ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'is', 'in'],
+      },
+      valor: {
+        description: 'O valor. Em "in", uma lista. Em "is", use null.',
+      },
+    },
+    required: ['coluna', 'op', 'valor'],
+  },
+} as const
+
 const FERRAMENTAS: Anthropic.Tool[] = [
   {
     name: 'consultar',
     description:
-      'Lê uma tabela do CRM da FAM. Roda com as permissões da pessoa que perguntou: '
-      + 'o que ela não pode ver na tela, você não vê aqui. Devolve no máximo 200 linhas.',
+      'Lê LINHAS de uma tabela do CRM da FAM, para ver lista, detalhe ou nome. Roda com as '
+      + 'permissões da pessoa que perguntou. Devolve no máximo 200 linhas e diz quando o resultado '
+      + 'foi truncado. NUNCA some, conte ou tire média destas linhas: para isso use agregar.',
     input_schema: {
       type: 'object',
       additionalProperties: false,
@@ -97,31 +128,58 @@ const FERRAMENTAS: Anthropic.Tool[] = [
           type: 'string',
           description: 'Colunas separadas por vírgula, ou "*". Peça só o que precisa.',
         },
-        filtros: {
-          type: 'array',
-          description: 'Condições combinadas com E.',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              coluna: { type: 'string' },
-              op: {
-                type: 'string',
-                enum: ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'is', 'in'],
-              },
-              valor: {
-                description: 'O valor. Em "in", uma lista. Em "is", use null.',
-              },
-            },
-            required: ['coluna', 'op', 'valor'],
-          },
-        },
+        filtros: SCHEMA_FILTROS,
         ordenar: { type: 'string', description: 'Coluna para ordenar.' },
         descendente: { type: 'boolean' },
         limite: { type: 'number', description: 'Padrão 100, teto 200.' },
       },
       required: ['tabela'],
     },
+  },
+  {
+    name: 'agregar',
+    description:
+      'Faz a CONTA sobre TODAS as linhas de uma tabela do CRM (sem teto de 200): soma, contagem, '
+      + 'média, mínimo e máximo, com agrupamento opcional. Use para qualquer total, ranking, '
+      + 'participação ou concentração. Em operacoes, aplica sozinha o cap de R$ 80 milhões no lmg '
+      + 'e aceita agrupar_por "mundo" (emitida, funil, encerrada). Devolve os grupos do maior para '
+      + 'o menor, com a participação percentual da primeira métrica.',
+    input_schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabela: { type: 'string', description: 'Nome exato da tabela, do catálogo do sistema.' },
+        agrupar_por: {
+          type: 'string',
+          description: 'Coluna do agrupamento (ex.: status, modalidade, corretora_id). Em operacoes, também "mundo". Omita para um total só.',
+        },
+        metricas: {
+          type: 'array',
+          description: 'As contas. A primeira define a ordem e a participação.',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              funcao: { type: 'string', enum: ['soma', 'contagem', 'media', 'minimo', 'maximo'] },
+              coluna: { type: 'string', description: 'Obrigatória, exceto em contagem de linhas.' },
+            },
+            required: ['funcao'],
+          },
+        },
+        filtros: SCHEMA_FILTROS,
+      },
+      required: ['tabela', 'metricas'],
+    },
+  },
+  {
+    name: 'painel_do_robo',
+    description:
+      'Devolve os números de diretoria já calculados pelo Painel do CRM, com as regras de negócio '
+      + 'aplicadas: concentração por corretora e por modalidade, tomadores no limite, prêmio '
+      + 'emitido, prêmio no funil, operações aprovadas e em Comitê, LMG em risco, ticket médio, '
+      + 'taxa média ponderada, urgentes na fila, voto de subscrição e entradas em 30 dias. '
+      + 'Sua resposta não pode discordar destes números.',
+    input_schema: { type: 'object', additionalProperties: false, properties: {} },
   },
   {
     name: 'montar_tabela',
@@ -183,33 +241,18 @@ const FERRAMENTAS: Anthropic.Tool[] = [
 ]
 
 /* ══════════════════════════════════════════════════════════════════════════
-   A EXECUÇÃO DA CONSULTA
+   OS FILTROS
 
-   Aqui é onde a governança acontece de verdade. Três travas, nesta ordem:
-   1. a tabela tem que estar no catálogo (`PODE_LER`);
-   2. a consulta roda no cliente da SESSÃO da pessoa, então a RLS decide;
-   3. o teto de 200 linhas, para uma pergunta larga não virar uma varredura.
-
-   Erro de consulta VOLTA PARA A IA como resultado, e não como exceção: ela
-   corrige a coluna e tenta de novo, que é exatamente o que uma pessoa faria.
+   Um só aplicador para `consultar` e `agregar`. Duas cópias da tradução de
+   filtro seriam duas chances de a lista e a soma responderem a perguntas
+   diferentes com o mesmo pedido.
    ══════════════════════════════════════════════════════════════════════════ */
 interface Filtro { coluna: string; op: string; valor: unknown }
 
-async function consultar(
-  sb: SupabaseClient,
-  entrada: Record<string, unknown>,
-): Promise<string> {
-  const tabela = String(entrada.tabela ?? '')
-  if (!PODE_LER(tabela)) {
-    return `ERRO: a tabela "${tabela}" não está no catálogo que você pode consultar. Use uma das listadas no sistema.`
-  }
+type Consulta = ReturnType<ReturnType<SupabaseClient['from']>['select']>
 
-  const colunas = String(entrada.colunas ?? '*').trim() || '*'
-  const limite = Math.min(Math.max(Number(entrada.limite ?? 100) || 100, 1), 200)
-
-  let q = sb.from(tabela).select(colunas).limit(limite)
-
-  for (const f of (entrada.filtros as Filtro[] | undefined) ?? []) {
+function aplicarFiltros(q: Consulta, filtros: Filtro[] | undefined): Consulta | string {
+  for (const f of filtros ?? []) {
     const { coluna, op, valor } = f
     if (!coluna || !op) continue
     switch (op) {
@@ -226,19 +269,167 @@ async function consultar(
       default: return `ERRO: operador "${op}" não existe.`
     }
   }
+  return q
+}
 
+/* ══════════════════════════════════════════════════════════════════════════
+   CONSULTAR  ·  linhas, com teto
+
+   Três travas, nesta ordem:
+   1. a tabela tem que estar no catálogo (`PODE_LER`);
+   2. a consulta roda no cliente da SESSÃO da pessoa, então a RLS decide;
+   3. o teto de 200 linhas, para uma pergunta larga não virar uma varredura.
+
+   E agora ela CONTA o total e diz quando cortou. O teto não era o defeito: o
+   defeito era cortar em silêncio.
+
+   Erro de consulta VOLTA PARA A IA como resultado, e não como exceção: ela
+   corrige a coluna e tenta de novo, que é exatamente o que uma pessoa faria.
+   ══════════════════════════════════════════════════════════════════════════ */
+async function consultar(
+  sb: SupabaseClient,
+  entrada: Record<string, unknown>,
+): Promise<string> {
+  const tabela = String(entrada.tabela ?? '')
+  if (!PODE_LER(tabela)) {
+    return `ERRO: a tabela "${tabela}" não está no catálogo que você pode consultar. Use uma das listadas no sistema.`
+  }
+
+  const colunas = String(entrada.colunas ?? '*').trim() || '*'
+  const limite = Math.min(Math.max(Number(entrada.limite ?? 100) || 100, 1), 200)
+
+  const filtrada = aplicarFiltros(
+    sb.from(tabela).select(colunas, { count: 'exact' }),
+    entrada.filtros as Filtro[] | undefined,
+  )
+  if (typeof filtrada === 'string') return filtrada
+
+  let q = filtrada
   if (entrada.ordenar) {
     q = q.order(String(entrada.ordenar), { ascending: !entrada.descendente })
   }
 
-  const { data, error } = await q
+  const { data, error, count } = await q.limit(limite)
   if (error) return `ERRO na consulta: ${error.message}`
 
   const linhas = data ?? []
   if (!linhas.length) {
     return 'Nenhuma linha. Pode ser que o dado não exista, ou que quem perguntou não tenha permissão de ver esta tabela.'
   }
-  return JSON.stringify({ linhas: linhas.length, dados: linhas })
+
+  const total = count ?? linhas.length
+  const truncado = total > linhas.length
+  return JSON.stringify({
+    linhas: linhas.length,
+    total_na_tabela: total,
+    truncado,
+    ...(truncado && {
+      aviso: `Estas ${linhas.length} linhas são uma AMOSTRA de ${total}. Não some, não conte e não tire média delas: use agregar.`,
+    }),
+    dados: linhas,
+  })
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AGREGAR  ·  a conta, sobre a tabela inteira
+
+   Lê em páginas de 1.000 (o teto do PostgREST por pedido) até acabar, e a
+   matemática fica em lib/ia/agregar.ts.
+
+   A ORDEM DAS PÁGINAS é por TODAS as colunas pedidas, e isso é o que torna a
+   soma certa em qualquer tabela, com ou sem id: sem ORDER BY, o Postgres pode
+   devolver a mesma linha em duas páginas e pular outra. Ordenando por todas as
+   colunas lidas, duas linhas só empatam se forem idênticas em tudo que entra
+   na conta, e aí trocar uma pela outra não muda o resultado.
+
+   TETO de 50.000 linhas, para uma pergunta sobre a trilha de histórico não
+   virar um minuto de varredura. Se bater nele, o resultado diz que bateu.
+   ══════════════════════════════════════════════════════════════════════════ */
+const PAGINA = 1000
+const TETO_LINHAS = 50_000
+
+async function agregar(
+  sb: SupabaseClient,
+  entrada: Record<string, unknown>,
+): Promise<string> {
+  const tabela = String(entrada.tabela ?? '')
+  if (!PODE_LER(tabela)) {
+    return `ERRO: a tabela "${tabela}" não está no catálogo que você pode consultar. Use uma das listadas no sistema.`
+  }
+
+  const metricas = (entrada.metricas ?? []) as Metrica[]
+  const invalido = validar(metricas)
+  if (invalido) return invalido
+
+  const agruparPor = entrada.agrupar_por ? String(entrada.agrupar_por) : undefined
+  const filtros = entrada.filtros as Filtro[] | undefined
+  const colunas = colunasNecessarias(tabela, agruparPor, metricas)
+
+  /* Só contagem de linhas, sem agrupar: o banco conta sozinho, sem trazer
+     linha nenhuma. */
+  if (!colunas.length) {
+    const filtrada = aplicarFiltros(sb.from(tabela).select('*', { count: 'exact', head: true }), filtros)
+    if (typeof filtrada === 'string') return filtrada
+    const { error, count } = await filtrada
+    if (error) return `ERRO na consulta: ${error.message}`
+    return JSON.stringify({ tabela, linhas_lidas: count ?? 0, grupos: [{ grupo: 'total', contagem_linhas: count ?? 0 }] })
+  }
+
+  const linhas: Record<string, unknown>[] = []
+  let bateuTeto = false
+  for (let de = 0; ; de += PAGINA) {
+    const filtrada = aplicarFiltros(sb.from(tabela).select(colunas.join(',')), filtros)
+    if (typeof filtrada === 'string') return filtrada
+    let q = filtrada
+    for (const c of colunas) q = q.order(c, { ascending: true, nullsFirst: true })
+
+    const { data, error } = await q.range(de, de + PAGINA - 1)
+    if (error) return `ERRO na consulta: ${error.message}`
+
+    const pagina = (data ?? []) as unknown as Record<string, unknown>[]
+    linhas.push(...pagina)
+    if (pagina.length < PAGINA) break
+    if (linhas.length >= TETO_LINHAS) { bateuTeto = true; break }
+  }
+
+  if (!linhas.length) {
+    return 'Nenhuma linha para agregar. Pode ser que o dado não exista, que o filtro não case com nada, ou que quem perguntou não tenha permissão de ver esta tabela.'
+  }
+
+  const r = agregarLinhas(tabela, linhas, agruparPor, metricas, filtros ?? [])
+  if (bateuTeto) {
+    r.avisos.push(`A leitura parou no teto de ${TETO_LINHAS} linhas: o resultado é PARCIAL. Diga isso na resposta, ou filtre mais.`)
+  }
+
+  return JSON.stringify({
+    tabela,
+    linhas_lidas: linhas.length,
+    ...(r.regras.length && { regras_aplicadas: r.regras }),
+    ...(r.avisos.length && { avisos: r.avisos }),
+    grupos: r.grupos,
+  })
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PAINEL DO ROBÔ  ·  os mesmos números da aba Painel
+
+   A IA discutindo um número diferente do que o Painel mostra, na mesma
+   janela, seria o pior resultado possível: o diretor não saberia em qual
+   acreditar. Então ela lê exatamente o que o robô calculou, com a sessão de
+   quem perguntou. Vão só a manchete e a frase: o detalhe, se ela precisar,
+   sai da agregar.
+   ══════════════════════════════════════════════════════════════════════════ */
+async function painelDoRobo(sb: SupabaseClient): Promise<string> {
+  try {
+    const cartoes = montarCartoes(await lerAcervo(sb))
+    return JSON.stringify({
+      cartoes: cartoes.map((c) => ({
+        area: c.area, titulo: c.titulo, numero: c.numero, contexto: c.sub, alerta: !!c.alerta,
+      })),
+    })
+  } catch (e) {
+    return `ERRO: o robô não conseguiu ler o banco (${e instanceof Error ? e.message : String(e)}).`
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -266,6 +457,12 @@ export interface PerguntaIA {
 }
 
 const MAX_VOLTAS = 8
+
+/** O código de erro que a API manda dentro do corpo, quando manda. */
+function codigoDoErro(e: InstanceType<typeof Anthropic.APIError>): string {
+  const corpo = e.error as { error?: { details?: { error_code?: string } } } | undefined
+  return corpo?.error?.details?.error_code ?? ''
+}
 
 export async function perguntarAoServidor(p: PerguntaIA): Promise<ResultadoIA> {
   const chave = process.env.ANTHROPIC_API_KEY
@@ -317,8 +514,26 @@ export async function perguntarAoServidor(p: PerguntaIA): Promise<ResultadoIA> {
       if (e instanceof Anthropic.AuthenticationError) {
         return { ok: false, erro: 'A chave da API da Anthropic foi recusada. Confira a ANTHROPIC_API_KEY.', status: 502 }
       }
+      /* O teto mensal da conta volta como 429, igual ao limite por minuto, mas
+         não passa com "tente em um minuto": só volta no mês seguinte ou com
+         limite maior. Mensagem errada aqui faria alguém ficar tentando à toa. */
       if (e instanceof Anthropic.RateLimitError) {
+        if (codigoDoErro(e) === 'enforced_spend_limit_reached') {
+          return { ok: false, erro: 'A conta da API atingiu o teto de gasto do mês. Aumente o limite no Console da Anthropic (Settings > Billing).', status: 402 }
+        }
         return { ok: false, erro: 'A API está com limite estourado agora. Tente de novo em um minuto.', status: 429 }
+      }
+      /* Crédito acabado e limite de gasto definido pela própria conta voltam
+         como 400. Sem esta checagem, a tela diria "a API respondeu 400" e
+         ninguém saberia que a solução é pôr crédito. */
+      if (e instanceof Anthropic.BadRequestError) {
+        const msg = e.message.toLowerCase()
+        if (msg.includes('credit balance')) {
+          return { ok: false, erro: 'Acabou o crédito da conta da API. Adicione crédito no Console da Anthropic (Settings > Billing).', status: 402 }
+        }
+        if (msg.includes('specified api usage limits') || msg.includes('specified workspace api usage limits')) {
+          return { ok: false, erro: 'A conta da API atingiu o limite de gasto que foi definido nela. Aumente o limite no Console da Anthropic (Settings > Billing).', status: 402 }
+        }
       }
       if (e instanceof Anthropic.APIError) {
         return { ok: false, erro: `A API respondeu ${e.status}: ${e.message}`, status: 502 }
@@ -360,6 +575,10 @@ export async function perguntarAoServidor(p: PerguntaIA): Promise<ResultadoIA> {
 
       if (pedido.name === 'consultar') {
         conteudo = await consultar(p.sb, args)
+      } else if (pedido.name === 'agregar') {
+        conteudo = await agregar(p.sb, args)
+      } else if (pedido.name === 'painel_do_robo') {
+        conteudo = await painelDoRobo(p.sb)
       } else if (pedido.name === 'montar_tabela') {
         blocos.push({
           tipo: 'tabela',
