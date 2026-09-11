@@ -36,6 +36,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient as criarSupabase } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { custoDoUso, PRECO } from '@/lib/ia/servidor'
+import { gastoDoDia, semApi, travasDaIA } from '@/lib/ia/travas'
 import { recusarOutraOrigem } from '@/lib/seguranca/mesma-origem'
 import {
   conferirSaida, esquemaDaSaida, mensagemDoEmail, paraIA, reciboDaIA, sistemaDoClassificador,
@@ -90,18 +91,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ erro: `No máximo ${MAX_POR_VEZ} e-mails por vez: a tela manda o resto em seguida.` }, { status: 413 })
   }
 
-  // ── o interruptor e a chave: os mesmos da IA Gestor ───────────────────────
-  const { data: cfg } = await supabase.from('ia_config').select('api_ligada, modelo, teto_diario_usd').eq('id', 1).maybeSingle()
-  if (!cfg?.api_ligada) {
-    return NextResponse.json({ erro: 'A IA pela API está desligada. Quem liga é o proprietário, no painel da IA (Ctrl+I).', desligada: true }, { status: 409 })
-  }
-  const chave = process.env.ANTHROPIC_API_KEY
-  if (!chave) {
-    return NextResponse.json({ erro: 'A IA está ligada, mas a chave não está no ambiente deste CRM (ANTHROPIC_API_KEY).', sem_chave: true }, { status: 503 })
-  }
+  // ── o interruptor, a chave e o teto: as travas de toda IA do CRM ───────────
+  const travas = await travasDaIA(supabase)
+  if (!travas.ok) return NextResponse.json(semApi(travas), { status: travas.status })
+  const chave = process.env.ANTHROPIC_API_KEY!
+  const cfg = { modelo: travas.modelo, teto_diario_usd: travas.teto }
 
-  // ── um lote de cada vez ────────────────────────────────────────────────────
-  const { data: emCurso } = await supabase.from('ia_pedidos').select('id')
+  const admin = criarSupabase(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+
+  /* ── um lote de cada vez ────────────────────────────────────────────────────
+     Lido pela service role: desde 11/09/2026 o pedido de IA do CRM é só de quem
+     pediu, e pela sessão cada pessoa só enxergaria o próprio lote em curso. */
+  const { data: emCurso } = await admin.from('ia_pedidos').select('id')
     .eq('estado', 'respondendo').contains('contexto', { origem: 'carteiro_gerencial' })
     .gte('criado_em', new Date(Date.now() - LOTE_VIVO_MS).toISOString()).limit(1)
   if (emCurso?.length) {
@@ -137,9 +140,8 @@ export async function POST(req: NextRequest) {
   const reserva = Number((elegiveis.length * (ENTRADA_MAXIMA_POR_EMAIL * preco.entrada + MAX_TOKENS_SAIDA * preco.saida) / 1_000_000).toFixed(6))
   const teto = Number(cfg.teto_diario_usd ?? 0)
   if (teto > 0) {
-    const desde = new Date(Date.now() - 86_400_000).toISOString()
-    const { data: gastos } = await supabase.from('ia_pedidos').select('custo_usd').gte('criado_em', desde).not('custo_usd', 'is', null)
-    const gasto = (gastos ?? []).reduce((s, g) => s + Number(g.custo_usd ?? 0), 0)
+    // O gasto da FAM inteira, somado pelo banco (lib/ia/travas.ts).
+    const gasto = (await gastoDoDia(supabase)).usd
     if (gasto + reserva > teto) {
       return NextResponse.json({
         erro: `Este lote pode custar até US$ ${reserva.toFixed(2)} e passaria do teto do dia (US$ ${teto.toFixed(2)}, já gastos US$ ${gasto.toFixed(2)}). Mande menos pedidos, ou aumente o teto.`,
@@ -148,9 +150,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const admin = criarSupabase(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
   const { data: pedido, error: erroReserva } = await admin.from('ia_pedidos').insert({
     pergunta: `Carteiro gerencial: classificar ${elegiveis.length} e-mail${elegiveis.length === 1 ? '' : 's'}`,
     escopo: 'crm',

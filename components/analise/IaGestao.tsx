@@ -54,10 +54,15 @@ export default function IaGestao() {
   const [erro, setErro] = useState('')
   const [verLista, setVerLista] = useState(true)
   const [quem, setQuem] = useState<{ nome: string | null; authId: string | null }>({ nome: null, authId: null })
+  /* Quem responde: a API (ligada e com chave) ou o notebook. Só muda o TEXTO
+     da tela; quem decide de verdade é a rota, a cada pergunta. */
+  const [pelaApi, setPelaApi] = useState(false)
+  const [emResposta, setEmResposta] = useState<string | null>(null)
   const fim = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!aberto) return
+    fetch('/api/ia/config').then((r) => r.json()).then((j) => setPelaApi(!!(j?.config?.api_ligada && j?.tem_chave))).catch(() => {})
     const supabase = createClient()
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
@@ -133,15 +138,50 @@ export default function IaGestao() {
     const guardadas = mensagens.map(m => ({ tipo: 'fala' as const, m }))
     const voando = pedidos
       .filter(p => (p.conversa_id ?? null) === atual && (p.estado === 'pendente' || p.estado === 'respondendo' || p.estado === 'erro'))
-      .filter(p => !mensagens.some(m => m.quem === 'marco' && m.texto.trim() === p.pergunta.trim()))
+      // A fala da pessoa é 'marco' pelo notebook e 'pessoa' pela API: vale qualquer uma que não seja a da IA.
+      .filter(p => !mensagens.some(m => m.quem !== 'ia' && m.texto.trim() === p.pergunta.trim()))
       .map(p => ({ tipo: 'voo' as const, p }))
     return [...guardadas, ...voando]
   }, [mensagens, pedidos, atual])
+
+  /* PELA API PRIMEIRO (11/09/2026): responde para quem estiver em qualquer
+     computador. Se a API não puder (desligada, sem chave ou teto do dia), a
+     rota devolve `motor: 'notebook'` e a pergunta segue para a fila do
+     notebook, como sempre foi. */
+  const perguntarPelaApi = async (pergunta: string): Promise<'feito' | 'notebook'> => {
+    setEmResposta(pergunta); setTexto('')
+    try {
+      const r = await fetch('/api/ia/gestao', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pergunta, conversa_id: atual }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (r.ok) {
+        if (j.conversa_id && j.conversa_id !== atual) setAtual(j.conversa_id)
+        else if (j.conversa_id) await carregarFio(j.conversa_id)
+        await carregar()
+        return 'feito'
+      }
+      if (j.motor === 'notebook') {
+        if (j.motivo === 'teto') setErro(`${j.erro} A pergunta foi para a fila do notebook.`)
+        return 'notebook'
+      }
+      setErro(j.erro ?? 'A IA não conseguiu responder.'); setTexto(pergunta)
+      await carregar()
+      return 'feito'
+    } catch {
+      setErro('A conexão caiu antes da resposta. Tente de novo.'); setTexto(pergunta)
+      return 'feito'
+    } finally {
+      setEmResposta(null)
+    }
+  }
 
   const perguntar = async (q: string) => {
     const pergunta = q.trim()
     if (!pergunta || enviando || somenteLeitura) return
     setEnviando(true); setErro('')
+    if (await perguntarPelaApi(pergunta) === 'feito') { setEnviando(false); return }
     const supabase = createClient()
 
     // Sem conversa aberta, a pergunta abre uma — e o título dela nasce da
@@ -208,7 +248,7 @@ export default function IaGestao() {
       {/* O GATILHO, agora no cabeçalho e não no canto. O dourado é o mesmo da
           tela dele: o que mudou foi o lugar, não a identidade. */}
       <button type="button" onClick={() => setAberto(v => !v)}
-        title="Pergunte sobre o acervo inteiro de análises. Responde pelo notebook, sem custo de API."
+        title="Pergunte sobre o acervo inteiro de análises."
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 7,
           padding: '7px 13px', borderRadius: 8, cursor: 'pointer',
@@ -299,8 +339,9 @@ export default function IaGestao() {
                   <>
                     <div style={{ fontSize: 12.5, color: 'var(--soft)', lineHeight: 1.55, marginBottom: 10 }}>
                       Ela compara as análises entre si: concentração, grupo econômico, o que se repete
-                      nas suas ressalvas. Quem responde é o Claude do seu notebook, então ele precisa
-                      estar ligado com o agente rodando.
+                      nas suas ressalvas. {pelaApi
+                        ? 'Quem responde é a IA pela API, de qualquer computador, e cada pergunta tem o custo registrado.'
+                        : 'Quem responde é o Claude do notebook do analista, então ele precisa estar ligado com o agente rodando.'}
                     </div>
                     {!somenteLeitura && SUGESTOES.map(s => (
                       <button key={s} type="button" onClick={() => perguntar(s)} disabled={enviando}
@@ -351,8 +392,8 @@ export default function IaGestao() {
                         background: '#fdf8e6', border: '1px solid #ecdfb4', borderRadius: 10,
                         padding: '10px 12px', fontSize: 12.5, color: '#8a6410', lineHeight: 1.5,
                       }}>
-                        {item.p.estado === 'respondendo' ? 'O notebook está respondendo…' : 'Na fila do notebook…'}
-                        {esperandoDemais(item.p) && (
+                        {item.p.motor === 'servidor' ? 'A IA está respondendo pela API…' : item.p.estado === 'respondendo' ? 'O notebook está respondendo…' : 'Na fila do notebook…'}
+                        {item.p.motor !== 'servidor' && esperandoDemais(item.p) && (
                           <div style={{ marginTop: 5 }}>
                             Está demorando mais que o normal. O agente da esteira precisa estar rodando
                             na máquina do analista: <b>ESTEIRA.cmd</b>.
@@ -362,6 +403,23 @@ export default function IaGestao() {
                     )}
                   </div>
                 ))}
+                {/* A pergunta indo pela API: a resposta leva de 20 a 90 segundos, e a tela não pode ficar muda. */}
+                {emResposta && !fio.some((i) => i.tipo === 'voo' && i.p.pergunta.trim() === emResposta.trim()) && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{
+                      background: '#e8f0fa', borderRadius: '10px 10px 2px 10px', padding: '10px 13px',
+                      fontSize: 13, color: '#0a1628', lineHeight: 1.5, marginLeft: 'auto', maxWidth: '92%', marginBottom: 7,
+                    }}>
+                      {emResposta}
+                    </div>
+                    <div style={{
+                      background: '#fdf8e6', border: '1px solid #ecdfb4', borderRadius: 10,
+                      padding: '10px 12px', fontSize: 12.5, color: '#8a6410', lineHeight: 1.5,
+                    }}>
+                      Perguntando…
+                    </div>
+                  </div>
+                )}
                 <div ref={fim} />
               </div>
 

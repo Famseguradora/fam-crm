@@ -11,8 +11,12 @@
 //               dele (scripts/esteira.mjs) pega, responde com o claude.exe da
 //               assinatura e grava a resposta. Gasto de IA: zero.
 //    servidor   a mesma pergunta respondida pela API Anthropic, para funcionar
-//               no celular e para a equipe. PROGRAMADO E DESLIGADO: só liga
-//               quando existir chave no ambiente e ele mandar.
+//               no celular e nos notebooks da equipe. Vale quando `ia_config`
+//               está ligada E a chave está no ambiente; quem decide é o
+//               servidor (lib/ia/travas.ts), nunca a tela. Desde 11/09/2026 a
+//               IA de Gestão e a IA do card tentam a API primeiro
+//               (/api/ia/gestao e /api/ia/card) e caem para o notebook quando
+//               a API não pode responder.
 //
 //  A tela não sabe qual motor respondeu. É por isso que trocar de motor amanhã
 //  não mexe em componente nenhum.
@@ -62,12 +66,6 @@ export const ATALHOS_CARD = [
   { id: 'risco', txt: 'O que me preocuparia aqui', pergunta: 'Lendo so o material desta pasta, aponte o que voce sinalizaria num comite de credito: alavancagem, queda de margem, concentracao, passivo relevante, ressalva de auditoria, qualquer coisa que mereca pergunta. Cite a origem de cada ponto.' },
   { id: 'falta', txt: 'O que está faltando', pergunta: 'Compare o que existe nesta pasta com o que uma analise de credito da FAM precisa (dois exercicios fechados, demonstrativo do ano corrente, Serasa, contrato social). Diga o que falta e o que esta incompleto, com nome de arquivo.' },
 ]
-
-/** O motor de hoje. Enquanto não houver chave de IA no ambiente do CRM, quem
- *  responde é o notebook — e isso é uma leitura do ambiente, não uma opinião
- *  da tela. */
-export const motorAtual = (): MotorIA =>
-  process.env.ANTHROPIC_API_KEY ? 'servidor' : 'notebook'
 
 /** Quanto tempo uma pergunta pode ficar esperando antes de a tela dizer que o
  *  notebook provavelmente está desligado. Três minutos: uma resposta do

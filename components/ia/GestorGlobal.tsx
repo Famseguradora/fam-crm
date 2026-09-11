@@ -43,7 +43,7 @@
 //  desta tela.
 // ============================================================================
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import BlocoIA, { type Bloco } from './BlocoIA'
@@ -642,12 +642,25 @@ export default function GestorGlobal() {
     setISugestao(0)
   }
 
+  /* O CURSOR VOLTA NO MESMO INSTANTE EM QUE O TEXTO MUDA. Com
+     requestAnimationFrame ele voltava um quadro depois: a primeira letra
+     digitada logo após o Tab caía no fim, e o cursor pulava para trás dela
+     ("/analisar ontem" virava "/analisar ntemo", pego pelo ensaio em
+     11/09/2026). O layout effect roda antes de o navegador tratar a próxima
+     tecla. */
+  const cursorPendente = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    if (cursorPendente.current === null || !campo.current) return
+    campo.current.setSelectionRange(cursorPendente.current, cursorPendente.current)
+    cursorPendente.current = null
+  }, [texto])
+
   function aceitarSugestao(s: Sugestao) {
     const novo = texto.slice(0, s.inicio) + s.inserir + texto.slice(s.fim)
+    cursorPendente.current = s.inicio + s.inserir.length
     setTexto(novo)
     setSugestoes([])
-    const pos = s.inicio + s.inserir.length
-    requestAnimationFrame(() => { campo.current?.focus(); campo.current?.setSelectionRange(pos, pos) })
+    campo.current?.focus()
   }
 
   async function perguntar(pergunta: string) {

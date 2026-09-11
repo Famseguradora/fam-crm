@@ -28,11 +28,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { perguntarAoServidor } from '@/lib/ia/servidor'
 import { novoIdConversa, tituloDe } from '@/lib/ia/gestao'
+import { fecharPedido, QUEDA_NO_MEIO, semApi, travasDaIA } from '@/lib/ia/travas'
+import { recusarOutraOrigem } from '@/lib/seguranca/mesma-origem'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
 export async function POST(req: NextRequest) {
+  // Uma página de outro site não pode gastar a IA em nome de quem está logado.
+  const recusa = recusarOutraOrigem(req)
+  if (recusa) return recusa
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ erro: 'Sessão expirada. Entre de novo.' }, { status: 401 })
@@ -44,50 +50,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ erro: 'Pergunta muito longa (o limite é 4000 caracteres).' }, { status: 422 })
   }
 
-  // ── 2. o interruptor ──────────────────────────────────────────────────────
-  const { data: cfg } = await supabase
-    .from('ia_config')
-    .select('api_ligada, modelo, esforco, teto_diario_usd')
-    .eq('id', 1)
-    .maybeSingle()
-
-  if (!cfg?.api_ligada) {
-    /* 409 e não 500: não é falha, é escolha. A tela usa este código para dizer
-       "a IA pela API está desligada" e oferecer o caminho do notebook. */
-    return NextResponse.json(
-      { erro: 'A IA pela API está desligada. Ligue em Configurações, ou pergunte pelo notebook.', desligada: true },
-      { status: 409 },
-    )
-  }
-
-  // ── 3. a chave ────────────────────────────────────────────────────────────
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json(
-      { erro: 'A IA está ligada mas a chave não está no ambiente do CRM (ANTHROPIC_API_KEY). Sem ela, nada roda.' },
-      { status: 503 },
-    )
-  }
-
-  // ── 4. o teto do dia ──────────────────────────────────────────────────────
-  const teto = Number(cfg.teto_diario_usd ?? 0)
-  if (teto > 0) {
-    const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-    const { data: gastos } = await supabase
-      .from('ia_pedidos')
-      .select('custo_usd')
-      .gte('criado_em', desde)
-      .not('custo_usd', 'is', null)
-    const gasto = (gastos ?? []).reduce((s, g) => s + Number(g.custo_usd ?? 0), 0)
-    if (gasto >= teto) {
-      return NextResponse.json(
-        {
-          erro: `O teto de gasto do dia (US$ ${teto.toFixed(2)}) foi atingido: já saíram US$ ${gasto.toFixed(2)} nas últimas 24 h. Aumente o teto em Configurações ou pergunte pelo notebook.`,
-          teto_estourado: true,
-        },
-        { status: 402 },
-      )
-    }
-  }
+  /* ── 2, 3 e 4. interruptor, chave e teto do dia ─────────────────────────
+     As mesmas travas de toda IA do CRM (lib/ia/travas.ts). O teto é o da
+     empresa inteira, somado pelo banco. 409 e não 500 quando desligada: não é
+     falha, é escolha, e a tela usa o `desligada` para voltar ao robô. */
+  const cfg = await travasDaIA(supabase)
+  if (!cfg.ok) return NextResponse.json(semApi(cfg), { status: cfg.status })
 
   const { data: quem } = await supabase
     .from('usuarios')
@@ -172,40 +140,40 @@ export async function POST(req: NextRequest) {
     .select('id')
     .maybeSingle()
 
-  const r = await perguntarAoServidor({
-    pergunta,
-    historico,
-    contexto,
-    modelo: String(cfg.modelo),
-    esforco: String(cfg.esforco),
-    sb: supabase,
-  })
+  /* Uma exceção no meio (a ferramenta que lê o banco, a rede) não pode deixar a
+     pergunta em "respondendo" para sempre: vira erro, e o pedido fecha. */
+  let r: Awaited<ReturnType<typeof perguntarAoServidor>>
+  try {
+    r = await perguntarAoServidor({
+      pergunta,
+      historico,
+      contexto,
+      modelo: String(cfg.modelo),
+      esforco: String(cfg.esforco),
+      sb: supabase,
+    })
+  } catch (e) {
+    console.error('[ia/perguntar]', e instanceof Error ? e.message : e)
+    r = { ok: false, erro: QUEDA_NO_MEIO, status: 502 }
+  }
 
   if (!r.ok) {
-    if (pedido) {
-      await supabase
-        .from('ia_pedidos')
-        .update({ estado: 'erro', erro: r.erro, respondido_em: new Date().toISOString() })
-        .eq('id', pedido.id)
-    }
+    if (pedido) await fecharPedido(supabase, pedido.id, { estado: 'erro', erro: r.erro, respondido_em: new Date().toISOString() })
     return NextResponse.json({ erro: r.erro }, { status: r.status })
   }
 
   if (pedido) {
-    await supabase
-      .from('ia_pedidos')
-      .update({
-        estado: 'pronta',
-        resposta: r.texto,
-        tokens_entrada: r.uso.entrada,
-        tokens_saida: r.uso.saida,
-        cache_escrita: r.uso.cache_escrita,
-        cache_leitura: r.uso.cache_leitura,
-        custo_usd: r.uso.custo_usd,
-        ferramentas: r.uso.ferramentas,
-        respondido_em: new Date().toISOString(),
-      })
-      .eq('id', pedido.id)
+    await fecharPedido(supabase, pedido.id, {
+      estado: 'pronta',
+      resposta: r.texto,
+      tokens_entrada: r.uso.entrada,
+      tokens_saida: r.uso.saida,
+      cache_escrita: r.uso.cache_escrita,
+      cache_leitura: r.uso.cache_leitura,
+      custo_usd: r.uso.custo_usd,
+      ferramentas: r.uso.ferramentas,
+      respondido_em: new Date().toISOString(),
+    })
 
     if (r.blocos.length) {
       await supabase.from('ia_blocos').insert(

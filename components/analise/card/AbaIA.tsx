@@ -26,11 +26,22 @@ export default function AbaIA({ f, ficha, quem }: PropsAba) {
   const [pedidos, setPedidos] = useState<PedidoIA[]>([])
   const [texto, setTexto] = useState('')
   const [enviando, setEnviando] = useState(false)
+  const [emResposta, setEmResposta] = useState<string | null>(null)
   const [erro, setErro] = useState('')
+  /* Quem responde: a API (ligada e com chave) ou o notebook. Muda o texto e o
+     que conta como material; a decisão de verdade é da rota, a cada pergunta. */
+  const [pelaApi, setPelaApi] = useState(false)
   const fim = useRef<HTMLDivElement>(null)
 
+  useEffect(() => {
+    let vivo = true
+    fetch('/api/ia/config').then((r) => r.json()).then((j) => { if (vivo) setPelaApi(!!(j?.config?.api_ligada && j?.tem_chave)) }).catch(() => {})
+    return () => { vivo = false }
+  }, [])
+
   const temAnalise = !!(ficha?.id || f.analise_id)
-  const temMaterial = temAnalise || (!!f.arquivos && f.arquivos.onde === 'raiz')
+  // Pela API o material é o banco, que todo card tem; pelo notebook, a análise ou a pasta na raiz.
+  const temMaterial = pelaApi || temAnalise || (!!f.arquivos && f.arquivos.onde === 'raiz')
 
   const carregar = useCallback(async () => {
     const supabase = createClient()
@@ -53,30 +64,50 @@ export default function AbaIA({ f, ficha, quem }: PropsAba) {
   }, [pedidos, carregar])
   useEffect(() => { fim.current?.scrollIntoView({ behavior: 'smooth' }) }, [pedidos.length])
 
+  /* PELA API PRIMEIRO (11/09/2026), para responder em qualquer computador. Se a
+     API não puder, a rota devolve `motor: 'notebook'` e a pergunta vai para a
+     fila do notebook, como antes. */
   const perguntar = async (q: string) => {
     const pergunta = q.trim()
     if (!pergunta || enviando) return
-    setEnviando(true); setErro('')
-    const supabase = createClient()
-    const { error } = await supabase.from('ia_pedidos').insert({
-      pergunta, escopo: 'analise', motor: 'notebook',
-      analise_id: f.analise_id, fila_id: f.id, pasta: f.pasta, chave: f.chave,
-      criado_por_auth_id: quem.authId, criado_por_nome: quem.nome,
-    })
-    if (error) setErro(error.message)
-    setTexto('')
-    await carregar()
-    setEnviando(false)
+    setEnviando(true); setErro(''); setEmResposta(pergunta); setTexto('')
+    try {
+      const r = await fetch('/api/ia/card', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ fila_id: f.id, pergunta }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (r.ok || j.motor !== 'notebook') {
+        if (!r.ok) { setErro(j.erro ?? 'A IA não conseguiu responder.'); setTexto(pergunta) }
+        await carregar()
+        return
+      }
+      if (j.motivo === 'teto') setErro(`${j.erro} A pergunta foi para a fila do notebook.`)
+      const supabase = createClient()
+      const { error } = await supabase.from('ia_pedidos').insert({
+        pergunta, escopo: 'analise', motor: 'notebook',
+        analise_id: f.analise_id, fila_id: f.id, pasta: f.pasta, chave: f.chave,
+        criado_por_auth_id: quem.authId, criado_por_nome: quem.nome,
+      })
+      if (error) setErro(error.message)
+      await carregar()
+    } catch {
+      setErro('A conexão caiu antes da resposta. Tente de novo.'); setTexto(pergunta)
+    } finally {
+      setEmResposta(null)
+      setEnviando(false)
+    }
   }
 
   return (
     <div className="an-bloco">
       <h4>Perguntar sobre este tomador</h4>
       <div className="an-ia-onde">
-        {temAnalise
-          ? <><b>É o mesmo auditor que fica dentro do relatório desta análise.</b> Mesma conversa, mesmo histórico: o que você perguntar aqui aparece lá, e o que perguntou lá aparece aqui. Ele lê o dossiê inteiro, com o texto dos documentos página a página.</>
-          : <><b>É o mesmo agente do relatório, lendo a pasta deste tomador.</b> Esta análise ainda não existe, então ele responde pelo que chegou até agora: os documentos da pasta e o texto que a triagem já extraiu. Quando a análise ficar pronta, a conversa passa a ser a do relatório.</>}
-        {' '}Quem responde é o Claude do notebook do analista, sem custo de API.
+        {pelaApi
+          ? <><b>Quem responde é a IA pela API, de qualquer computador.</b> Ela lê o que o CRM tem deste tomador: {temAnalise ? 'a análise publicada e os exercícios, ' : ''}o retrato da biblioteca, a lista de documentos, o caso e as operações. Os arquivos da pasta ela não abre: quando a resposta depender de um documento, ela diz. Cada pergunta tem o custo registrado.</>
+          : temAnalise
+            ? <><b>É o mesmo auditor que fica dentro do relatório desta análise.</b> Mesma conversa, mesmo histórico: o que você perguntar aqui aparece lá, e o que perguntou lá aparece aqui. Ele lê o dossiê inteiro, com o texto dos documentos página a página. Quem responde é o Claude do notebook do analista, sem custo de API.</>
+            : <><b>É o mesmo agente do relatório, lendo a pasta deste tomador.</b> Esta análise ainda não existe, então ele responde pelo que chegou até agora: os documentos da pasta e o texto que a triagem já extraiu. Quando a análise ficar pronta, a conversa passa a ser a do relatório. Quem responde é o Claude do notebook do analista, sem custo de API.</>}
       </div>
 
       {!temMaterial && (
@@ -89,15 +120,21 @@ export default function AbaIA({ f, ficha, quem }: PropsAba) {
         {pedidos.map(p => (
           <div key={p.id} style={{ display: 'contents' }}>
             <div className="an-balao eu">{p.pergunta}<span className="q">{p.criado_por_nome ?? 'alguém'} · {dataCurta(p.criado_em)}</span></div>
-            {p.estado === 'pronta' && <div className="an-balao ia">{p.resposta}<span className="q">{dataCurta(p.respondido_em)}{p.maquina ? ` · ${p.maquina}` : ''}</span></div>}
+            {p.estado === 'pronta' && <div className="an-balao ia">{p.resposta}<span className="q">{dataCurta(p.respondido_em)}{p.motor === 'servidor' ? ' · pela API' : p.maquina ? ` · ${p.maquina}` : ''}</span></div>}
             {p.estado === 'erro' && <div className="an-balao ruim">{p.erro || 'A IA não conseguiu responder.'}</div>}
             {(p.estado === 'pendente' || p.estado === 'respondendo') && (
-              <div className="an-balao ia"><span className="an-pensando"><i className="an-girando" />{p.estado === 'respondendo' ? 'Lendo os documentos…' : 'Na fila do notebook…'}</span>
-                {esperandoDemais(p) && <span className="q">Está demorando mais que o normal. O agente da esteira precisa estar rodando no notebook do analista.</span>}
+              <div className="an-balao ia"><span className="an-pensando"><i className="an-girando" />{p.motor === 'servidor' ? 'Consultando pela API…' : p.estado === 'respondendo' ? 'Lendo os documentos…' : 'Na fila do notebook…'}</span>
+                {p.motor !== 'servidor' && esperandoDemais(p) && <span className="q">Está demorando mais que o normal. O agente da esteira precisa estar rodando no notebook do analista.</span>}
               </div>
             )}
           </div>
         ))}
+        {emResposta && (
+          <>
+            <div className="an-balao eu">{emResposta}<span className="q">{quem.nome ?? 'você'} · agora</span></div>
+            <div className="an-balao ia"><span className="an-pensando"><i className="an-girando" />Perguntando…</span></div>
+          </>
+        )}
         <div ref={fim} />
       </div>
 

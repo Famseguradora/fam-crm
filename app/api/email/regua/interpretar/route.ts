@@ -20,6 +20,7 @@ import { custoDoUso } from '@/lib/ia/servidor'
 import { lerVersao, normalizar, reguaVigente, type ParametrosRegua } from '@/lib/email/regua'
 import type { Operacao } from '@/lib/email/comandos'
 import { recusarOutraOrigem } from '@/lib/seguranca/mesma-origem'
+import { semApi, travasDaIA } from '@/lib/ia/travas'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -123,18 +124,17 @@ export async function POST(req: NextRequest) {
   if (pedido.length < 3) return NextResponse.json({ erro: 'Diga o que muda na régua.' }, { status: 422 })
   if (pedido.length > 500) return NextResponse.json({ erro: 'Frase longa demais (o limite é 500 caracteres).' }, { status: 422 })
 
-  const { data: cfg } = await supabase.from('ia_config').select('api_ligada, modelo, teto_diario_usd').eq('id', 1).maybeSingle()
-  if (!cfg?.api_ligada) return NextResponse.json({ erro: 'A IA pela API está desligada: use a forma curta do comando.', desligada: true }, { status: 409 })
-  const chave = process.env.ANTHROPIC_API_KEY
-  if (!chave) return NextResponse.json({ erro: 'A IA está ligada, mas a chave não está no ambiente deste CRM (ANTHROPIC_API_KEY).', sem_chave: true }, { status: 503 })
-  const teto = Number(cfg.teto_diario_usd ?? 0)
-  if (teto > 0) {
-    const desde = new Date(Date.now() - 86_400_000).toISOString()
-    const { data: gastos } = await supabase.from('ia_pedidos').select('custo_usd').gte('criado_em', desde).not('custo_usd', 'is', null)
-    if ((gastos ?? []).reduce((s, g) => s + Number(g.custo_usd ?? 0), 0) >= teto) {
-      return NextResponse.json({ erro: `O teto de gasto do dia (US$ ${teto.toFixed(2)}) foi atingido.`, teto_estourado: true }, { status: 402 })
-    }
+  // As travas de toda IA do CRM, com o teto da empresa inteira (lib/ia/travas.ts).
+  const travas = await travasDaIA(supabase)
+  if (!travas.ok) {
+    const corpoErro = semApi(travas)
+    return NextResponse.json(
+      { ...corpoErro, erro: travas.motivo === 'desligada' ? 'A IA pela API está desligada: use a forma curta do comando.' : corpoErro.erro },
+      { status: travas.status },
+    )
   }
+  const chave = process.env.ANTHROPIC_API_KEY!
+  const cfg = { modelo: travas.modelo }
 
   const [{ data: mods }, { data: versoes }] = await Promise.all([
     supabase.from('modalidades').select('nome'),
