@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { maskCNPJ, maskMoeda, fmtMoeda, fmtMoedaCurta, fmtData, fmtPercent, titleCase, validarCNPJ } from '@/lib/utils'
-import { consultarCNPJ, type CartaoCNPJ } from '@/lib/cnpj'
+import { consultarCNPJpelaTela, type CartaoCNPJ } from '@/lib/cnpj'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario, Usuario, ComiteVoto, ComiteVotoHistorico, VotoComite, Anexo } from '@/types'
 import AnexosSection from '@/components/AnexosSection'
 import ComiteEntradaModal from '@/components/comite/ComiteEntradaModal'
@@ -311,7 +311,7 @@ export default function OperacoesPage() {
   async function buscarNaReceita() {
     setBuscandoCnpj(true); setMsgTomador(null)
     try {
-      const c = await consultarCNPJ(formTomador.cnpj)
+      const c = await consultarCNPJpelaTela(formTomador.cnpj)
       setCartaoCnpj(c)
       setFormTomador(f => ({ ...f, razao_social: f.razao_social.trim() ? f.razao_social : c.razao_social }))
       setMsgTomador({ tipo: 'sucesso', texto: `Receita: ${c.razao_social}${c.cidade ? ` · ${c.cidade}/${c.estado}` : ''}${c.situacao ? ` · ${c.situacao}` : ''}. O endereço e o contato entram ao salvar.` })

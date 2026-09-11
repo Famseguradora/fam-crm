@@ -186,6 +186,7 @@ export default function EditorAnalise({ ficha, aoSalvar }: {
   const [estado, setEstado] = useState<Record<string, Estado>>({})
   const [erro, setErro] = useState<Record<string, string>>({})
   const [ultima, setUltima] = useState<string>('')
+  const [notaTomador, setNotaTomador] = useState<string>('')
 
   /** Grava UM campo. Só é chamada quando o valor mudou de verdade. */
   const salvar = useCallback(async (c: CampoDef, texto: string) => {
@@ -278,6 +279,19 @@ export default function EditorAnalise({ ficha, aoSalvar }: {
     setEstado(e => ({ ...e, [c.k]: 'salvo' }))
     setUltima(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }))
     aoSalvar?.()
+
+    /* A ANÁLISE SALVA COMPLETA O TOMADOR (10/09/2026). "Após eu editar e
+       salvar, a análise deve ser salva complementando o tomador." Vazio se
+       preenche; limite diferente já gravado vai para a Conferência. A regra
+       mora na rota, e ela é idempotente: chamar a cada campo não duplica nada. */
+    const NOMES: Record<string, string> = { limite_aprovado: 'limite aprovado', cnae: 'CNAE', capital_social: 'capital social' }
+    fetch(`/api/analise/${ficha.id}/complementar-tomador`, { method: 'POST' })
+      .then(r => r.json())
+      .then(j => {
+        if (j?.conflito) setNotaTomador(j.conflito)
+        else if (j?.preenchidos?.length) setNotaTomador(`O cadastro do tomador foi completado: ${j.preenchidos.map((k: string) => NOMES[k] ?? k).join(', ')}.`)
+      })
+      .catch(() => { /* a análise já está salva; completar o tomador tenta de novo no próximo campo */ })
   }, [ficha, gravado, valores, aoSalvar])
 
   const mudou = (k: string) => (valores[k] ?? '') !== (gravado[k] ?? '')
@@ -290,6 +304,7 @@ export default function EditorAnalise({ ficha, aoSalvar }: {
         <b> não sobrescreve mais esta análise</b>: a diferença passa a aparecer como conflito, em
         vez de apagar o que você escreveu.
         {ultima && <> Última gravação às <b>{ultima}</b>.</>}
+        {notaTomador && <><br />{notaTomador}</>}
       </div>
 
       {BLOCOS.map(b => (

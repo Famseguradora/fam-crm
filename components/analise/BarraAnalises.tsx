@@ -22,7 +22,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { recadoLido, recadoArquivado, agruparPorEmpresa, type Recado, type FilaRica } from '@/lib/analise/mesa'
+import { recadoLido, recadoArquivado, agruparPorEmpresa, naMesa, type Recado, type FilaRica } from '@/lib/analise/mesa'
 
 export type AbaAnalises = 'mesa' | 'recados' | 'gestao' | 'acervo' | 'sala' | 'equipe' | 'alcadas' | 'sistema'
 
@@ -48,7 +48,7 @@ export function useContagensBarra(): ContagensBarra {
         /* AS COLUNAS DO AGRUPAMENTO vêm junto (09/09/2026). A barra dizia
            "8 na esteira" com quatro cartões no quadro: contava PASTAS, e a
            mesa desenha EMPRESAS. Uma empresa, um número, em toda a tela. */
-        supabase.from('analise_fila').select('id, criado_em, cnpj, tomador_id, nome, razao_social, pasta').limit(300),
+        supabase.from('analise_fila').select('id, criado_em, cnpj, tomador_id, nome, razao_social, pasta, situacao, caso_id, fora_do_disco_em').limit(300),
         supabase.from('analise_recados').select('id, lido_em, arquivado_em, lido_no_crm_em, arquivado_no_crm_em').limit(400),
         supabase.from('analises').select('id', { count: 'exact', head: true }).eq('vigente', true),
         supabase.from('agente_pedidos').select('id', { count: 'exact', head: true }).eq('status', 'aberto').is('decisao_crm', null),
@@ -57,7 +57,8 @@ export function useContagensBarra(): ContagensBarra {
       if (!vivo) return
       const rs = (recados.data ?? []) as Recado[]
       const desde = Date.now() - 24 * 3600 * 1000
-      const linhas = (fila.data ?? []) as unknown as FilaRica[]
+      // Quem saiu da Mesa sai da conta também: a mesma `naMesa` do quadro.
+      const linhas = ((fila.data ?? []) as unknown as FilaRica[]).filter(naMesa)
       /* A MESMA conta da Mesa, e pela mesma função: `agruparPorEmpresa`. A fase
          não importa aqui (só se conta quantos grupos existem), então vai uma
          constante — o que não pode é esta contagem ter regra própria. */
@@ -86,6 +87,65 @@ export function useContagensBarra(): ContagensBarra {
   }, [])
 
   return c
+}
+
+/* O AGENTE ESTEIRA (10/09/2026). "Tudo que eu tiver que clicar, você tem que
+   inserir dentro do sistema: um botão." Substitui o PARAR AGENTES.cmd + o
+   agentes.vbs. Só aparece para o proprietário e com o CRM rodando no notebook
+   (a rota diz `pode_ligar`); no site publicado não há o que ligar. */
+interface EstadoEsteira { pode_ligar: boolean; rodando?: boolean; desatualizada?: boolean; desde?: string | null }
+
+function BotaoEsteira() {
+  const [st, setSt] = useState<EstadoEsteira | null>(null)
+  const [ocupado, setOcupado] = useState(false)
+  const [aviso, setAviso] = useState('')
+
+  useEffect(() => {
+    let vivo = true
+    fetch('/api/agentes/esteira').then(r => r.json())
+      .then(j => { if (vivo && typeof j?.pode_ligar === 'boolean') setSt(j) })
+      .catch(() => { /* sem resposta, sem botão */ })
+    return () => { vivo = false }
+  }, [])
+
+  if (!st?.pode_ligar) return null
+  const parada = !st.rodando
+  const rotulo = ocupado ? (parada ? 'Ligando…' : 'Reiniciando…')
+    : parada ? 'Ligar a Esteira' : st.desatualizada ? 'Atualizar a Esteira' : 'Agente Esteira'
+
+  const clicar = async () => {
+    if (!parada && !st.desatualizada && !window.confirm('A Esteira está de pé e em dia. Reiniciar mesmo assim?\n\nNão derruba análise em andamento.')) return
+    setOcupado(true); setAviso('')
+    try {
+      const r = await fetch('/api/agentes/esteira', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reiniciar: !parada }),
+      })
+      const j = await r.json()
+      if (!r.ok) setAviso(j.erro ?? 'Não consegui ligar a Esteira.')
+      else {
+        setSt({ ...st, rodando: true, desatualizada: false, desde: j.desde })
+        setAviso(j.ja_estava ? 'Já estava de pé e em dia.' : j.reiniciada ? 'Reiniciada com o código de agora.' : 'Ligada, sem janela.')
+      }
+    } catch {
+      setAviso('A conexão com o CRM caiu.')
+    }
+    setOcupado(false)
+  }
+
+  return (
+    <>
+      <button type="button" disabled={ocupado} onClick={clicar}
+        className={`an-bt mini${parada ? ' azul' : st.desatualizada ? ' ouro' : ''}`}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 6 }}
+        title={parada ? 'Liga o agente da esteira nesta máquina, sem janela. É ele que monta as pastas, faz a triagem, o cadastro e dispara a análise.'
+          : st.desatualizada ? 'A Esteira está rodando um código mais velho que o de agora. Clique para reiniciar com o atual.'
+            : `A Esteira está de pé${st.desde ? ` desde ${new Date(st.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}.`}>
+        {!parada && <span aria-hidden className="an-pulso" />}
+        {rotulo}
+      </button>
+      {aviso && <span style={{ fontSize: 12, color: '#5a6b80', marginRight: 8 }}>{aviso}</span>}
+    </>
+  )
 }
 
 export default function BarraAnalises({ atual, aoTrocar, contagens }: {
@@ -128,6 +188,7 @@ export default function BarraAnalises({ atual, aoTrocar, contagens }: {
       </nav>
 
       <div className="an-links">
+        <BotaoEsteira />
         <span className={`an-pulso${contagens.vivo ? '' : ' off'}`}
           title={contagens.vivo ? 'O agente do notebook deu sinal nos últimos minutos' : 'Sem sinal do notebook: o agente da esteira não está rodando'} />
         {lk('sala', 'Sala de Comando', 'O painel executivo, com os gráficos e a esteira ao vivo')}

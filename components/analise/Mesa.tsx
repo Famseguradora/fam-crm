@@ -35,7 +35,7 @@ import { maskCNPJ } from '@/lib/utils'
 import { FASES, SLA_PADRAO, faseDe, corDaFase, nomeDaFase, SITUACAO, ORDEM, ETAPAS, type Fase } from '@/lib/analise/esteira'
 import {
   COLUNAS_MESA, nomeDaFicha, diasParado, iniciaisDe, corDoNome, desde, corta,
-  agruparPorEmpresa, nomeDoGrupo, type GrupoEmpresa,
+  agruparPorEmpresa, nomeDoGrupo, naMesa, type GrupoEmpresa,
   type FilaRica, type EstadoEsteira, type Encaminhamento,
 } from '@/lib/analise/mesa'
 import { nomeArea } from '@/lib/card/secoes'
@@ -101,7 +101,8 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     ])
     if (!vivo.atual) return
     if (f.error) setErro(f.error.message)
-    setFila((f.data ?? []) as unknown as FilaRica[])
+    // A pasta que foi para a rede sai do quadro: a regra é `naMesa`, a mesma da barra.
+    setFila(((f.data ?? []) as unknown as FilaRica[]).filter(naMesa))
     setEstado((e.data?.dados as EstadoEsteira | undefined) ?? null)
     setEstadoEm(e.data?.atualizado_em ?? null)
     setAcervo({ total: a.count ?? 0, revisadas: r.count ?? 0 })
@@ -259,6 +260,8 @@ Nada do que já foi salvo se perde.`)) return
     const chips: React.ReactNode[] = []
     const novo = agora - new Date(f.criado_em).getTime() < 24 * 3600 * 1000 && f.situacao === 'pendente' && !f.cadastro
     if (novo) chips.push(<span key="n" className="an-chip varr">chegou de novo</span>)
+    // Só chega aqui a não concluída com caso (ver `naMesa`): alguém tem que decidir.
+    if (f.fora_do_disco_em) chips.push(<span key="d" className="an-chip erro" title="A pasta não está mais na raiz nem em _concluidas. Se foi para a rede sem a análise terminar, o caso ainda está aberto.">Pasta fora do computador</span>)
     if (f.situacao === 'erro') chips.push(<span key="e" className="an-chip erro">Erro na análise</span>)
     else if (f.situacao === 'pausada') chips.push(<span key="p" className="an-chip erro">Pausada por você</span>)
     else if (f.situacao === 'aguardando_resposta') chips.push(<span key="q" className="an-chip duvida">Precisa de você</span>)
@@ -336,7 +339,7 @@ Nada do que já foi salvo se perde.`)) return
           {selo(f)}
           <div className="an-fi-nome">
             <b>{nome}</b>
-            <small>{comCnpj?.cnpj && (comCnpj.cnpj_confiavel || comCnpj.analise_id) ? maskCNPJ(comCnpj.cnpj) : 'CNPJ a confirmar'}</small>
+            <small>{comCnpj?.cnpj && (comCnpj.cnpj_confiavel || comCnpj.analise_id || comCnpj.tomador_id) ? maskCNPJ(comCnpj.cnpj) : 'CNPJ a confirmar'}</small>
           </div>
         </div>
 

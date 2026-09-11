@@ -159,14 +159,18 @@ export const SLA_PADRAO: Record<Fase, number> = { entrada: 1, conferencia: 3, li
    As quatro últimas entraram com o card (09/09/2026): são os botões da aba
    Análise do cockpit, um a um, e o agente as executa pelo mesmo caminho que o
    botão do cockpit executa (o /api/destravar e o /api/analisar do motor). */
-export const ORDENS = ['iniciar', 'pausar', 'retomar', 'parar', 'reconferir', 'forcar', 'ler_pasta', 'refazer', 'publicar'] as const
+export const ORDENS = ['iniciar', 'pausar', 'retomar', 'parar', 'reconferir', 'forcar', 'ler_pasta', 'refazer', 'publicar', 'liberar_triagem', 'excluir'] as const
 export type Ordem = (typeof ORDENS)[number]
 
 export const ORDEM: Record<Ordem, { rotulo: string; de: Situacao[]; explica: string }> = {
   iniciar: {
     rotulo: 'Analisar agora',
-    de: ['pendente', 'erro', 'concluida', 'aguardando_documentos'],
-    explica: 'Manda o motor começar. Em análise concluída, refaz do zero.',
+    /* `aguardando_resposta` entrou em 10/09/2026: o motor parava para perguntar
+       e a pergunta ficava só no _status.json, sem botão nenhum no card. Iniciar
+       ali é LIBERAR: a rota marca `liberar` nos dados e o agente responde a
+       pergunta com a decisão da pessoa antes de subir a análise. */
+    de: ['pendente', 'erro', 'concluida', 'aguardando_documentos', 'aguardando_resposta'],
+    explica: 'Manda o motor começar. Em análise concluída, refaz do zero. Parada numa pergunta, libera com a sua decisão.',
   },
   pausar: {
     rotulo: 'Parar',
@@ -202,6 +206,23 @@ export const ORDEM: Record<Ordem, { rotulo: string; de: Situacao[]; explica: str
     rotulo: 'Reler a pasta agora',
     de: ['bloqueada_documentos', 'aguardando_documentos', 'pendente', 'erro', 'pausada', 'aguardando_resposta'],
     explica: 'Abre o e-mail que estiver na pasta, refaz a triagem e refaz a lista do que falta.',
+  },
+  /* LIBERAR A TRIAGEM (10/09/2026). Na esteira automática faltar documento não
+     pula direto para a análise, como o `forcar` faz: a liberação dele leva o
+     caso para a fase seguinte, o Cadastro, e é o agente de Cadastro que manda
+     para o Crédito. Pular o Cadastro seria gastar a análise sem tomador. */
+  liberar_triagem: {
+    rotulo: 'Autorizar e seguir para o Cadastro',
+    de: ['bloqueada_documentos', 'aguardando_documentos', 'pendente'],
+    explica: 'Libera a triagem com o que está na pasta. O agente de Cadastro assume em seguida, e fica registrado que a liberação foi sua.',
+  },
+  /* EXCLUIR (10/09/2026): "às vezes vem tomadores repetidos". Quem dá esta ordem
+     é o botão Excluir do caso em triagem (`/api/casos/[id]/excluir`). O agente
+     move a pasta para `_excluidas` (nada é apagado) e o CRM tira o card da fila. */
+  excluir: {
+    rotulo: 'Excluir',
+    de: ['aguardando_documentos', 'bloqueada_documentos', 'pendente', 'aguardando_resposta', 'pausada', 'erro'],
+    explica: 'Tira a pasta da esteira: ela vai para _excluidas no notebook, sem apagar nada.',
   },
   forcar: {
     rotulo: 'Analisar mesmo assim',

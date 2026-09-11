@@ -172,6 +172,32 @@ export interface FilaRica {
   sincronizado_em: string | null
   ultima_ordem_resultado: string | null
   ultima_ordem_em: string | null
+  /** Nasceu do "Trazer para a esteira" e anda sozinha: triagem, cadastro e análise. */
+  automatica?: boolean
+  cadastro_agente?: CadastroAgente | null
+  cadastro_agente_em?: string | null
+  /** Quando o agente viu que a pasta saiu do computador (raiz e _concluidas). Ver `naMesa`. */
+  fora_do_disco_em?: string | null
+}
+
+/** O que o agente de Cadastro achou, gravado pelo CRM em `analise_fila.cadastro_agente`. */
+export interface CadastroAgente {
+  status: 'ok' | 'bloqueado' | 'erro'
+  hash: string | null
+  em: string
+  motivos: string[]
+  atencao: string[]
+  tomador_id: string | null
+  tomador_criado: boolean
+  razao_social: string | null
+  cnpj: string | null
+  receita: { ok: boolean; motivo?: string | null; situacao?: string | null }
+  fonte: 'receita' | 'serasa' | null
+  preenchidos: string[]
+  conferencia: { campo: string; contrato_social?: string | null; serasa?: string | null; confere: boolean; gravidade: 'ok' | 'atencao' | 'bloqueia'; nota?: string | null }[]
+  fontes: { contrato_social: boolean; serasa: boolean; cartao_cnpj: boolean }
+  observacoes: string | null
+  analise_mandada: boolean
 }
 
 export const COLUNAS_FILA = `
@@ -181,7 +207,7 @@ export const COLUNAS_FILA = `
   concluido_em, atualizado_em, chave, fase, nome, corretora, produto, docs, cadastro, arquivos,
   biblioteca, linha, parado_desde, analise_chave, substatus, substatus_por, substatus_em,
   instrucao, modo, arquivos_fora, arquivos_fora_em, arquivada, sincronizado_em,
-  ultima_ordem_resultado, ultima_ordem_em
+  ultima_ordem_resultado, ultima_ordem_em, automatica, cadastro_agente, cadastro_agente_em, fora_do_disco_em
 `
 
 /** As colunas leves, para a Mesa: sem arquivos e biblioteca, que pesam. A
@@ -192,8 +218,32 @@ export const COLUNAS_MESA = `
   trava_maquina, trava_em, ordem, ordem_por, ordem_em, ordem_dados, erro, criado_em, criado_por,
   concluido_em, atualizado_em, chave, fase, nome, corretora, produto, docs, cadastro, linha,
   parado_desde, analise_chave, substatus, substatus_por, substatus_em, instrucao, modo,
-  arquivos_fora, arquivos_fora_em, arquivada, sincronizado_em, ultima_ordem_resultado, ultima_ordem_em
+  arquivos_fora, arquivos_fora_em, arquivada, sincronizado_em, ultima_ordem_resultado, ultima_ordem_em,
+  automatica, cadastro_agente, fora_do_disco_em
 `
+
+/* QUEM FICA NA MESA  ·  10/09/2026
+   Pedido dele: "as análises de crédito, quando terminadas e quando eu recortar a
+   pasta do tomador do meu computador e colar na rede da FAM, não precisaria ficar
+   mais aparecendo dentro da tela Mesa". Rialma, Renova Energia e BOUW ficavam para
+   sempre: o agente parava de mandar a pasta, e nada tirava o card do quadro.
+
+   A marca `fora_do_disco_em` é do agente (scripts/esteira.mjs `conferirDisco`).
+   A regra de quem aparece mora AQUI, e a Mesa e a contagem da barra usam esta
+   mesma função, para o número de cima nunca discordar do quadro.
+
+     pasta no computador                      fica
+     concluída, pasta fora                    sai (foi para a rede; está no Acervo)
+     não concluída, sem caso, pasta fora      sai (card fantasma, nada pendurado nele)
+     não concluída, COM caso, pasta fora      fica, com o aviso: esconder seria sumir
+                                              com o trabalho de alguém sem ninguém ver
+
+   Só a Mesa esconde. O GET da esteira continua mandando a fila inteira, porque a
+   automação do agente lê de lá. */
+export function naMesa(f: Pick<FilaRica, 'situacao' | 'caso_id'> & { fora_do_disco_em?: string | null }) {
+  if (!f.fora_do_disco_em) return true
+  return f.situacao !== 'concluida' && !!f.caso_id
+}
 
 /** O retrato da esteira que o agente grava em `analise_estado` (id = 'esteira'). */
 export interface EstadoEsteira {

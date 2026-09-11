@@ -395,7 +395,8 @@ export default function CardAnalise({ id }: { id: string }) {
           <div style={{ minWidth: 0 }}>
             <h1 className="an-card-nome">{nome}</h1>
             <div className="an-card-cnpj">
-              {f.cnpj && (f.cnpj_confiavel || f.analise_id) ? maskCNPJ(f.cnpj) : 'CNPJ a confirmar'}
+              {/* CNPJ ligado a um tomador do CRM foi conferido por gente (pré-cadastro) ou pela Receita. */}
+              {f.cnpj && (f.cnpj_confiavel || f.analise_id || f.tomador_id) ? maskCNPJ(f.cnpj) : 'CNPJ a confirmar'}
               {f.razao_social && f.razao_social !== nome ? ` · ${f.razao_social}` : ''}
               {f.pasta !== nome ? <span title="A pasta no disco"> · pasta “{f.pasta}”</span> : null}
             </div>

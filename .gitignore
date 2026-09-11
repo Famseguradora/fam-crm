@@ -57,6 +57,7 @@ next-env.d.ts
 # Sandbox de testes (artefato de compilação)
 .sandbox-test/
 .tmp-email/
+.tmp-carteiro/
 
 # ── Caixa real da FAM: NUNCA versionar ──────────────────────────────────────
 # Estes arquivos têm o fluxo de caixa de verdade (remuneração de cada diretor,
@@ -95,6 +96,16 @@ scripts/esteira.json
 # O log do servidor da maquina (o que substituiu a janela preta). E historico
 # local, cresce sozinho e nao e fonte.
 crm-servidor.log
+
+# Os logs dos agentes da maquina (10/09/2026). Alem de historico local, eles
+# trazem ASSUNTO DE E-MAIL com razao social e valor de operacao ("ENC: RIALMA
+# S.A | SEGURO GARANTIA | R$ 9.500.000,00"), e o repositorio e publico (ver o
+# bloco abaixo). O agentes.log ja estava solto na raiz sem trava; o carteiro.log
+# e o esteira.log nasceram quando o agentes-subir.cmd separou os dois.
+/agentes.log
+/carteiro.log
+/esteira.log
+/esteira-erro.log
 
 # ============================================================================
 #  ENQUANTO O REPOSITORIO FOR PUBLICO (09/09/2026)

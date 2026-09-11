@@ -103,6 +103,7 @@ async function acharOuCriarConta(sb: SupabaseClient, conta: string, maquina: str
       pasta: f.pasta,
       so_com_anexo: f.so_com_anexo,
       so_nao_lidos: f.so_nao_lidos,
+      so_remetente_interno: f.so_remetente_interno,
       dias_para_tras: f.dias_para_tras,
       max_por_rodada: f.max_por_rodada,
       remetentes: f.remetentes,

@@ -24,6 +24,8 @@ import { lerEmail, anexosUteis, limparNome, ehArquivoDeEmail, type EmailLido } f
 import { mimePorNome } from '@/lib/anexos/mime'
 import { lerChecklistPorNome, type ItemCatalogo } from '@/lib/casos/checklist'
 import { cnpjDoAssunto, corretoraDoRemetente } from '@/lib/casos/pistas'
+import { abrirNaFila } from '@/lib/analise/abrir-fila'
+import { acharCorretoraNoEmail } from '@/lib/analise/corretoras.mjs'
 
 const BUCKET = 'fam-anexos'
 export const MAX_BYTES_EMAIL = 50 * 1024 * 1024
@@ -50,6 +52,8 @@ export interface ReciboDeAbertura {
   /** Quando o mesmo e-mail já tinha virado caso: não duplica, aponta o que existe. */
   ja_existia?: boolean
   caso?: { id: string; numero: number; assunto: string }
+  /** A análise automática que nasceu junto (a pasta que o notebook vai montar). */
+  fila?: { id: string; pasta: string }
   documentos: number
   ignorados: number
   falhas: string[]
@@ -138,6 +142,12 @@ export async function abrirCasoPorEmail(
      ou corrige, e `identificado_por` continua 'robo' até um humano mexer. */
   const cnpj = cnpjDoAssunto(email.assunto)
   const corretora = corretoraDoRemetente(email.email_de)
+  /* A CORRETORA CADASTRADA, lida do e-mail inteiro (10/09/2026). O remetente é
+     quase sempre alguém da FAM encaminhando; a corretora está no corpo. Achou
+     uma só: o caso nasce ligado a ela, e a tela mostra a lista já escolhida. */
+  const { data: listaCorretoras } = await supabase
+    .from('corretoras').select('id, razao_social, nome_fantasia, cnpj, email').eq('status', 'ativo')
+  const achada = acharCorretoraNoEmail({ email_de: email.email_de, corpo: email.corpo, assunto: email.assunto }, listaCorretoras ?? [])
 
   const { data: caso, error: erroCaso } = await supabase
     .from('casos')
@@ -148,7 +158,8 @@ export async function abrirCasoPorEmail(
       recebido_em: dataDoEmail(email.data),
       corpo: email.corpo || null,
       cnpj: cnpj?.valor ?? null,
-      corretora_texto: corretora?.valor ?? null,
+      corretora_texto: achada.achou ? achada.nome : (corretora?.valor ?? null),
+      corretora_id: achada.achou ? achada.corretora_id : null,
       etapa: 'triagem',
       criado_por_auth_id: entrada.autor.auth_id,
       criado_por_nome: entrada.autor.nome,
@@ -323,9 +334,23 @@ export async function abrirCasoPorEmail(
     if (nova?.id) await supabase.from('casos').update({ email_caixa_id: nova.id }).eq('id', caso.id)
   }
 
+  /* A PASTA NASCE NO CLIQUE (10/09/2026). Ordem do Marco: "quando eu clicar em
+     trazer para esteira, o agente deve ler o e-mail inteiro, criar a pasta do
+     tomador e já fazer a triagem". Até aqui a análise só entrava na fila no
+     Concluir da Triagem, e a pasta não existia enquanto ninguém clicasse. Agora
+     a fila abre na hora, marcada `automatica`: o agente do notebook monta a
+     pasta com o e-mail dentro, a triagem roda sozinha, o Cadastro em seguida, e
+     a análise de crédito começa quando nada faltar. */
+  const naFila = await abrirNaFila(supabase, {
+    id: caso.id, numero: caso.numero, assunto: caso.assunto,
+    cnpj: cnpj?.valor ?? null, razao_social: null, tomador_id: null,
+  }, entrada.autor.nome ?? 'Carteiro', { automatica: true })
+  if (!naFila.ok) falhas.push(`a esteira automática (${naFila.erro})`)
+
   return {
     ok: true,
     caso: { id: caso.id, numero: caso.numero, assunto: caso.assunto },
+    fila: naFila.ok ? naFila.fila : undefined,
     documentos: guardados,
     ignorados: email.anexos.length - documentos.length,
     falhas,

@@ -1,29 +1,39 @@
 'use client'
 
-/* MESA DE TRIAGEM — a segunda estação da esteira.
+/* MESA DE TRIAGEM E CADASTRO — a segunda estação da esteira.
 
-   Aqui o par (pessoa + agente) confere o que chegou e faz o cadastro único do
-   tomador. Tudo acontece nesta tela: não há botão fora do sistema, e o caso só
-   anda quando alguém conclui.
+   REFORMA DE 09/09/2026, e o motivo dela, nas palavras dele: "está muito
+   confuso e complexo o primeiro passo; o Comercial pode não querer rodar nada".
 
-   Três regras que estão desenhadas na tela, e não escondidas no código:
+   A tela virou TRÊS PASSOS NUMERADOS, um embaixo do outro, e cada um termina
+   num botão só:
 
-   1. O CNPJ é a chave. Sem ele o botão de concluir não liga, porque é o CNPJ que
-      junta caso, cadastro e análise — e é a falta dele que hoje deixa 213
-      tomadores fora da conferência.
-   2. Pendência de documento NÃO trava a esteira. Ela fica escrita, viaja no aviso
-      e o analista decide. Travar aqui só empurraria o trabalho para fora do
-      sistema, que é exatamente o que estamos desfazendo.
-   3. O que a pessoa decide vence o que o robô achou: item marcado à mão fica
-      marcado como `humano` e a releitura não o desfaz. */
+     1 · A empresa       digita o CNPJ, a Receita preenche, o TOMADOR JÁ NASCE
+     2 · Os documentos   arrasta o Serasa e o que faltar, aqui dentro
+     3 · Para a análise  quando quiser, e a pendência viaja junto
 
-import { useCallback, useEffect, useState } from 'react'
+   O QUE MUDOU DE VERDADE, e não é só desenho:
+
+   • O cadastro do tomador saiu do fim e veio para o passo 1. Antes ele só
+     nascia no "Concluir", junto com o envio para a análise — então não havia
+     como o Comercial deixar a empresa pré-cadastrada e ir embora. Agora há, e
+     o passo 3 é opcional. Quem manda a empresa para o banco é o passo 1.
+   • Documento entra pela tela. Antes só entrava o que veio dentro do e-mail, e
+     o Serasa (que chega depois, quase sempre) não tinha porta nenhuma.
+   • Nada aqui precisa de agente, de esteira ou de máquina ligada. Este caminho
+     é o do teclado, e é o principal.
+
+   As três regras antigas continuam valendo, e continuam desenhadas na tela:
+   o CNPJ é a chave; pendência de documento NÃO trava a esteira; e o que a
+   pessoa decide vence o que o robô achou. */
+
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { use as usePromise } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { maskCNPJ, validarCNPJ, fmtData } from '@/lib/utils'
-import { consultarCNPJ } from '@/lib/cnpj'
+import { consultarCNPJpelaTela } from '@/lib/cnpj'
 
 const CLASSES: { valor: string; rotulo: string }[] = [
   { valor: 'contabil', rotulo: 'Demonstração contábil' },
@@ -49,6 +59,7 @@ interface Caso {
   recebido_em: string | null; corpo: string | null
   cnpj: string | null; razao_social: string | null
   corretora_texto: string | null; produto: string | null
+  corretora_id: string | null; identificado_por: string | null
   etapa: string; tomador_id: string | null; criado_em: string
   criado_por_nome: string | null
   analise_fila_id: string | null
@@ -69,6 +80,27 @@ interface Item {
 const fmtBytes = (b: number | null) =>
   !b ? '' : b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`
 
+/** O cabeçalho de um passo: o número grande, o título e a linha que explica o
+ *  que aquele passo faz. Passo cumprido fica verde — é o único jeito de bater o
+ *  olho na tela e saber onde o caso parou sem ler nada. */
+function Passo({ n, titulo, pronto, children }: {
+  n: number; titulo: string; pronto: boolean; children: ReactNode
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 14 }}>
+      <span style={{
+        flexShrink: 0, width: 27, height: 27, borderRadius: '50%',
+        background: pronto ? '#1a7a4c' : '#1e4080', color: '#fff',
+        display: 'grid', placeItems: 'center', fontSize: 14, fontWeight: 700,
+      }}>{pronto ? '✓' : n}</span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 15.5, fontWeight: 700, color: '#0a1628' }}>{titulo}</div>
+        <div style={{ fontSize: 12.5, color: 'var(--soft)' }}>{children}</div>
+      </div>
+    </div>
+  )
+}
+
 export default function TriagemPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = usePromise(params)
   const router = useRouter()
@@ -87,8 +119,16 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
   // rascunho da identificação
   const [cnpj, setCnpj] = useState('')
   const [razao, setRazao] = useState('')
-  const [corretora, setCorretora] = useState('')
+  // A corretora é da LISTA do CRM (10/09/2026), a mesma do cadastro do tomador.
+  const [corretoraId, setCorretoraId] = useState('')
+  const [corretoras, setCorretoras] = useState<{ id: string; razao_social: string }[]>([])
   const [produto, setProduto] = useState('')
+
+  // passo 2: anexar à mão
+  const [classeNova, setClasseNova] = useState('serasa_pj')
+  const [subindo, setSubindo] = useState(false)
+  const [arrastando, setArrastando] = useState(false)
+  const seletor = useRef<HTMLInputElement>(null)
 
   const carregar = useCallback(async () => {
     const supabase = createClient()
@@ -97,7 +137,7 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
     setCaso(c as Caso)
     setCnpj((c as Caso).cnpj ?? '')
     setRazao((c as Caso).razao_social ?? '')
-    setCorretora((c as Caso).corretora_texto ?? '')
+    setCorretoraId((c as Caso).corretora_id ?? '')
     setProduto((c as Caso).produto ?? '')
 
     const { data: d } = await supabase
@@ -120,31 +160,11 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
 
   useEffect(() => { carregar() }, [carregar])
 
-  async function salvarIdentificacao() {
-    setSalvando(true); setErro(''); setRecado('')
-    const supabase = createClient()
-    const digitos = cnpj.replace(/\D/g, '')
-    if (digitos && !validarCNPJ(digitos)) {
-      setErro('CNPJ inválido: confira os dígitos.'); setSalvando(false); return
-    }
-    const { data, error } = await supabase
-      .from('casos')
-      .update({
-        cnpj: digitos || null,
-        razao_social: razao.trim() || null,
-        corretora_texto: corretora.trim() || null,
-        produto: produto.trim() || null,
-        identificado_por: 'humano',
-      })
-      .eq('id', id)
-      .select('id')
-    setSalvando(false)
-    // Escrita barrada por RLS volta zero linha e nenhum erro: por isso o teste é
-    // pelo que voltou, e não pela ausência de erro.
-    if (error || !data?.length) { setErro(error?.message ?? 'Você não tem permissão para editar este caso.'); return }
-    setRecado('Identificação salva.')
-    await carregar()
-  }
+  // A mesma consulta do Cadastro do tomador: ativas, em ordem de razão social.
+  useEffect(() => {
+    createClient().from('corretoras').select('id, razao_social').eq('status', 'ativo').order('razao_social')
+      .then(({ data }) => setCorretoras((data ?? []) as { id: string; razao_social: string }[]))
+  }, [])
 
   // Usa a MESMA consulta do botão Receita do Cadastro e da tela de Operações
   // (`lib/cnpj.ts`). Escrever um fetch próprio aqui traria dois defeitos de
@@ -155,7 +175,7 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
     if (digitos.length !== 14) { setErro('Digite o CNPJ completo para buscar.'); return }
     setBuscandoReceita(true); setErro('')
     try {
-      const cartao = await consultarCNPJ(digitos)
+      const cartao = await consultarCNPJpelaTela(digitos)
       setRazao(cartao.razao_social)
       setRecado(`Receita: ${cartao.razao_social}${cartao.situacao ? ' · ' + cartao.situacao : ''}`)
     } catch (e) {
@@ -163,6 +183,62 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
     }
     setBuscandoReceita(false)
   }
+
+  /* PASSO 1. Grava a identificação E cria o cadastro do tomador, numa ida só.
+     O cadastro é o mesmo `acharOuCriarTomadorPorCnpj` do resto do CRM: se o
+     CNPJ já existe, ele reaproveita e não sobrescreve nada. */
+  async function preCadastrar() {
+    setSalvando(true); setErro(''); setRecado('')
+    const digitos = cnpj.replace(/\D/g, '')
+    if (!validarCNPJ(digitos)) {
+      setErro('CNPJ inválido: confira os dígitos.'); setSalvando(false); return
+    }
+    try {
+      const r = await fetch(`/api/casos/${id}/pre-cadastro`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cnpj: digitos, razao_social: razao, corretora_id: corretoraId || null, produto }),
+      })
+      const j = await r.json()
+      if (!r.ok) { setErro(j.erro ?? 'Não consegui salvar.'); setSalvando(false); return }
+      setRecado(
+        (j.criado ? 'Tomador cadastrado' : 'Tomador já existia e foi vinculado') +
+        `: ${j.tomador.razao_social}.` +
+        (j.receita?.ok === false ? ` A Receita não respondeu (${j.receita.motivo}): confira endereço e contato na ficha.` : ''),
+      )
+      await carregar()
+    } catch {
+      setErro('A conexão caiu. Tente de novo.')
+    }
+    setSalvando(false)
+  }
+
+  /* PASSO 2. Os arquivos que chegaram depois do e-mail. A classe é escolhida
+     ANTES de soltar o arquivo, de propósito: é ela que faz o item do checklist
+     cair, e adivinhar pelo nome é justamente o que erra. */
+  const anexar = useCallback(async (arquivos: FileList | File[]) => {
+    const lista = Array.from(arquivos)
+    if (!lista.length) return
+    setSubindo(true); setErro(''); setRecado('')
+    const corpo = new FormData()
+    corpo.append('classe', classeNova)
+    for (const a of lista) corpo.append('arquivo', a)
+    try {
+      const r = await fetch(`/api/casos/${id}/documentos`, { method: 'POST', body: corpo })
+      const j = await r.json()
+      if (!r.ok) { setErro(j.erro ?? 'Não consegui anexar.'); setSubindo(false); return }
+      setRecado(
+        `${j.entraram} documento(s) anexado(s)` +
+        (j.itens_marcados?.length ? ', e a exigência correspondente foi marcada como recebida.' : '.') +
+        (j.no_tomador ? ' Como a triagem já foi concluída, eles nasceram direto na ficha do tomador.' : ''),
+      )
+      if (j.aviso) setErro(j.aviso)
+      await carregar()
+    } catch {
+      setErro('A conexão caiu no meio do envio. Confira a lista e tente de novo.')
+    }
+    setSubindo(false)
+  }, [classeNova, id, carregar])
 
   // As duas funções abaixo pintam a tela antes de a gravação voltar (a espera
   // por clique tornaria o checklist arrastado). Mas se a gravação falhar, a tela
@@ -235,6 +311,28 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
     setSalvando(false)
   }
 
+  /* EXCLUIR (10/09/2026): "às vezes vem tomadores repetidos". Só na triagem,
+     com a trava repetida no servidor. O caso sai do funil e fica no histórico;
+     a pasta do notebook vai para _excluidas; o tomador não é apagado. */
+  async function excluirCaso() {
+    const motivo = window.prompt('Por que excluir este caso?\n\nEx.: repetido do caso #17.')
+    if (motivo === null) return
+    if (!window.confirm(`Excluir o caso #${caso?.numero}?\n\nEle sai da triagem e do funil, e a pasta do notebook vai para _excluidas. Nada é apagado de vez e o tomador continua no cadastro.`)) return
+    setSalvando(true); setErro(''); setRecado('')
+    try {
+      const r = await fetch(`/api/casos/${id}/excluir`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ motivo }),
+      })
+      const j = await r.json()
+      if (!r.ok) { setErro(j.erro ?? 'Não consegui excluir.'); setSalvando(false); return }
+      router.push('/fluxo')
+      return
+    } catch {
+      setErro('A conexão caiu. Tente de novo.')
+    }
+    setSalvando(false)
+  }
+
   async function concluir() {
     setSalvando(true); setErro(''); setRecado('')
     try {
@@ -260,26 +358,50 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
   if (carregando) return <div style={{ padding: 24, color: 'var(--soft)' }}>Carregando…</div>
   if (!caso) return <div style={{ padding: 24 }} className="alert-error">{erro || 'Caso não encontrado.'}</div>
 
-  const podeEditar = !somenteLeitura && !caso.tomador_id
+  /* QUEM DIZ QUE ACABOU É A ETAPA, e não o `tomador_id`: desde o pré-cadastro,
+     ter tomador é o estado normal de um caso ainda em triagem. */
+  const naAnalise = caso.etapa === 'analise'
+  const excluido = caso.etapa === 'descartado'
+  const naTriagem = caso.etapa === 'comercial' || caso.etapa === 'triagem'
+  const podeEditar = !somenteLeitura && !naAnalise && !excluido
   const cnpjOk = cnpj.replace(/\D/g, '').length === 14
+  const salvo = cnpjOk && caso.cnpj === cnpj.replace(/\D/g, '')
+  const cadastrado = !!caso.tomador_id && salvo
   const pendentes = itens.filter((i) => !['ok', 'dispensado'].includes(i.situacao))
   const bloqueando = pendentes.filter((i) => i.caso_item_catalogo.exigencia === 'bloqueia')
 
   return (
     <div style={{ padding: '20px 0' }}>
       {/* ── cabeçalho ── */}
-      <button onClick={() => router.push('/comercial')} className="btn-clear" style={{ marginBottom: 12 }}>
-        ← Voltar para a entrada
+      <button onClick={() => router.push('/fluxo')} className="btn-clear" style={{ marginBottom: 12 }}>
+        ← Voltar para o funil
       </button>
 
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
         <h1 style={{ fontSize: 21, fontWeight: 700, color: '#0a1628', margin: 0 }}>
-          Caso #{caso.numero}
+          Triagem e cadastro · caso #{caso.numero}
         </h1>
-        {caso.tomador_id && <span className="badge badge-green">na fila de análise</span>}
+        {naAnalise && <span className="badge badge-green">na fila de análise</span>}
+        {!naAnalise && cadastrado && <span className="badge badge-blue">pré-cadastrado</span>}
+        {excluido && <span className="badge badge-gray">excluído</span>}
+        {naTriagem && !somenteLeitura && (
+          <button
+            type="button" className="btn-secondary" onClick={excluirCaso} disabled={salvando}
+            style={{ marginLeft: 'auto', color: '#a02020', borderColor: '#e0a0a0' }}
+            title="Para caso repetido: sai da triagem e do funil, a pasta vai para _excluidas, o tomador fica."
+          >
+            Excluir
+          </button>
+        )}
       </div>
+      {excluido && (caso as Caso & { motivo_descarte?: string | null }).motivo_descarte && (
+        <p style={{ fontSize: 13, color: '#a02020', margin: '4px 0 0' }}>
+          Excluído: {(caso as Caso & { motivo_descarte?: string | null }).motivo_descarte}
+        </p>
+      )}
       <p style={{ color: 'var(--soft)', fontSize: 14, margin: '4px 0 18px' }}>
-        {caso.assunto} · de {caso.remetente_nome ?? 'remetente desconhecido'}
+        {caso.assunto}
+        {caso.remetente_nome ? ` · de ${caso.remetente_nome}` : ''}
         {caso.remetente_email ? ` (${caso.remetente_email})` : ''} · entrou em {fmtData(caso.criado_em)}
         {caso.criado_por_nome ? ` por ${caso.criado_por_nome}` : ''}
       </p>
@@ -287,86 +409,18 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
       {erro && <div className="alert-error" style={{ marginBottom: 14 }}>{erro}</div>}
       {recado && <div className="alert-success" style={{ marginBottom: 14 }}>{recado}</div>}
 
-      {/* `auto-fit` em vez de duas colunas fixas: no celular as duas viram uma
-          sozinhas, sem media query e sem classe nova no globals.css. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 330px), 1fr))', gap: 16, alignItems: 'start' }}>
-        {/* ── coluna esquerda: documentos ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
-          <div className="card-panel">
-            <div className="section-title"><span className="dot" />Documentos que vieram no e-mail</div>
-            {docs.length === 0 ? (
-              <p style={{ color: 'var(--soft)', fontSize: 14 }}>
-                Nenhum documento neste caso. O e-mail veio sem anexo útil.
-              </p>
-            ) : (
-              <div className="fam-table-wrap">
-                <table className="fam-table">
-                  <thead>
-                    <tr>
-                      <th>Arquivo</th>
-                      <th style={{ width: 200 }}>É o quê</th>
-                      <th style={{ width: 78 }}>Tamanho</th>
-                      <th style={{ width: 74 }} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {docs.map((d) => (
-                      <tr key={d.id}>
-                        <td>
-                          <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{d.nome}</div>
-                          {d.certeza === 'nula' && (
-                            <div style={{ fontSize: 12, color: '#a02020' }}>não consegui abrir</div>
-                          )}
-                        </td>
-                        <td>
-                          <select
-                            className="fam-input" value={d.classe} disabled={!podeEditar}
-                            onChange={(e) => trocarClasse(d.id, e.target.value)}
-                            style={{ fontSize: 13, padding: '5px 8px' }}
-                          >
-                            {CLASSES.map((c) => (
-                              <option key={c.valor} value={c.valor}>{c.rotulo}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td style={{ color: 'var(--soft)' }}>{fmtBytes(d.bytes)}</td>
-                        <td>
-                          <button className="btn-clear" onClick={() => abrirDocumento(d)}>abrir</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 960 }}>
 
-          {/* corpo do e-mail: é onde moram corretora, produto e condições */}
-          {caso.corpo && (
-            <div className="card-panel">
-              <div
-                className="section-title"
-                style={{ cursor: 'pointer', marginBottom: verCorpo ? 14 : 0 }}
-                onClick={() => setVerCorpo((v) => !v)}
-              >
-                <span className="dot" />O que o e-mail dizia {verCorpo ? '▾' : '▸'}
-              </div>
-              {verCorpo && (
-                <pre style={{
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit',
-                  fontSize: 13.5, color: '#26374a', margin: 0, maxHeight: 340, overflowY: 'auto',
-                }}>{caso.corpo}</pre>
-              )}
-            </div>
-          )}
-        </div>
+        {/* ══ PASSO 1 · A EMPRESA ═══════════════════════════════════════════ */}
+        <div className="card-panel" style={{ borderColor: cadastrado ? undefined : '#1e4080' }}>
+          <Passo n={1} titulo="A empresa" pronto={cadastrado}>
+            {cadastrado
+              ? 'O tomador está no banco. Dá para parar aqui: o resto é quando quiser.'
+              : 'Digite o CNPJ e clique em Receita. Ao salvar, o tomador já entra no cadastro do CRM.'}
+          </Passo>
 
-        {/* ── coluna direita: identificação + checklist + concluir ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
-          <div className="card-panel">
-            <div className="section-title"><span className="dot" />Quem é o tomador</div>
-
-            <div className="form-field" style={{ marginBottom: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 12 }}>
+            <div className="form-field">
               <label className="form-label">CNPJ</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
@@ -384,129 +438,272 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
               </div>
             </div>
 
-            <div className="form-field" style={{ marginBottom: 12 }}>
+            <div className="form-field">
               <label className="form-label">Razão social</label>
               <input className="fam-input" value={razao} disabled={!podeEditar}
-                onChange={(e) => setRazao(e.target.value)} />
+                onChange={(e) => setRazao(e.target.value)} placeholder="a Receita preenche" />
             </div>
 
-            <div className="form-field" style={{ marginBottom: 12 }}>
-              <label className="form-label">Corretora (como veio no e-mail)</label>
-              <input className="fam-input" value={corretora} disabled={!podeEditar}
-                onChange={(e) => setCorretora(e.target.value)} />
+            <div className="form-field">
+              <label className="form-label">Corretora</label>
+              <select className="fam-input" value={corretoraId} disabled={!podeEditar}
+                onChange={(e) => setCorretoraId(e.target.value)}>
+                <option value="">— Selecione a corretora —</option>
+                {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
+              </select>
+              {caso.corretora_id && corretoraId === caso.corretora_id && caso.identificado_por !== 'humano' && (
+                <span style={{ fontSize: 12, color: 'var(--soft)' }}>identificada pelo agente no e-mail</span>
+              )}
+              {!caso.corretora_id && !corretoraId && caso.corretora_texto && (
+                <span style={{ fontSize: 12, color: '#8a6410' }}>
+                  no e-mail aparece &quot;{caso.corretora_texto}&quot;, que não está no cadastro de corretoras
+                </span>
+              )}
             </div>
 
-            <div className="form-field" style={{ marginBottom: 14 }}>
+            <div className="form-field">
               <label className="form-label">Produto</label>
               <input className="fam-input" value={produto} disabled={!podeEditar}
                 onChange={(e) => setProduto(e.target.value)}
                 placeholder="Garantia Executante, Judicial…" />
             </div>
+          </div>
 
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 14 }}>
             {podeEditar && (
-              <button className="btn-secondary" onClick={salvarIdentificacao} disabled={salvando}>
-                {salvando ? 'Salvando…' : 'Salvar identificação'}
+              <button className="btn-primary" onClick={preCadastrar} disabled={!cnpjOk || salvando}>
+                {salvando ? 'Salvando…' : cadastrado ? 'Salvar de novo' : 'Salvar e cadastrar o tomador'}
               </button>
+            )}
+            {caso.tomador_id && (
+              <button className="btn-secondary" onClick={() => router.push(`/tomadores/${caso.tomador_id}`)}>
+                Abrir a ficha do tomador →
+              </button>
+            )}
+            {!cnpjOk && (
+              <span style={{ fontSize: 12.5, color: 'var(--soft)' }}>
+                Sem o CNPJ nada anda: é ele que liga caso, cadastro e análise.
+              </span>
             )}
           </div>
 
-          <div className="card-panel">
-            <div className="section-title"><span className="dot" />O que a política exige</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {itens.map((i) => {
-                const s = SITUACOES.find((x) => x.valor === i.situacao) ?? SITUACOES[4]
-                return (
-                  <div key={i.id}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 13.5, fontWeight: 600, color: '#0a1628' }}>
-                        {i.caso_item_catalogo.nome}
+          {/* O resto do Cadastro Básico (endereço, contato, porte, limite) vive
+              na ficha do tomador e é preenchido pela Receita neste momento.
+              Repetir aqueles campos aqui criaria uma segunda tela de cadastro,
+              que é exatamente o que este CRM não pode ter. */}
+          {cadastrado && (
+            <p style={{ fontSize: 12.5, color: 'var(--soft)', margin: '10px 0 0' }}>
+              Endereço, contato e sócios vieram do cartão CNPJ e estão na ficha. Porte, limite e
+              observações se editam lá, no Cadastro do tomador.
+            </p>
+          )}
+        </div>
+
+        {/* ══ PASSO 2 · OS DOCUMENTOS ══════════════════════════════════════ */}
+        <div className="card-panel">
+          <Passo n={2} titulo="Os documentos" pronto={docs.length > 0}>
+            O que veio no e-mail já está aqui. O Serasa e o que faltar, você solta abaixo.
+          </Passo>
+
+          {podeEditar && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
+              <div className="form-field" style={{ minWidth: 210, flex: '0 1 240px', marginBottom: 0 }}>
+                <label className="form-label">O que você vai anexar</label>
+                <select className="fam-input" value={classeNova} onChange={(e) => setClasseNova(e.target.value)}>
+                  {CLASSES.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {podeEditar && (
+            <div
+              onDragOver={(e) => { e.preventDefault(); setArrastando(true) }}
+              onDragLeave={() => setArrastando(false)}
+              onDrop={(e) => { e.preventDefault(); setArrastando(false); anexar(e.dataTransfer.files) }}
+              onClick={() => seletor.current?.click()}
+              style={{
+                border: `2px dashed ${arrastando ? '#1e4080' : 'var(--border)'}`,
+                background: arrastando ? '#f2f6fd' : '#fbfcfe',
+                borderRadius: 10, padding: '18px 14px', textAlign: 'center',
+                cursor: subindo ? 'progress' : 'pointer', marginBottom: 14,
+              }}
+            >
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0a1628' }}>
+                {subindo ? 'Enviando…' : 'Solte os arquivos aqui, ou clique para escolher'}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--soft)', marginTop: 3 }}>
+                PDF, Excel, imagem. Até 50 MB cada. Vários de uma vez.
+              </div>
+              <input
+                ref={seletor} type="file" multiple hidden
+                onChange={(e) => { if (e.target.files) anexar(e.target.files); e.target.value = '' }}
+              />
+            </div>
+          )}
+
+          {docs.length === 0 ? (
+            <p style={{ color: 'var(--soft)', fontSize: 14, margin: 0 }}>
+              Nenhum documento ainda.
+            </p>
+          ) : (
+            <div className="fam-table-wrap">
+              <table className="fam-table">
+                <thead>
+                  <tr>
+                    <th>Arquivo</th>
+                    <th style={{ width: 200 }}>É o quê</th>
+                    <th style={{ width: 78 }}>Tamanho</th>
+                    <th style={{ width: 74 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {docs.map((d) => (
+                    <tr key={d.id}>
+                      <td>
+                        <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{d.nome}</div>
+                        {d.certeza === 'nula' && (
+                          <div style={{ fontSize: 12, color: '#a02020' }}>não consegui abrir</div>
+                        )}
+                      </td>
+                      <td>
+                        <select
+                          className="fam-input" value={d.classe} disabled={!podeEditar}
+                          onChange={(e) => trocarClasse(d.id, e.target.value)}
+                          style={{ fontSize: 13, padding: '5px 8px' }}
+                        >
+                          {CLASSES.map((c) => (
+                            <option key={c.valor} value={c.valor}>{c.rotulo}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={{ color: 'var(--soft)' }}>{fmtBytes(d.bytes)}</td>
+                      <td>
+                        <button className="btn-clear" onClick={() => abrirDocumento(d)}>abrir</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* ══ PASSO 3 · PARA A ANÁLISE ═════════════════════════════════════ */}
+        <div className="card-panel" style={{ borderColor: !naAnalise && cadastrado ? '#e8b84b' : undefined }}>
+          <Passo n={3} titulo="Mandar para a análise de crédito" pronto={naAnalise}>
+            {naAnalise
+              ? 'Já foi. A análise é feita no Sistema de Análise, dentro do CRM.'
+              : caso.analise_fila_id
+                ? 'A esteira automática já está com este caso: a pasta foi criada no notebook, e a triagem, o cadastro e a análise andam sozinhos. Este botão só é preciso para concluir à mão.'
+                : 'Opcional agora. Pendência de documento não trava: ela viaja junto e o analista decide.'}
+          </Passo>
+          {!naAnalise && caso.analise_fila_id && (
+            <div style={{ marginBottom: 12 }}>
+              <button className="btn-secondary" onClick={() => router.push(`/analises/mesa/${caso.analise_fila_id}`)}>
+                Acompanhar na esteira →
+              </button>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 11, marginBottom: 14 }}>
+            {itens.map((i) => {
+              const s = SITUACOES.find((x) => x.valor === i.situacao) ?? SITUACOES[4]
+              return (
+                <div key={i.id}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, color: '#0a1628' }}>
+                      {i.caso_item_catalogo.nome}
+                    </span>
+                    <span className={`badge ${s.badge}`}>{s.rotulo}</span>
+                    {i.caso_item_catalogo.exigencia === 'bloqueia' && !['ok', 'dispensado'].includes(i.situacao) && (
+                      <span style={{ fontSize: 11.5, color: '#a02020' }}>
+                        {i.caso_item_catalogo.frase_falta}
                       </span>
-                      <span className={`badge ${s.badge}`}>{s.rotulo}</span>
-                      {i.caso_item_catalogo.exigencia === 'bloqueia' && !['ok', 'dispensado'].includes(i.situacao) && (
-                        <span style={{ fontSize: 11.5, color: '#a02020' }}>
-                          {i.caso_item_catalogo.frase_falta}
-                        </span>
-                      )}
-                      {i.por === 'humano' && (
-                        <span style={{ fontSize: 11, color: 'var(--soft)' }}>decidido por pessoa</span>
-                      )}
-                    </div>
-                    {podeEditar && (
-                      <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
-                        {SITUACOES.map((op) => (
-                          <button
-                            key={op.valor} onClick={() => marcarItem(i.id, op.valor)}
-                            className="btn-clear"
-                            style={{
-                              fontSize: 11.5, padding: '4px 9px',
-                              background: i.situacao === op.valor ? '#1e4080' : undefined,
-                              color: i.situacao === op.valor ? '#fff' : undefined,
-                              borderColor: i.situacao === op.valor ? '#1e4080' : undefined,
-                            }}
-                          >
-                            {op.rotulo}
-                          </button>
-                        ))}
-                      </div>
+                    )}
+                    {i.por === 'humano' && (
+                      <span style={{ fontSize: 11, color: 'var(--soft)' }}>decidido por pessoa</span>
                     )}
                   </div>
-                )
-              })}
-            </div>
+                  {podeEditar && (
+                    <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
+                      {SITUACOES.map((op) => (
+                        <button
+                          key={op.valor} onClick={() => marcarItem(i.id, op.valor)}
+                          className="btn-clear"
+                          style={{
+                            fontSize: 11.5, padding: '4px 9px',
+                            background: i.situacao === op.valor ? '#1e4080' : undefined,
+                            color: i.situacao === op.valor ? '#fff' : undefined,
+                            borderColor: i.situacao === op.valor ? '#1e4080' : undefined,
+                          }}
+                        >
+                          {op.rotulo}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
 
-          {/* ── concluir ── */}
-          {!caso.tomador_id ? (
-            <div className="card-panel" style={{ borderColor: cnpjOk ? '#e8b84b' : 'var(--border)' }}>
-              <div className="section-title"><span className="dot" />Concluir a triagem</div>
-              <p style={{ fontSize: 13, color: 'var(--soft)', margin: '0 0 12px' }}>
-                {cnpjOk
-                  ? 'Cria o cadastro do tomador (ou reaproveita, se o CNPJ já existir), leva os documentos para a ficha dele e avisa a equipe que entrou na fila de análise.'
-                  : 'Preencha e salve o CNPJ primeiro: é ele que liga o caso ao cadastro e à análise.'}
-              </p>
-              {bloqueando.length > 0 && cnpjOk && (
-                <p style={{ fontSize: 12.5, color: '#8a6410', background: '#fdf4dd', border: '1px solid #e8b84b', borderRadius: 8, padding: '8px 10px', margin: '0 0 12px' }}>
-                  Falta {bloqueando.map((i) => i.caso_item_catalogo.nome).join(' · ')}. Dá para concluir assim
+          {!naAnalise ? (
+            <>
+              {bloqueando.length > 0 && salvo && (
+                <p style={{
+                  fontSize: 12.5, color: '#8a6410', background: '#fdf4dd',
+                  border: '1px solid #e8b84b', borderRadius: 8, padding: '8px 10px', margin: '0 0 12px',
+                }}>
+                  Falta {bloqueando.map((i) => i.caso_item_catalogo.nome).join(' · ')}. Dá para mandar assim
                   mesmo: a pendência viaja junto e quem decide se a análise começa é o analista.
                 </p>
               )}
               <button
                 className="btn-primary" onClick={concluir}
-                disabled={!podeEditar || !cnpjOk || salvando || caso.cnpj !== cnpj.replace(/\D/g, '')}
+                disabled={!podeEditar || !salvo || salvando}
               >
-                {salvando ? 'Concluindo…' : 'Concluir e enviar para análise'}
+                {salvando ? 'Enviando…' : 'Concluir e enviar para análise'}
               </button>
-              {cnpjOk && caso.cnpj !== cnpj.replace(/\D/g, '') && (
+              {!salvo && (
                 <div style={{ fontSize: 12, color: 'var(--soft)', marginTop: 6 }}>
-                  Salve a identificação antes de concluir.
+                  Termine o passo 1 primeiro.
                 </div>
               )}
-            </div>
+            </>
           ) : (
-            <div className="card-panel">
-              <div className="section-title"><span className="dot" />Cadastro feito</div>
-              <p style={{ fontSize: 13, color: 'var(--soft)', margin: '0 0 12px' }}>
-                {caso.analise_fila_id
-                  ? 'Este caso já virou cadastro de tomador e está na esteira da análise de crédito.'
-                  : 'Este caso já virou cadastro de tomador, mas não está na esteira da análise.'}
-              </p>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-                {caso.analise_fila_id ? (
-                  <button className="btn-secondary" onClick={() => router.push('/analises')}>
-                    Ver na esteira da análise →
-                  </button>
-                ) : (
-                  <button className="btn-primary" onClick={mandarParaAnalise} disabled={!podeEditar || salvando}>
-                    {salvando ? 'Mandando…' : 'Mandar para a análise'}
-                  </button>
-                )}
-              </div>
-              <button className="btn-secondary" onClick={() => router.push(`/tomadores/${caso.tomador_id}`)}>
-                Abrir a ficha do tomador →
-              </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {caso.analise_fila_id ? (
+                <button className="btn-secondary" onClick={() => router.push('/analises')}>
+                  Ver na esteira da análise →
+                </button>
+              ) : (
+                <button className="btn-primary" onClick={mandarParaAnalise} disabled={somenteLeitura || salvando}>
+                  {salvando ? 'Mandando…' : 'Mandar para a análise'}
+                </button>
+              )}
             </div>
           )}
         </div>
+
+        {/* corpo do e-mail: é onde moram corretora, produto e condições */}
+        {caso.corpo && (
+          <div className="card-panel">
+            <div
+              className="section-title"
+              style={{ cursor: 'pointer', marginBottom: verCorpo ? 14 : 0 }}
+              onClick={() => setVerCorpo((v) => !v)}
+            >
+              <span className="dot" />O que o e-mail dizia {verCorpo ? '▾' : '▸'}
+            </div>
+            {verCorpo && (
+              <pre style={{
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit',
+                fontSize: 13.5, color: '#26374a', margin: 0, maxHeight: 340, overflowY: 'auto',
+              }}>{caso.corpo}</pre>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

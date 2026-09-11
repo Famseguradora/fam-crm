@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { acharOuCriarTomadorPorCnpj } from '@/lib/tomador/criar-por-cnpj'
 import { abrirNaFila } from '@/lib/analise/abrir-fila'
+import { passarCasoParaTomador } from '@/lib/casos/concluir'
 import { soDigitos } from '@/lib/analise/cnpj'
 
 export const runtime = 'nodejs'
@@ -35,8 +36,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     .maybeSingle()
 
   if (!caso) return NextResponse.json({ erro: 'Caso não encontrado.' }, { status: 404 })
-  if (caso.tomador_id) {
-    return NextResponse.json({ erro: 'Este caso já virou cadastro de tomador.' }, { status: 409 })
+  /* QUEM DIZ QUE JÁ ACABOU É A `etapa`, e não mais o `tomador_id` (09/09/2026).
+     Desde que o Pré-cadastro passou a criar o tomador no PRIMEIRO passo, ter
+     `tomador_id` virou o caminho normal de um caso em triagem — e a trava
+     antiga recusaria exatamente o caso já identificado, que é o que mais tem.
+     O `acharOuCriarTomadorPorCnpj` aqui embaixo acha o mesmo tomador pelo CNPJ
+     e devolve `criado: false`, então nada nasce duas vezes. */
+  if (caso.etapa === 'analise') {
+    return NextResponse.json({ erro: 'Este caso já foi concluído e está na análise.' }, { status: 409 })
   }
 
   const cnpj = soDigitos(caso.cnpj) ?? ''
@@ -56,46 +63,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!r.ok) return NextResponse.json({ erro: r.erro }, { status: r.status })
 
   const tomador = r.tomador
-  const agora = new Date().toISOString()
 
-  const { data: atualizado, error: erroCaso } = await supabase
-    .from('casos')
-    .update({ tomador_id: tomador.id, etapa: 'analise', enviado_analise_em: agora })
-    .eq('id', caso.id)
-    .select('id')
-    .single()
-
-  if (erroCaso || !atualizado) {
-    return NextResponse.json(
-      { erro: erroCaso?.message ?? 'Sem permissão para concluir o caso.' },
-      { status: erroCaso ? 500 : 403 },
-    )
-  }
-
-  // Os documentos passam a ser do tomador (a tela dele lê por entidade_tipo).
-  //
-  // CONFERIDO PELO QUE VOLTOU, e não pela ausência de erro: escrita barrada por
-  // RLS devolve zero linha e nenhum erro. Se isto falhasse calado, o cadastro
-  // nasceria certo e a aba Arquivos do tomador ficaria vazia com o Serasa e o
-  // balanço já lidos na triagem — que é exatamente o sintoma que esta empresa
-  // já perseguiu uma vez.
-  const { data: esperados } = await supabase
-    .from('anexos').select('id').eq('entidade_tipo', 'caso').eq('entidade_id', caso.id)
-
-  const { data: movidos, error: erroMover } = await supabase
-    .from('anexos')
-    .update({ entidade_tipo: 'tomador', entidade_id: tomador.id, tomador_id: tomador.id })
-    .eq('entidade_tipo', 'caso')
-    .eq('entidade_id', caso.id)
-    .select('id')
-
-  const faltaram = (esperados?.length ?? 0) - (movidos?.length ?? 0)
-  const documentos_movidos = movidos?.length ?? 0
-  const aviso_documentos = erroMover
-    ? `Os documentos não foram para a ficha do tomador: ${erroMover.message}`
-    : faltaram > 0
-      ? `${faltaram} documento(s) continuaram no caso e não apareceram na ficha do tomador.`
-      : null
+  // A passagem do caso para o tomador é a mesma do agente de Cadastro.
+  const passagem = await passarCasoParaTomador(supabase, caso.id, tomador.id)
+  if (!passagem.ok) return NextResponse.json({ erro: passagem.erro }, { status: passagem.status })
+  const { documentos_movidos, aviso_documentos } = passagem
 
   // O que ainda falta, para viajar junto com o aviso em vez de virar surpresa.
   const { data: itens } = await supabase
@@ -130,7 +102,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       tabela: 'casos',
       acao: 'triagem_concluida',
       registro_id: caso.id,
-      dados_antes: { etapa: caso.etapa, tomador_id: null },
+      dados_antes: { etapa: caso.etapa, tomador_id: caso.tomador_id },
       dados_depois: { etapa: 'analise', tomador_id: tomador.id, tomador_criado: r.criado },
       usuario_auth_id: user.id,
       usuario_nome: quem?.nome ?? null,

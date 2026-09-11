@@ -21,7 +21,7 @@ import { createClient } from '@/lib/supabase/server'
 export const runtime = 'nodejs'
 
 const CAMPOS_TEXTO = ['apelido', 'pasta'] as const
-const CAMPOS_BOOL = ['ligado', 'so_com_anexo', 'so_nao_lidos'] as const
+const CAMPOS_BOOL = ['ligado', 'so_com_anexo', 'so_nao_lidos', 'so_remetente_interno'] as const
 const CAMPOS_NUM = { dias_para_tras: [1, 365], max_por_rodada: [1, 400] } as const
 const CAMPOS_LISTA = ['remetentes', 'assunto_contem', 'assunto_ignora'] as const
 
@@ -33,7 +33,7 @@ const CAMPOS_LISTA = ['remetentes', 'assunto_contem', 'assunto_ignora'] as const
    Isso existe porque o casamento automático por e-mail falha de verdade: o
    login de alguém no CRM pode ser um endereço e a caixa do Outlook outro. */
 const COLUNAS =
-  'id, conta, apelido, dono_auth_id, dono_nome, ligado, pasta, so_com_anexo, so_nao_lidos, ' +
+  'id, conta, apelido, dono_auth_id, dono_nome, ligado, pasta, so_com_anexo, so_nao_lidos, so_remetente_interno, ' +
   'dias_para_tras, max_por_rodada, remetentes, assunto_contem, assunto_ignora, ' +
   'maquina, ultimo_contato, ultima_varredura, ultimo_erro'
 

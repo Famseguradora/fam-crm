@@ -25,7 +25,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
 import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
 import { usePermissoes } from '@/lib/context/permissoes-context'
-import { consultarCNPJ } from '@/lib/cnpj'
+import { consultarCNPJpelaTela } from '@/lib/cnpj'
 import AnexosSection from '@/components/AnexosSection'
 import OrganogramaModal from '@/components/OrganogramaModal'
 
@@ -128,7 +128,7 @@ export default function CadastroTomador({ tomador, onSalvo }: {
   async function buscarNaReceita() {
     setBuscandoCnpj(true); setMensagem(null)
     try {
-      const c = await consultarCNPJ(form.cnpj)
+      const c = await consultarCNPJpelaTela(form.cnpj)
       setForm(f => ({
         ...f,
         razao_social: f.razao_social.trim() || c.razao_social,

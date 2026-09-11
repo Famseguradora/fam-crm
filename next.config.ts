@@ -11,6 +11,31 @@ const nextConfig: NextConfig = {
     '/api/financeiro/pagina': ['./fam-financeiro/dashboard.html'],
   },
 
+  experimental: {
+    /* O TETO DE 10 MB DO NEXT, e por que ele tinha que subir (09/09/2026).
+     *
+     * Quando existe um `proxy.ts` (o nosso gate de sessão), o Next lê o corpo
+     * da requisição para o proxy e o CORTA em 10 MB por padrão. O corte é
+     * silencioso do lado de quem envia: o servidor recebe meio multipart, o
+     * `request.formData()` estoura com "expected boundary after body", e a
+     * rota responde 500 sem nunca ter visto o arquivo.
+     *
+     * Foi assim que o "Trazer para a esteira" parou de funcionar: o e-mail da
+     * RIALMA tem 16,5 MB (anexos de balanço), o Carteiro tentava de 5 em 5
+     * segundos, e o erro chegava vazio na tela dele. Um e-mail de pedido de
+     * garantia com dois balanços e Serasa passa de 10 MB com facilidade.
+     *
+     * 50 MB é o mesmo número que já valia nos outros dois lugares: o
+     * `MAX_BYTES_EMAIL` da rota (que recusa com mensagem legível) e o teto do
+     * bucket `fam-anexos` no Storage. Os três precisam concordar, senão o
+     * arquivo passa num lugar e morre no seguinte.
+     *
+     * `proxyClientMaxBodySize` é o nome atual; `middlewareClientMaxBodySize`
+     * é o alias antigo, deste mesmo campo, e está deprecado.
+     */
+    proxyClientMaxBodySize: '50mb',
+  },
+
   async headers() {
     return [
       {

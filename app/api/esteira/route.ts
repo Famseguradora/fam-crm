@@ -35,6 +35,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { SITUACOES, nomeDaEtapa, travaMorta } from '@/lib/analise/esteira'
+import { aplicarCadastroDoAgente } from '@/lib/cadastro/agente-cadastro'
 
 export const runtime = 'nodejs'
 
@@ -91,17 +92,46 @@ export async function GET(req: NextRequest) {
      "esta pasta nunca foi vista por máquina nenhuma". */
   const { data: aMaterializar } = await sb
     .from('analise_fila')
-    .select('id, pasta, caso_id, cnpj, razao_social, chave_local')
+    .select('id, pasta, caso_id, cnpj, razao_social, chave_local, anexos_em, materializado_em')
     .is('hash_documentos', null)
     .not('caso_id', 'is', null)
+    /* Analise CONCLUIDA nunca precisa de pasta montada (10/09/2026). Ao juntar
+       o card de uma pasta renomeada, o card concluido herda o caso, e sem esta
+       linha o agente recriava a pasta na fila com os anexos do Storage, a um
+       passo de o motor emendar uma segunda analise da mesma empresa. */
+    .neq('situacao', 'concluida')
+    /* Nem a pasta que ELE tirou do computador (10/09/2026): remontar seria
+       desfazer o recorte para a rede. */
+    .is('fora_do_disco_em', null)
     .order('criado_em', { ascending: true })
     .limit(10)
 
+  /* DOCUMENTO QUE CHEGOU DEPOIS DA PASTA (10/09/2026). Com a pasta nascendo no
+     "Trazer", o Serasa subido na tela do caso chega a uma pasta que já existe.
+     `anexos_em` mais novo que `materializado_em` é a marca de "tem o que baixar".
+     Duas colunas não se comparam no filtro do Supabase, então a conta é aqui. */
+  const { data: comAnexoNovo } = await sb
+    .from('analise_fila')
+    .select('id, pasta, caso_id, cnpj, razao_social, chave_local, anexos_em, materializado_em')
+    .not('anexos_em', 'is', null)
+    .not('caso_id', 'is', null)
+    .not('situacao', 'in', '(concluida,em_andamento)')
+    .limit(20)
+  // Pasta que o agente já montou não volta enquanto nada novo chegar.
+  const jaMontada = (f: { anexos_em?: string | null; materializado_em?: string | null }) =>
+    !!f.materializado_em && (!f.anexos_em || f.anexos_em <= f.materializado_em)
+  const aMontar = [
+    ...((aMaterializar ?? []) as { id: string }[]).filter((f) => !jaMontada(f as never)),
+    ...(comAnexoNovo ?? []).filter((f) => !jaMontada(f) && !(aMaterializar ?? []).some((a) => a.id === f.id)),
+  ]
+
   /* A FILA INTEIRA, para o agente conciliar o que o disco diz com o que o banco
-     tem. Sem isto ele não teria como perceber que uma pasta sumiu. */
+     tem. Sem isto ele não teria como perceber que uma pasta sumiu.
+     A esteira automática (10/09/2026) lê daqui também quem anda sozinha e o
+     que o agente de Cadastro já conferiu. */
   const { data: fila } = await sb
     .from('analise_fila')
-    .select('id, pasta, chave, situacao, hash_documentos, trava_maquina, trava_em, arquivos_fora, arquivos_fora_em, sincronizado_em')
+    .select('id, pasta, chave, situacao, hash_documentos, trava_maquina, trava_em, arquivos_fora, arquivos_fora_em, sincronizado_em, automatica, cadastro_agente, caso_id, tomador_id, ordem, arquivada, corretora, fora_do_disco_em')
     .order('atualizado_em', { ascending: false })
     .limit(300)
 
@@ -165,7 +195,7 @@ export async function GET(req: NextRequest) {
     ok: true,
     maquina,
     ordens: ordens ?? [],
-    a_materializar: aMaterializar ?? [],
+    a_materializar: aMontar,
     fila: fila ?? [],
     arquivos_fora: arquivosFora.map((f) => ({ id: f.id, pasta: f.pasta, chave: f.chave, arquivos_fora: f.arquivos_fora ?? [] })),
     ia,
@@ -192,6 +222,8 @@ interface PastaDoAgente {
   trava_pid?: number
   /** O nome antigo, quando a análise renomeou a pasta. Ver o cabeçalho da migration. */
   pasta_anterior?: string
+  /** A corrente inteira de nomes antigos, do mais recente ao mais velho (10/09/2026). */
+  pastas_anteriores?: string[]
   // o que o card precisa (09/09/2026)
   chave?: string
   fase?: string
@@ -211,6 +243,89 @@ interface PastaDoAgente {
   notas?: { id: string; titulo?: string; html?: string; fixada?: boolean; em?: string; nome?: string }[]
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   JUNTAR O CARD DA PASTA RENOMEADA  ·  10/09/2026
+
+   A análise batiza a pasta ao terminar ("Construtora e Incorporadora Bouw
+   Ltda" vira "Construtora e Incorporadora BOUW"). O agente nunca mandava o
+   nome antigo, então o CRM criava um card novo e o velho ficava para sempre em
+   "analisando", com o caso, o tomador e as notas pendurados nele. Na Mesa isso
+   aparece como análise travada. Aconteceu com a Rialma em 09/09 e com a Bouw
+   em 10/09.
+
+   O `update({ pasta })` de antes também não bastava: quando o card novo JÁ
+   existe, a troca de nome bate na chave única de `pasta` e falha calada. Por
+   isso aqui é JUNTAR: o card novo herda do velho o que é do CRM (caso, tomador,
+   CNPJ), tudo que aponta para o velho passa a apontar para o novo, fica um
+   evento dizendo o que foi feito, e só então o velho sai. Se o card novo já
+   está concluído, o caso que veio do velho é encerrado, que é exatamente o que
+   a ação `concluir` teria feito se o caso já estivesse ligado nele.
+
+   Duas travas contra juntar o que não é a mesma coisa:
+     · card velho CONCLUÍDO não é fantasma, é histórico: fica.
+     · CNPJ dos dois lados e diferentes: é outra empresa que por acaso usou o
+       mesmo nome de pasta (assunto de e-mail se repete). Fica.
+   ══════════════════════════════════════════════════════════════════════════ */
+async function juntarPastaRenomeada(
+  sb: NonNullable<ReturnType<typeof admin>>,
+  anterior: string,
+  pasta: string,
+  cnpjDaPasta: string,
+) {
+  const { data: velha } = await sb.from('analise_fila')
+    .select('id, situacao, caso_id, tomador_id, cnpj')
+    .eq('pasta', anterior).maybeSingle()
+  if (!velha || velha.situacao === 'concluida') return
+
+  const { data: nova } = await sb.from('analise_fila')
+    .select('id, situacao, caso_id, tomador_id, cnpj')
+    .eq('pasta', pasta).maybeSingle()
+
+  const cnpjVelho = digitos(velha.cnpj)
+  const cnpjNovo = cnpjDaPasta.length === 14 ? cnpjDaPasta : digitos(nova?.cnpj)
+  if (cnpjVelho.length === 14 && cnpjNovo.length === 14 && cnpjVelho !== cnpjNovo) return
+
+  // O card novo ainda não existe: basta trocar o nome, e a gravação logo abaixo acha a linha.
+  if (!nova) {
+    await sb.from('analise_fila').update({ pasta }).eq('id', velha.id)
+    return
+  }
+  if (nova.id === velha.id) return
+
+  const herda: Record<string, unknown> = {}
+  if (!nova.caso_id && velha.caso_id) herda.caso_id = velha.caso_id
+  if (!nova.tomador_id && velha.tomador_id) herda.tomador_id = velha.tomador_id
+  if (digitos(nova.cnpj).length !== 14 && cnpjVelho.length === 14) herda.cnpj = cnpjVelho
+  if (Object.keys(herda).length) {
+    const { error } = await sb.from('analise_fila').update(herda).eq('id', nova.id)
+    // Sem herdar, apagar o velho perderia o caso: melhor ficar duplicado.
+    if (error) return
+  }
+
+  /* Tudo que aponta para o card velho passa a apontar para o novo ANTES de o
+     velho sair: as quatro chaves estrangeiras são ON DELETE SET NULL, e apagar
+     primeiro soltaria o caso do card em silêncio. */
+  const repontes = await Promise.all([
+    sb.from('casos').update({ analise_fila_id: nova.id }).eq('analise_fila_id', velha.id),
+    sb.from('analise_notas').update({ fila_id: nova.id }).eq('fila_id', velha.id),
+    sb.from('analise_encaminhamentos').update({ fila_id: nova.id }).eq('fila_id', velha.id),
+    sb.from('ia_pedidos').update({ fila_id: nova.id }).eq('fila_id', velha.id),
+  ])
+  if (repontes.some((r) => r.error)) return
+
+  if (nova.situacao === 'concluida' && herda.caso_id) {
+    await sb.from('casos').update({ etapa: 'encerrado' }).eq('id', String(herda.caso_id))
+  }
+
+  /* `passo`, e não uma ação nova: a tabela só aceita comecou/passo/terminou/falhou. */
+  await sb.from('agente_eventos').insert({
+    agente: 'esteira', acao: 'passo', tarefa: 'pasta renomeada', alvo: pasta,
+    detalhe: `A análise renomeou a pasta "${anterior}" para "${pasta}". O card antigo (${velha.id}) foi juntado a este e removido.`,
+    cnpj: cnpjNovo.length === 14 ? cnpjNovo : (cnpjVelho || null),
+  })
+  await sb.from('analise_fila').delete().eq('id', velha.id)
+}
+
 export async function POST(req: NextRequest) {
   const barrado = porteiro(req)
   if (barrado) return barrado
@@ -221,6 +336,45 @@ export async function POST(req: NextRequest) {
   try { corpo = await req.json() } catch { /* cai na validação */ }
   const acao = String(corpo.acao ?? '')
   const agora = new Date().toISOString()
+
+  // ── fora_do_disco: a pasta saiu do computador (10/09/2026) ────────────────
+  /* O agente compara a fila com a raiz e o _concluidas e manda dois grupos de
+     ids: os que sumiram (por mais de uma rodada) e os que tinham sumido e
+     voltaram. Aqui só se grava a data; quem decide o que sai da Mesa é
+     `naMesa` em lib/analise/mesa.ts. Ver o cabeçalho de supabase-migration-fora-do-disco.sql. */
+  if (acao === 'fora_do_disco') {
+    const ids = (v: unknown) => lista(v).map((x) => String(x)).filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 300)
+    const fora = ids(corpo.fora)
+    const deVolta = ids(corpo.de_volta)
+    let marcadas = 0
+    let limpas = 0
+    if (fora.length) {
+      const { data, error } = await sb.from('analise_fila')
+        .update({ fora_do_disco_em: agora })
+        .in('id', fora).is('fora_do_disco_em', null).neq('situacao', 'em_andamento')
+        .select('id, pasta, situacao, cnpj')
+      if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
+      marcadas = data?.length ?? 0
+      if (data?.length) {
+        await sb.from('agente_eventos').insert(data.map((f) => ({
+          agente: 'esteira', acao: 'passo', tarefa: 'pasta fora do computador', alvo: f.pasta,
+          detalhe: f.situacao === 'concluida'
+            ? `A pasta "${f.pasta}" saiu do computador (raiz e _concluidas). A análise está concluída: o card sai da Mesa e continua no Acervo.`
+            : `A pasta "${f.pasta}" saiu do computador sem a análise ter terminado (${f.situacao}).`,
+          cnpj: digitos(f.cnpj).length === 14 ? digitos(f.cnpj) : null,
+        })))
+      }
+    }
+    if (deVolta.length) {
+      const { data, error } = await sb.from('analise_fila')
+        .update({ fora_do_disco_em: null })
+        .in('id', deVolta).not('fora_do_disco_em', 'is', null)
+        .select('id')
+      if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
+      limpas = data?.length ?? 0
+    }
+    return NextResponse.json({ ok: true, marcadas, limpas })
+  }
 
   // ── sincronizar: o retrato do disco ───────────────────────────────────────
   if (acao === 'sincronizar') {
@@ -243,16 +397,23 @@ export async function POST(req: NextRequest) {
          tratar isso aqui, a análise vira DUAS linhas, a velha parada para
          sempre e a nova sem histórico. Já aconteceu no motor, e é o defeito
          que o `_outlook-vistos.json` também tinha. */
-      const anterior = texto(p.pasta_anterior, 400)
-      if (anterior && anterior !== pasta) {
-        await sb.from('analise_fila').update({ pasta }).eq('pasta', anterior)
+      const anteriores = [...(Array.isArray(p.pastas_anteriores) ? p.pastas_anteriores : []), p.pasta_anterior]
+        .map((x) => texto(x, 400))
+        .filter((x): x is string => !!x && x !== pasta)
+      const cnpjDaPasta = digitos(p.cnpj).length === 14
+        ? digitos(p.cnpj)
+        : digitos(String(p.analise_chave ?? p.chave_local ?? '').slice(0, 14))
+      for (const anterior of [...new Set(anteriores)]) {
+        await juntarPastaRenomeada(sb, anterior, pasta, cnpjDaPasta)
       }
 
       /* O QUE O DISCO SABE, e só isso. `ordem`, `caso_id`, `analise_id` e
          `tomador_id` não entram: são do lado do CRM. Ver o cabeçalho. */
       const doDisco: Record<string, unknown> = {
         situacao,
-        motivo: texto(p.motivo, 500),
+        // A pergunta do motor é o motivo, e as opções vêm no fim do texto:
+        // cortada em 500, a pessoa lia o problema e nunca as escolhas.
+        motivo: texto(p.motivo, situacao === 'aguardando_resposta' ? 4000 : 500),
         hash_documentos: texto(p.hash_documentos, 100),
         documentos: Number(p.documentos ?? 0) || 0,
         documentos_faltando: (p.documentos_faltando ?? []).slice(0, 30).map((x) => String(x).slice(0, 200)),
@@ -261,6 +422,11 @@ export async function POST(req: NextRequest) {
         trava_em: situacao === 'em_andamento' ? agora : null,
         sincronizado_em: agora,
         arquivada: !!p.arquivada,
+        /* `fora_do_disco_em` NÃO entra aqui, de propósito: esta lista vem do
+           cache de fila do motor (_fila.json), que pode continuar citando uma
+           pasta que já foi para a rede. Limpar aqui faria o card sair e voltar
+           a cada rodada. Quem limpa é a ação `fora_do_disco` (de_volta), que
+           olhou o disco de verdade. */
       }
 
       // O que o card precisa. Cada um só entra quando veio: linha antiga do
@@ -673,6 +839,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
+  // ── excluida: o agente tirou a pasta da raiz; agora o card sai da fila ────
+  if (acao === 'excluida') {
+    const id = String(corpo.id ?? '')
+    if (!id) return NextResponse.json({ erro: 'Falta dizer qual análise.' }, { status: 422 })
+    // Só apaga o que alguém mandou excluir: segredo do agente não apaga card qualquer.
+    const { data: apagada } = await sb.from('analise_fila').delete().eq('id', id).eq('ordem', 'excluir').select('id, pasta, cnpj')
+    if (apagada?.length) {
+      await sb.from('agente_eventos').insert({
+        agente: 'esteira', acao: 'passo', tarefa: 'caso excluído', alvo: apagada[0].pasta,
+        detalhe: texto(corpo.resultado, 400) ?? 'A pasta foi para _excluidas e o card saiu da esteira.',
+        cnpj: digitos(apagada[0].cnpj).length === 14 ? digitos(apagada[0].cnpj) : null,
+      })
+    }
+    return NextResponse.json({ ok: true, apagada: !!apagada?.length })
+  }
+
+  // ── materializado: a pasta foi montada (ou completada) no notebook ────────
+  if (acao === 'materializado') {
+    const id = String(corpo.id ?? '')
+    if (!id) return NextResponse.json({ erro: 'Falta dizer qual análise.' }, { status: 422 })
+    await sb.from('analise_fila').update({ materializado_em: new Date().toISOString() }).eq('id', id)
+    return NextResponse.json({ ok: true })
+  }
+
+  /* ── cadastro: o agente de Cadastro terminou de ler os documentos ─────────
+     A leitura vem da IA do notebook; o que ela vira (tomador, parada ou ordem
+     de analisar) é decidido em `lib/cadastro/agente-cadastro.ts`. */
+  if (acao === 'cadastro') {
+    const id = String(corpo.id ?? '')
+    if (!id) return NextResponse.json({ erro: 'Falta dizer qual análise.' }, { status: 422 })
+    const r = await aplicarCadastroDoAgente(sb, {
+      id,
+      hash: typeof corpo.hash === 'string' ? corpo.hash : null,
+      leitura: objeto(corpo.leitura) as never,
+      triagem: objeto(corpo.triagem) as never,
+      erro: typeof corpo.erro === 'string' ? corpo.erro : null,
+    })
+    if (!r.ok) return NextResponse.json({ erro: r.erro }, { status: r.status })
+    return NextResponse.json({ ok: true, cadastro: r.cadastro })
+  }
+
   // ── ordem-aceita: o agente confirma que pegou o pedido ────────────────────
   if (acao === 'ordem-aceita' || acao === 'ordem-falhou') {
     const id = String(corpo.id ?? '')
@@ -753,7 +960,7 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json(
-    { erro: 'Ação desconhecida (sincronizar, recados, recados-ok, conversas, alcadas, alcadas-ok, comando-aceito, comando-feito, progresso, concluir, erro, ordem-aceita, ordem-falhou, ia-pegar, ia-resposta, faxina).' },
+    { erro: 'Ação desconhecida (sincronizar, recados, recados-ok, conversas, alcadas, alcadas-ok, comando-aceito, comando-feito, progresso, concluir, erro, materializado, cadastro, ordem-aceita, ordem-falhou, ia-pegar, ia-resposta, faxina).' },
     { status: 422 },
   )
 }

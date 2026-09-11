@@ -53,6 +53,10 @@ export async function abrirNaFila(
   supabase: SupabaseClient,
   caso: CasoParaAnalise,
   quem: string,
+  /* `automatica` (10/09/2026): a análise nascida do "Trazer para a esteira"
+     anda sozinha (triagem, cadastro, crédito). A que nasce do clique Concluir
+     ou do botão "Mandar para a análise" continua como era. */
+  opcoes: { automatica?: boolean } = {},
 ): Promise<ResultadoFila> {
   /* JÁ ESTÁ NA FILA? Sem esta pergunta, concluir a triagem duas vezes (ou
      clicar duas vezes no botão) criaria duas análises da mesma empresa, e a
@@ -78,12 +82,19 @@ export async function abrirNaFila(
     .insert({
       caso_id: caso.id,
       tomador_id: caso.tomador_id,
-      cnpj: caso.cnpj,
+      // Só dígitos: o e-mail grava o CNPJ do assunto com máscara, e a fila
+      // compara por dígito com o que o disco manda.
+      cnpj: String(caso.cnpj ?? '').replace(/\D/g, '') || null,
+      // Com tomador no CRM, o CNPJ já foi conferido (pré-cadastro ou Receita).
+      cnpj_confiavel: !!caso.tomador_id && String(caso.cnpj ?? '').replace(/\D/g, '').length === 14,
       razao_social: caso.razao_social,
       pasta,
       situacao: 'pendente',
-      motivo: `Veio da Triagem do caso #${caso.numero}. Esperando o notebook montar a pasta.`,
+      motivo: opcoes.automatica
+        ? `Veio do e-mail do caso #${caso.numero}. Esperando o notebook montar a pasta; a triagem começa sozinha.`
+        : `Veio da Triagem do caso #${caso.numero}. Esperando o notebook montar a pasta.`,
       criado_por: quem,
+      automatica: !!opcoes.automatica,
     })
     .select('id, pasta')
     .single()

@@ -169,13 +169,30 @@ const carregarMotor = () => mod('fila.mjs')
 
 const digitos = (v) => String(v ?? '').replace(/\D/g, '')
 
+/* A PASTA É NOME, NUNCA CAMINHO (11/09/2026, achado da revisão de segurança).
+   O nome vem do banco, e um "..\..\AppData\...\Startup" gravado por quem pode
+   escrever na fila faria este agente baixar anexo para fora das análises. O
+   banco já recusa esse nome (restrição `analise_fila_pasta_e_nome`); esta é a
+   segunda trava, do lado de quem grava no disco. */
+function pastaDentroDaRaiz(pasta) {
+  const raiz = path.resolve(c.raiz)
+  const dir = path.resolve(raiz, String(pasta ?? ''))
+  if (!pasta || !dir.startsWith(raiz + path.sep)) throw new Error(`pasta fora da raiz das analises: "${pasta}"`)
+  return dir
+}
+
 // ── 2. materializar: o caso do CRM vira pasta no disco ──────────────────────
 /* Este é o passo que faltava para a análise COMEÇAR dentro do CRM. O e-mail
    entrou pela Caixa, virou caso, a Triagem conferiu, e os documentos estão no
    Storage. O motor lê arquivo. Aqui os dois mundos se encontram. */
 async function materializar(pendentes) {
   for (const p of pendentes) {
-    const destino = path.join(c.raiz, p.pasta)
+    let destino
+    try { destino = pastaDentroDaRaiz(p.pasta) } catch (e) {
+      console.error('   ', e.message)
+      await crm('/api/esteira', { acao: 'erro', id: p.id, erro: `Nome de pasta recusado: ${e.message}` })
+      continue
+    }
     console.log(`  Montando a pasta "${p.pasta}"…`)
 
     const r = await crm(`/api/esteira/documentos?id=${encodeURIComponent(p.id)}`)
@@ -195,6 +212,21 @@ async function materializar(pendentes) {
 
     try {
       fs.mkdirSync(destino, { recursive: true })
+      /* A MARCA DE "NASCEU NO CRM" (10/09/2026). Sem ela, a triagem do motor
+         batizava a pasta com o que achasse nos documentos: a da C.e.I. virou
+         "Extincao de Filial na UF da Sede", título de uma alteração contratual,
+         a análise rodou com esse nome e o card do CRM ficou parado em "Na fila".
+         Com a marca, a triagem não renomeia; quem batiza é a análise, no fim.
+         Começa com `_`: fica fora do hash dos documentos. */
+      try {
+        const marca = path.join(destino, '_crm.json')
+        if (!fs.existsSync(marca)) {
+          fs.writeFileSync(marca, JSON.stringify({
+            origem: 'crm', fila_id: p.id, caso_id: p.caso_id ?? null, cnpj: p.cnpj ?? null,
+            razao_social: p.razao_social ?? null, pasta: p.pasta, em: new Date().toISOString(),
+          }, null, 2), 'utf8')
+        }
+      } catch (e) { console.error('    _crm.json:', e.message) }
       let baixados = 0
       const falhas = [...(r.falhas ?? [])]
       for (const d of r.documentos) {
@@ -215,6 +247,8 @@ async function materializar(pendentes) {
       }
       console.log(`    ${baixados} de ${r.documentos.length} documento(s) na pasta.`)
       if (falhas.length) console.log('    Não vieram:', falhas.join(' · '))
+      // A marca de "montada": documento que chegar depois faz a pasta voltar aqui.
+      if (baixados) await crm('/api/esteira', { acao: 'materializado', id: p.id })
 
       /* SEM NENHUM ARQUIVO, a pasta não presta e é melhor dizer isso do que
          deixar o motor achar uma pasta vazia e concluir "aguardando documentos",
@@ -356,16 +390,130 @@ async function retratoDoDisco() {
   return { pastas, estado }
 }
 
+/* O NOME ANTIGO DA PASTA  ·  10/09/2026
+   A análise renomeia a pasta ao terminar, e o CRM só junta os dois cards se
+   souber de onde a pasta veio (`pasta_anterior`). Este agente nunca mandava:
+   toda análise que batizava a pasta deixava na Mesa um card fantasma parado em
+   "analisando" (a Rialma em 09/09, a Bouw em 10/09). Quem sabe a corrente de
+   nomes é o motor, no `_sistema/registro/renomeacoes.json`, o mesmo arquivo que
+   o `visao.mjs pastaAtual()` lê. Aqui ele é lido AO CONTRÁRIO: do nome de hoje
+   para os de antes.
+
+   SÓ AS TROCAS RECENTES. O log guarda meses, e assunto de e-mail se repete:
+   um nome que virou uma empresa em agosto pode voltar amanhã como outra. A
+   sincronização roda a cada 90 s, então a troca de hoje chega ao CRM no mesmo
+   minuto; troca velha não tem mais o que juntar. O CRM ainda confere o CNPJ
+   antes de juntar. */
+const DIAS_DE_TROCA = 3
+function anotarNomesAntigos(pastas) {
+  let trocas = []
+  try {
+    const bruto = fs.readFileSync(path.join(c.raiz, '_sistema', 'registro', 'renomeacoes.json'), 'utf8')
+    const log = JSON.parse(bruto.replace(/^﻿/, ''))
+    const desde = Date.now() - DIAS_DE_TROCA * 86400000
+    trocas = (Array.isArray(log?.renomeacoes) ? log.renomeacoes : [])
+      .filter((x) => x?.de && x?.para && new Date(x.em).getTime() >= desde)
+  } catch { return }
+  if (!trocas.length) return
+  for (const p of pastas) {
+    const antigos = []
+    let atual = p.pasta
+    for (let i = 0; i < 6; i++) {
+      const salto = [...trocas].reverse().find((x) => x.para === atual && x.de !== atual && !antigos.includes(x.de))
+      if (!salto) break
+      antigos.push(salto.de)
+      atual = salto.de
+    }
+    if (antigos.length) {
+      p.pasta_anterior = antigos[0]
+      p.pastas_anteriores = antigos
+    }
+  }
+}
+
 async function sincronizar() {
   const r0 = await retratoDoDisco()
   if (!r0) return
   const { pastas, estado } = r0
   if (!pastas.length && !estado) return
+  temExecucaoViva = !!estado?.execucao?.rodando || pastas.some((p) => p.situacao === 'em_andamento')
+  anotarNomesAntigos(pastas)
   const r = await crm('/api/esteira', { acao: 'sincronizar', maquina: c.maquina, pastas, estado })
   if (!r.ok) return console.error('  CRM recusou a sincronização:', r.erro)
   console.log(`  Esteira: ${pastas.length} pastas, ${r.criadas} novas, ${r.atualizadas} atualizadas.`)
   if (r.recusadas?.length) console.log('    Recusadas:', r.recusadas.join(' · '))
   if (r.publicar_pendentes?.length) await publicarPendentes(r.publicar_pendentes)
+}
+
+/* A PASTA QUE SAIU DO COMPUTADOR  ·  10/09/2026
+   ---------------------------------------------------------------------------
+   Pedido dele: terminada a análise e recortada a pasta para a rede da FAM, o
+   card não precisa mais ficar na Mesa. O agente sempre soube que a pasta tinha
+   sumido (ele parava de mandá-la), mas nunca DIZIA: o card ficava parado no
+   banco para sempre. Foi o que aconteceu com Rialma, Renova Energia e BOUW.
+
+   Aqui a fila do banco é comparada com os nomes da raiz e do _concluidas
+   (qualquer idade, e não só as 24 h que o visao.mjs mostra como "Pronta").
+   Quem decide o que sai da Mesa é o CRM (`naMesa`); este lado só informa.
+
+   AS QUATRO TRAVAS, porque marcar errado some com card de verdade:
+     · OneDrive caído ou raiz errada: se a listagem falhar, vier sem o _sistema
+       ou com o _concluidas vazio, NÃO se marca nada nesta rodada.
+     · Pasta renomeada pela análise: o nome velho some antes de o CRM juntar os
+       dois cards. Por isso a pasta tem que faltar por FORA_MIN minutos
+       seguidos; se reaparecer no meio, a contagem zera.
+     · Card que ainda não teve pasta (nasceu no CRM e espera ser montado), que
+       está rodando, ou que tem ordem na mão (o Excluir move para _excluidas e
+       apaga o card): fica de fora da conta.
+     · Windows não diferencia maiúscula, o banco guarda o nome aparado (o
+       `texto()` da rota faz trim) e acento pode vir em NFC ou NFD: os dois
+       lados passam pela mesma `chaveDaPasta`.
+   _excluidas NÃO conta como presente: pasta lá é pasta fora da esteira. */
+const FORA_MIN = 5
+const faltando = new Map()   // id do card -> desde quando a pasta falta
+
+const chaveDaPasta = (nome) => String(nome ?? '').normalize('NFC').trim().toLowerCase()
+
+function nomesNoDisco() {
+  const pastas = (dir) => fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => chaveDaPasta(d.name))
+  let raiz, concluidas
+  try {
+    raiz = pastas(c.raiz)
+    concluidas = pastas(path.join(c.raiz, '_concluidas'))
+  } catch { return null }
+  if (!raiz.includes('_sistema') || !concluidas.length) return null
+  return new Set([...raiz, ...concluidas])
+}
+
+async function conferirDisco(fila) {
+  if (!c.raiz || !Array.isArray(fila) || !fila.length) return
+  const disco = nomesNoDisco()
+  if (!disco) return
+  const agora = Date.now()
+  const fora = []
+  const deVolta = []
+  const vistos = new Set()
+  for (const f of fila) {
+    if (!f?.id || !f.pasta) continue
+    vistos.add(f.id)
+    if (disco.has(chaveDaPasta(f.pasta))) {
+      faltando.delete(f.id)
+      if (f.fora_do_disco_em) deVolta.push(f.id)
+      continue
+    }
+    if (f.fora_do_disco_em) { faltando.delete(f.id); continue }
+    if (!f.sincronizado_em || f.situacao === 'em_andamento' || f.ordem) { faltando.delete(f.id); continue }
+    const desde = faltando.get(f.id)
+    if (!desde) { faltando.set(f.id, agora); continue }
+    if (agora - desde >= FORA_MIN * 60000) fora.push(f.id)
+  }
+  for (const id of [...faltando.keys()]) if (!vistos.has(id)) faltando.delete(id)
+  if (!fora.length && !deVolta.length) return
+  const r = await crm('/api/esteira', { acao: 'fora_do_disco', fora, de_volta: deVolta })
+  if (!r.ok) return console.error('  CRM recusou a marca de pasta fora do computador:', r.erro)
+  for (const id of fora) faltando.delete(id)
+  if (r.marcadas) console.log(`  ${r.marcadas} pasta(s) saíram do computador: análise concluída sai da Mesa.`)
+  if (r.limpas) console.log(`  ${r.limpas} pasta(s) voltaram ao computador.`)
 }
 
 /* PUBLICAR SOZINHO O QUE JÁ FOI ANALISADO  ·  09/09/2026
@@ -484,7 +632,7 @@ async function executarOrdens(ordens) {
   for (const o of ordens) {
     console.log(`  Ordem "${o.ordem}" em "${o.pasta}" (${o.ordem_por ?? 'alguém'})`)
     const dados = o.ordem_dados || {}
-    const instrucoes = String(o.instrucao || dados.instrucao || '').trim()
+    let instrucoes = String(o.instrucao || dados.instrucao || '').trim()
     const modo = String(o.modo || dados.modo || '')
     const feito = (resultado) => crm('/api/esteira', { acao: 'ordem-aceita', id: o.id, resultado })
     const falhou = (erro) => crm('/api/esteira', { acao: 'ordem-falhou', id: o.id, erro })
@@ -523,6 +671,33 @@ async function executarOrdens(ordens) {
           try { Fila?.listar?.() } catch { }
           await (r?.ok ? feito(r.destravou ? 'Reli a pasta e destravou.' : 'Reli a pasta.') : falhou(r?.motivo || 'não consegui reler'))
         }
+        await sincronizar()
+        continue
+      }
+
+      /* EXCLUIR (10/09/2026): o caso repetido saiu da triagem no CRM. A pasta vai
+         para `_excluidas` pela mesma função do motor que o cockpit usa (nada é
+         apagado), e só depois o CRM tira o card: senão a próxima sincronização
+         acharia a pasta na raiz e recriaria o card. */
+      if (o.ordem === 'excluir') {
+        let r
+        if (local) r = await servidor('/api/excluir/' + encodeURIComponent(o.pasta), { id: '' })
+        else { try { r = Fila?.excluir?.(o.pasta, '') } catch (e) { r = { ok: false, motivo: e.message } } }
+        if (r?.ok === false) { await falhou(r.erro || r.motivo || 'não consegui tirar a pasta da esteira'); continue }
+        await crm('/api/esteira', { acao: 'excluida', id: o.id, resultado: r?.motivo || 'A pasta foi para _excluidas.' })
+        console.log(`    Excluída: "${o.pasta}"`)
+        continue
+      }
+
+      /* LIBERAR A TRIAGEM: na esteira automática, a liberação dele leva o caso
+         para o Cadastro, e não direto para a análise como o `forcar`. */
+      if (o.ordem === 'liberar_triagem') {
+        const Cad = await mod('cadastro.mjs')
+        let r
+        try { r = Cad?.liberar?.(o.pasta, `Liberada por ${o.ordem_por ?? 'você'} no CRM${dados.motivo ? `: ${dados.motivo}` : ''}.`) }
+        catch (e) { r = { ok: false, motivo: e.message } }
+        try { Fila?.listar?.() } catch { }
+        await (r?.ok === false ? falhou(r.motivo || 'não consegui liberar a triagem') : feito('Triagem liberada por você. O agente de Cadastro assume em seguida.'))
         await sincronizar()
         continue
       }
@@ -599,6 +774,11 @@ async function executarOrdens(ordens) {
       }
 
       if (o.ordem === 'iniciar') {
+        if (dados.liberar) {
+          const lib = await liberarPergunta(o, dados)
+          if (!lib.ok) { await falhou(lib.motivo); continue }
+          instrucoes = lib.decisao + (instrucoes ? `\n\n${instrucoes}` : '')
+        }
         if (local) {
           const r = await servidor('/api/analisar', { pastas: [o.pasta], chave: o.chave || '', instrucoes, modo })
           await (r.ok ? feito(r.mensagem || 'Comecei a análise.') : falhou(r.erro || r.motivo || 'o servidor recusou'))
@@ -616,6 +796,50 @@ async function executarOrdens(ordens) {
   }
 }
 
+/* LIBERAR A ANÁLISE QUE PAROU PARA PERGUNTAR (10/09/2026).
+
+   O motor para de propósito (`_status.json` em `aguardando_resposta`) e só
+   volta para a fila quando a pergunta é respondida. Às vezes ela está no
+   `_perguntas.json`, às vezes só no `_status.json` (a Riosul), e nos dois
+   casos não havia botão no CRM. Aqui: responde as perguntas abertas com a
+   decisão da pessoa, destrava o status do mesmo jeito que o `responder()` do
+   perguntas.mjs faz, e devolve a decisão escrita para ir junto na análise.
+   Sem ela o motor relê os mesmos documentos e para na mesma dúvida. */
+async function liberarPergunta(o, dados) {
+  const C = await mod('comum.mjs')
+  const P = await mod('perguntas.mjs')
+  if (!C?.lerStatus || !C?.gravarStatus) return { ok: false, motivo: 'não achei o comum.mjs do motor nesta máquina' }
+
+  const por = o.ordem_por || 'o analista'
+  const st = C.lerStatus(o.pasta)
+  const pergunta = String(st?.pergunta || '').trim()
+  const resposta = String(dados.resposta || '').trim()
+    || 'Seguir a análise com os documentos que estão na pasta; o que ficou em aberto entra como ressalva.'
+
+  try {
+    for (const p of P?.abertas?.(o.pasta) ?? []) P.responder(p.id, { texto: resposta })
+    const agora = C.lerStatus(o.pasta)
+    if (agora?.status === 'aguardando_resposta') {
+      C.gravarStatus(o.pasta, {
+        ...agora, status: 'reaberta', pergunta: null, pergunta_id: null,
+        hash_documentos: null, concluido_em: null, erro: null,
+      })
+    }
+  } catch (e) {
+    return { ok: false, motivo: `não consegui destravar a pergunta (${e.message})` }
+  }
+  try { (await carregarMotor())?.listar?.() } catch { }
+
+  // A decisão vai PRIMEIRO: sem o servidor, o recado viaja pela URL e é
+  // cortado em 1200 caracteres, e o que pode sobrar cortado é a pergunta.
+  const decisao = `DECISAO DE ${por.toUpperCase()} SOBRE A PERGUNTA QUE A ANALISE FEZ (liberada pelo CRM em ${new Date().toLocaleString('pt-BR')}):\n`
+    + `${resposta}\n`
+    + 'Siga a analise com esta decisao e nao pare de novo pela mesma duvida. O que continuar em aberto entra como ressalva no relatorio.'
+    + (pergunta ? `\nA PERGUNTA ERA: ${pergunta.slice(0, 500)}${pergunta.length > 500 ? '...' : ''}` : '')
+  console.log(`    Liberada por ${por}: "${resposta.slice(0, 80)}"`)
+  return { ok: true, decisao }
+}
+
 /* SEM O SERVIDOR LOCAL, vale o que já valia: com `rodar_sozinho` desligado, o
    agente ENTREGA o comando para ele colar; ligado, sobe o Claude ele mesmo. */
 async function iniciarSemServidor(o, instrucoes, modo, feito, falhou) {
@@ -624,7 +848,7 @@ async function iniciarSemServidor(o, instrucoes, modo, feito, falhou) {
        pior do que não rodar: o relatório sai sem o que ele mandou observar, e
        ninguém descobre. É a mesma regra do `/api/analisar` do servidor. */
     try {
-      fs.writeFileSync(path.join(c.raiz, o.pasta, '_instrucoes.txt'), `[ordem dada pelo CRM, ${new Date().toLocaleString('pt-BR')}]\nO QUE OBSERVAR NESTA ANALISE:\n${instrucoes}\n`, 'utf8')
+      fs.writeFileSync(path.join(pastaDentroDaRaiz(o.pasta), '_instrucoes.txt'), `[ordem dada pelo CRM, ${new Date().toLocaleString('pt-BR')}]\nO QUE OBSERVAR NESTA ANALISE:\n${instrucoes}\n`, 'utf8')
     } catch (e) {
       console.error('    _instrucoes.txt:', e.message)
       await falhou(`nao consegui gravar o que voce mandou observar (${e.message}). Nao comecei: a analise rodaria sem a sua ordem.`)
@@ -856,17 +1080,235 @@ async function responderIA(pedidos) {
   }
 }
 
+/* ── 7. A ESTEIRA AUTOMÁTICA  ·  10/09/2026 ──────────────────────────────────
+   Ordem do Marco: "Trazer para a esteira" e o resto anda sozinho. "Estou
+   criando meus funcionários como agente de IA ao invés de ser humano."
+
+   Cada fase é um funcionário, e uma fase só começa quando a anterior deu sinal
+   verde, para nenhum trabalho ser gasto onde não tem como avançar:
+
+     pasta montada ─▶ TRIAGEM ─▶ CADASTRO ─▶ ANÁLISE DE CRÉDITO
+                      (robô)     (IA)        (o /analise de sempre)
+
+     triagem     o `destravar.mjs` do motor: abre o e-mail, extrai o texto dos
+                 documentos e confere o que a política exige. Faltou documento
+                 obrigatório: PARA e espera ele (liberar ou colar na pasta).
+     cadastro    a IA lê Serasa, contrato social e cartão CNPJ e confere um com
+                 o outro; o CRM consulta a Receita, cria ou completa o tomador e,
+                 sem pendência, dá a ordem de analisar.
+     análise     a ordem `iniciar` que o CRM gravou, executada aqui como
+                 qualquer outra.
+
+   SÓ ANDA SOZINHA a análise marcada `automatica` (nascida do "Trazer"). As que
+   já estavam na fila continuam esperando o clique.
+
+   DOCUMENTO NOVO NA PASTA muda o hash, e a corrente recomeça sozinha da
+   triagem: é o "quando eu tiver mais documentos, eu colo dentro da pasta".
+
+   Uma de cada por vez (OCR e IA pesam), e o mesmo hash nunca é tentado duas
+   vezes na mesma vida do agente: falha não vira moinho. */
+let triando = null
+let cadastrando = null
+const tentados = new Map()
+
+async function automatizar(fila) {
+  const vivas = (fila || []).filter((f) => f.automatica && !f.arquivada && !f.ordem
+    && !['concluida', 'em_andamento', 'aguardando_resposta', 'pausada'].includes(f.situacao))
+  if (!vivas.length) return
+  const Comum = await mod('comum.mjs')
+  const Cad = await mod('cadastro.mjs')
+  if (!Comum?.hashConjunto || !Cad?.lerCadastro) return
+
+  for (const f of vivas) {
+    let dir
+    try { dir = pastaDentroDaRaiz(f.pasta) } catch { continue }
+    if (!fs.existsSync(dir)) continue // ainda não montada
+    let hash
+    try { hash = Comum.hashConjunto(Comum.documentosDe(dir)) } catch { continue }
+    if (!hash) continue
+    const cad = Cad.lerCadastro(f.pasta)
+
+    // 1. TRIAGEM: nunca feita, ou os documentos mudaram desde a última.
+    if (!cad?.itens?.length || cad.hash_documentos !== hash) {
+      if (triando || tentados.get(`triagem|${f.pasta}`) === hash) continue
+      tentados.set(`triagem|${f.pasta}`, hash)
+      triagemAutomatica(f)
+      continue
+    }
+
+    // 2. CADASTRO: só com a triagem verde (ou liberada por ele).
+    const sit = Cad.situacaoCadastro(cad)
+    if (sit.status === 'bloqueado' || sit.status === 'pendente') continue
+    if (f.cadastro_agente?.hash === hash) continue
+    if (cadastrando || tentados.get(`cadastro|${f.pasta}`) === hash) continue
+    tentados.set(`cadastro|${f.pasta}`, hash)
+    agenteDeCadastro(f, hash, cad)
+  }
+}
+
+function triagemAutomatica(f) {
+  triando = f.pasta
+  console.log(`  Triagem automática de "${f.pasta}"…`)
+  return new Promise((resolver) => {
+    const proc = spawn(process.execPath, [path.join(c.raiz, '_sistema', 'destravar.mjs'), f.pasta], {
+      cwd: path.join(c.raiz, '_sistema'), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let saida = ''
+    proc.stdout.on('data', (b) => { saida += b.toString('utf8') })
+    proc.on('error', (e) => { console.error('    triagem:', e.message) })
+    proc.on('close', async () => {
+      let r = null
+      try { r = JSON.parse(saida.slice(saida.indexOf('{'))) } catch { }
+      console.log(r?.ok
+        ? `    Triagem de "${f.pasta}": ${r.rotulo || r.status}${r.bloqueios?.length ? ` (falta ${r.bloqueios.map((b) => b.nome).join(', ')})` : ''}.`
+        : `    Triagem de "${f.pasta}" não terminou: ${r?.motivo || 'sem resposta do motor'}.`)
+      triando = null
+      await sincronizar().catch(() => { })
+      resolver()
+    })
+  })
+}
+
+async function agenteDeCadastro(f, hash, cad) {
+  cadastrando = f.pasta
+  console.log(`  Agente de Cadastro em "${f.pasta}"…`)
+  try {
+    // A situação no CRM precisa estar em dia antes: é por ela que ele decide
+    // se a análise pode receber a ordem de começar.
+    await sincronizar().catch(() => { })
+    const lida = await lerCadastroComIA(f.pasta)
+    const id = cad?.identificacao || {}
+    const r = await crm('/api/esteira', {
+      acao: 'cadastro', id: f.id, hash,
+      triagem: { cnpj: id.cnpj || null, empresa: id.empresa_confiavel ? id.empresa : null, corretora: id.corretora || null },
+      ...(lida.ok ? { leitura: lida.leitura } : { erro: lida.motivo }),
+    })
+    if (!r.ok) console.error('    O CRM recusou o cadastro:', r.erro)
+    else {
+      // Gravado no CRM: dali em diante quem impede repetir é o hash gravado lá,
+      // e "Ler o cadastro de novo" no card (que apaga o resultado) volta a valer.
+      tentados.delete(`cadastro|${f.pasta}`)
+      const k = r.cadastro || {}
+      console.log(`    Cadastro de "${f.pasta}": ${k.status}${k.motivos?.length ? ` (${k.motivos.join(' · ')})` : ''}${k.analise_mandada ? '. Mandado para a análise de crédito.' : '.'}`)
+    }
+  } catch (e) {
+    console.error('    agente de cadastro:', e.message)
+  } finally {
+    cadastrando = null
+  }
+}
+
+/* O QUE A IA RECEBE: só o texto que a triagem já extraiu, dos documentos que
+   importam para o cadastro. Não lê balanço (é da análise), e cada classe tem
+   teto, para um Serasa de 40 páginas não afogar o contrato social.
+
+   `outro` ENTRA, com teto menor (medido na Riosul em 10/09/2026): a alteração
+   contratual chamada "servico-assinado atualizacao 2024.pdf" é classificada
+   como `outro` pelo robô da triagem, e sem ela a IA concluiu "não veio contrato
+   social". A IA reconhece o documento pelo conteúdo; o robô só chuta a classe. */
+const TETO_CADASTRO = { cartao_cnpj: 15000, serasa_pj: 70000, contrato_social: 90000, email: 12000, outro: 40000 }
+
+const PROMPT_CADASTRO = `Você é o agente de Cadastro da FAM Seguradora (seguro garantia). Abaixo estão os textos extraídos dos documentos de UM tomador: Serasa, contrato social, cartão CNPJ, o e-mail do pedido e outros documentos da pasta. A "classe provável" de cada um foi dada por um robô e pode estar errada: reconheça o documento pelo conteúdo (uma alteração contratual ou consolidação é contrato social, mesmo com outro nome de arquivo).
+
+Faça três coisas:
+1. Identifique o tomador (a empresa que pede a garantia, não a corretora, não o segurado, não o contador, não um avalista).
+2. Monte o cadastro básico com o que os documentos dizem. Quando houver contrato social, ele é a fonte da razão social, capital e sócios; sem contrato, use o Serasa.
+3. Confira contrato social contra Serasa, campo a campo: razão social, CNPJ, endereço, capital social, sócios e administradores. Sem contrato social, deixe "conferencia" vazia.
+
+Gravidade de cada conferência:
+- "ok": confere.
+- "atencao": diferença que a análise de crédito deve pesar (capital diferente, sócio que entrou ou saiu, endereço desatualizado, nome antigo).
+- "bloqueia": só quando não dá para seguir: documentos de empresas diferentes, CNPJ que não bate entre os documentos, contrato social de outra empresa.
+
+Não invente. Campo que os documentos não trazem fica null. Responda SOMENTE com um JSON, sem texto antes ou depois, neste formato:
+{
+  "cnpj": "somente 14 digitos",
+  "razao_social": "",
+  "nome_fantasia": null,
+  "endereco": { "logradouro": null, "numero": null, "complemento": null, "bairro": null, "cidade": null, "uf": null, "cep": null },
+  "capital_social": null,
+  "data_abertura": "AAAA-MM-DD ou null",
+  "cnae": null,
+  "socios": [ { "nome": "", "documento": null, "tipo": "PF ou PJ", "percentual": null, "cargo": null } ],
+  "fontes": { "contrato_social": false, "serasa": false, "cartao_cnpj": false },
+  "conferencia": [ { "campo": "", "contrato_social": null, "serasa": null, "confere": true, "gravidade": "ok", "nota": null } ],
+  "bloqueios": [],
+  "observacoes": "uma ou duas frases para o analista, ou null",
+  "corretora": "a corretora de seguros que mandou o pedido (quase sempre quem escreve no e-mail original, abaixo do encaminhamento da FAM), ou null"
+}`
+
+async function lerCadastroComIA(pasta) {
+  const P = await mod('ponte.mjs')
+  const D = await mod('documentos.mjs').catch(() => null)
+  if (!P?.rodar || !P.acharClaude?.()) return { ok: false, motivo: 'Não achei o Claude nesta máquina para ler os documentos.' }
+
+  let dir
+  try { dir = pastaDentroDaRaiz(pasta) } catch (e) { return { ok: false, motivo: e.message } }
+  let rel = null
+  try { rel = JSON.parse(fs.readFileSync(path.join(dir, '_extraido', '_relatorio.json'), 'utf8').replace(/^﻿/, '')) } catch { }
+  if (!rel?.arquivos?.length) return { ok: false, motivo: 'A triagem ainda não extraiu o texto dos documentos desta pasta.' }
+
+  const usados = Object.fromEntries(Object.keys(TETO_CADASTRO).map((k) => [k, 0]))
+  const blocos = []
+  for (const item of rel.arquivos) {
+    if (item.tipo === 'duplicata') continue
+    const arqTexto = item.texto_em || (/(_extraido\/[^\s"]+\.txt)/.exec(item.acao || '') || [])[1]
+    let texto = ''
+    try {
+      if (arqTexto) texto = fs.readFileSync(path.join(dir, arqTexto), 'utf8')
+      else if (item.tipo === 'texto' && item.caminho) texto = fs.readFileSync(item.caminho, 'utf8')
+    } catch { texto = '' }
+    if (texto.trim().length < 50) continue
+    const nome = String(item.arquivo || '')
+    let classe = 'outro'
+    if (/^e-?mail/i.test(path.basename(nome))) classe = 'email'
+    else { try { classe = D?.classificarArquivo?.({ rel: nome, tipo: item.tipo, texto })?.classe || 'outro' } catch { } }
+    if (!(classe in TETO_CADASTRO)) continue
+    const resta = TETO_CADASTRO[classe] - usados[classe]
+    if (resta < 500) continue
+    const pedaco = texto.slice(0, resta)
+    usados[classe] += pedaco.length
+    blocos.push(`=== DOCUMENTO: ${nome} (classe provável: ${classe}) ===\n${pedaco}`)
+  }
+  if (!blocos.length) return { ok: false, motivo: 'Não achei Serasa, contrato social, cartão CNPJ nem e-mail com texto legível na pasta.' }
+
+  const r = await P.rodar({
+    dir,
+    // Somente leitura: o texto já vai inteiro na entrada, e a IA não escreve nada.
+    args: ['--output-format', 'json', '--model', 'sonnet', '--allowedTools', 'Read', '-p'],
+    entrada: `${PROMPT_CADASTRO}\n\n${blocos.join('\n\n')}`,
+    limiteMs: 10 * 60 * 1000,
+  })
+  if (!r.ok) return { ok: false, motivo: r.motivo || 'a IA não respondeu' }
+  let resposta = ''
+  try { resposta = String(JSON.parse(r.bruto).result || '') } catch { resposta = String(r.bruto || '') }
+  const ini = resposta.indexOf('{'), fim = resposta.lastIndexOf('}')
+  if (ini < 0 || fim <= ini) return { ok: false, motivo: 'A IA não devolveu a leitura no formato combinado.' }
+  try { return { ok: true, leitura: JSON.parse(resposta.slice(ini, fim + 1)) } }
+  catch { return { ok: false, motivo: 'A leitura da IA veio com o JSON quebrado.' } }
+}
+
 // ── a rodada ────────────────────────────────────────────────────────────────
 let ultimaSincronia = 0
+/* A PRESSA (10/09/2026). "O ser humano precisa sempre de visualização." Com a
+   sincronia de 90 s, quem clicava em Analisar ficava um minuto e meio olhando
+   uma tela sem mudança, achando que nada tinha acontecido. Depois de uma ordem,
+   de um passo da automação ou com análise rodando, o retrato sobe a cada 15 s. */
+let apressadoAte = 0
+const apressar = (min = 6) => { apressadoAte = Math.max(apressadoAte, Date.now() + min * 60000) }
+let temExecucaoViva = false
 
 async function rodada({ forcar = false } = {}) {
   const ordem = await crm(`/api/esteira?maquina=${encodeURIComponent(c.maquina)}`)
   if (!ordem.ok) return console.error('CRM:', ordem.erro ?? `HTTP ${ordem.status}`)
 
   // Materializar e executar vêm PRIMEIRO: alguém está olhando a tela esperando.
-  if (ordem.a_materializar?.length) await materializar(ordem.a_materializar)
-  if (ordem.ordens?.length) await executarOrdens(ordem.ordens)
+  if (ordem.a_materializar?.length) { apressar(); await materializar(ordem.a_materializar) }
+  if (ordem.ordens?.length) { apressar(); await executarOrdens(ordem.ordens) }
+  if (triando || cadastrando) apressar(2)
   await aplicarDecisoes(ordem)
+  // Não espera: triagem e cadastro rodam soltos, um de cada, e a rodada segue.
+  automatizar(ordem.fila).catch((e) => console.error('  automação:', e.message))
   // Depois das ordens: quem perguntou está olhando a tela, mas quem mandou
   // analisar está esperando há mais tempo.
   if (ordem.ia?.length) {
@@ -876,9 +1318,11 @@ async function rodada({ forcar = false } = {}) {
     await sincronizarConversas()
   }
 
-  if (forcar || Date.now() - ultimaSincronia >= c.sincronia_seg * 1000) {
+  const ritmo = (Date.now() < apressadoAte || temExecucaoViva) ? Math.min(15, c.sincronia_seg) : c.sincronia_seg
+  if (forcar || Date.now() - ultimaSincronia >= ritmo * 1000) {
     ultimaSincronia = Date.now()
     await sincronizar()
+    try { await conferirDisco(ordem.fila) } catch (e) { console.error('  conferir o disco:', e.message) }
     await sincronizarMural()
     await sincronizarAlcadas()
     await sincronizarConversas()
@@ -904,6 +1348,10 @@ if (cmd === 'diagnostico') {
   const r = await crm(`/api/esteira?maquina=${encodeURIComponent(c.maquina)}`)
   console.log('Resposta do CRM :', r.ok ? `${r.fila?.length ?? 0} na fila, ${r.ordens?.length ?? 0} ordem(ns), ${r.ia?.length ?? 0} pergunta(s)` : `NÃO respondeu (${r.erro ?? r.status})`)
   console.log('Rodar sozinho   :', c.rodar_sozinho ? 'LIGADO' : 'desligado (entrega o comando para você colar)')
+} else if (cmd === 'ler-cadastro') {
+  // Só leitura: mostra o que o agente de Cadastro leria nesta pasta, sem mandar nada ao CRM.
+  //   node scripts/esteira.mjs ler-cadastro "<pasta>"
+  console.log(JSON.stringify(await lerCadastroComIA(process.argv[3] || ''), null, 2))
 } else if (cmd === 'uma-vez') {
   await rodada({ forcar: true })
 } else {

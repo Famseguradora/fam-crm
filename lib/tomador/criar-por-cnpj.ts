@@ -16,8 +16,9 @@
 //  pela mão dele no Cadastro.
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { consultarCNPJ } from '@/lib/cnpj'
+import { consultarCNPJ, type CartaoCNPJ } from '@/lib/cnpj'
 import { casarCorretora } from '@/lib/analise/corretoras.mjs'
+import { complementarTomador, dadosDoCartao, sociosDoCartao, type DadosCadastrais, type SocioEntrada } from '@/lib/tomador/complementar'
 
 export interface TomadorBasico {
   id: string
@@ -32,8 +33,17 @@ export interface EntradaTomador {
   razao_social?: string
   /** Nome da corretora como veio; casado por nome, sem inventar. */
   corretora?: string
+  /** A corretora já escolhida na lista (ou achada no e-mail): vale mais que o nome. */
+  corretora_id?: string | null
   /** De onde veio este cadastro, para ficar escrito na ficha. */
   origem: string
+  /** A Receita já consultada por quem chama (o agente de Cadastro), para não
+   *  consultar duas vezes. `undefined` = consultar aqui; `null` = não respondeu. */
+  cartao?: CartaoCNPJ | null
+  receitaErro?: string | null
+  /** O que os documentos (Serasa, contrato) dizem, usado quando a Receita falha. */
+  reserva?: DadosCadastrais
+  socios?: SocioEntrada[]
 }
 
 export type ResultadoTomador =
@@ -68,21 +78,25 @@ export async function acharOuCriarTomadorPorCnpj(
   // mas é rede: cai, muda de formato, responde devagar. Falhando, o cadastro
   // NASCE ASSIM MESMO com o que já se sabe, e o retorno diz que ela não veio.
   //
-  // DUAS TENTATIVAS, e não uma (medido em 31/08/2026): a BrasilAPI devolve 403
-  // quando o minuto já teve consultas demais, e o primeiro cadastro criado por
-  // esta regra nasceu sem endereço por isso, com a API no ar dois segundos
-  // depois. "CNPJ não encontrado" NÃO é tentado de novo: já é definitivo.
-  let cartao: Awaited<ReturnType<typeof consultarCNPJ>> | null = null
+  // A REPETIÇÃO MORA DENTRO DE `consultarCNPJ` desde 09/09/2026 (três tentativas
+  // com espera crescente, e 404 sem repetir). O laço que existia aqui virou
+  // repetição em cima de repetição: seis chamadas para o mesmo CNPJ, gastando a
+  // cota da API pública em dobro. Uma chamada, e quem repete é ela.
+  //
+  // O QUE ESTAVA REALMENTE ERRADO em 31/08 não era o número de tentativas: era
+  // a falta de User-Agent, que fazia a Cloudflare da BrasilAPI recusar TODA
+  // chamada de servidor com 403. Por isso "o primeiro cadastro nasceu sem
+  // endereço": ele nunca ia nascer com endereço.
+  let cartao: CartaoCNPJ | null = null
   let receitaErro: string | null = null
-  for (let tentativa = 1; tentativa <= 2; tentativa++) {
+  if (entrada.cartao !== undefined) {
+    cartao = entrada.cartao
+    receitaErro = cartao ? null : (entrada.receitaErro ?? 'a Receita não respondeu')
+  } else {
     try {
       cartao = await consultarCNPJ(cnpj)
-      receitaErro = null
-      break
     } catch (e: unknown) {
       receitaErro = e instanceof Error ? e.message : 'falha na consulta'
-      if (/não encontrado/i.test(receitaErro)) break
-      if (tentativa < 2) await new Promise((r) => setTimeout(r, 1500))
     }
   }
 
@@ -100,9 +114,9 @@ export async function acharOuCriarTomadorPorCnpj(
   // branco, porque o vínculo desce para as operações depois. A regra é a de
   // `lib/analise/corretoras.mjs`, a mesma do motor e a mesma da carga (acha 37
   // das 43 grafias do acervo, contra 8 da comparação escrita à mão).
-  let corretoraId: string | null = null
+  let corretoraId: string | null = entrada.corretora_id ?? null
   const nomeCorretora = String(entrada.corretora ?? '').trim()
-  if (nomeCorretora) {
+  if (!corretoraId && nomeCorretora) {
     const { data: cs } = await supabase
       .from('corretoras')
       .select('id, razao_social, nome_fantasia, cnpj')
@@ -146,6 +160,18 @@ export async function acharOuCriarTomadorPorCnpj(
       status: erroCriar ? 500 : 403,
     }
   }
+
+  /* O QUE O INSERT DE CIMA NÃO LEVAVA (10/09/2026): CNAE, capital, situação,
+     abertura e os sócios da Receita eram consultados e jogados fora, e alguém
+     digitava de novo na Mesa. Sem Receita, entra o que os documentos disseram.
+     Falhar aqui não desfaz o cadastro, que já nasceu. */
+  try {
+    await complementarTomador(supabase, criado.id, cartao ? dadosDoCartao(cartao) : (entrada.reserva ?? {}), {
+      socios: cartao ? sociosDoCartao(cartao) : (entrada.socios ?? []),
+      fonte: cartao ? 'receita' : entrada.reserva ? 'serasa' : null,
+      receitaConsultada: !!cartao,
+    })
+  } catch { /* o cadastro básico já existe */ }
 
   return {
     ok: true,

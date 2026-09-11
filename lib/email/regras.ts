@@ -20,6 +20,7 @@ export interface RegrasEmail {
   pasta: string
   so_com_anexo: boolean
   so_nao_lidos: boolean
+  so_remetente_interno: boolean
   dias_para_tras: number
   max_por_rodada: number
   remetentes: string[]
@@ -31,6 +32,17 @@ export interface RegrasEmail {
   resposta_texto: string
   pedido_texto: string
 }
+
+/* O DOMÍNIO INTERNO DA FAM (10/09/2026). Ordem do Marco: "eu recebo os e-mails
+   internos, então as análises só são feitas quando o remetente é da FAM" — o
+   pedido de análise chega quase sempre por alguém da casa encaminhando o que a
+   corretora mandou (é a mesma suposição que `acharCorretoraNoEmail` já fazia:
+   "o remetente é sempre a FAM encaminhando; a corretora está no corpo").
+
+   É CONSTANTE, e não um campo de tela: é o domínio da empresa, não uma
+   preferência de caixa. Fica aqui, e não redigitado em cada lugar que precisar
+   dele. */
+export const DOMINIO_INTERNO_FAM = 'famseguradora.com.br'
 
 /* A RÉGUA NÃO ESCONDE E-MAIL DO DONO DA CAIXA (08/09/2026).
    Ordem do Marco: "eu preciso ver todos os e-mails e a meu critério eu trago
@@ -56,6 +68,7 @@ export const REGRAS_PADRAO: RegrasEmail = {
   pasta: '',
   so_com_anexo: true,
   so_nao_lidos: false,
+  so_remetente_interno: true,
   dias_para_tras: 7,
   max_por_rodada: 200,
   remetentes: [],
@@ -106,6 +119,14 @@ export function avaliarEmail(
   if (r.so_nao_lidos && !e.nao_lido) return { serve: false, motivo: 'Já lido.' }
   if (r.so_com_anexo && !((e.anexos_uteis ?? 0) > 0)) {
     return { serve: false, motivo: 'Sem anexo (só imagem de assinatura ou nenhum).' }
+  }
+  /* SÓ REMETENTE INTERNO (10/09/2026). O pedido de análise chega quase sempre
+     por alguém da FAM encaminhando o que a corretora mandou. Corretora que
+     escreve DIRETO para a caixa não vira pedido de análise sozinha: fica em
+     "Todos", só o dono vê, e o dono decide na hora se traz mesmo assim (o
+     clique nunca deixa de existir, isto só tira o auto). */
+  if (r.so_remetente_interno && !de.includes(`@${DOMINIO_INTERNO_FAM}`)) {
+    return { serve: false, motivo: `Remetente não é da FAM (@${DOMINIO_INTERNO_FAM}).` }
   }
   if ((r.remetentes ?? []).length) {
     const bate = r.remetentes.some((x) => de.includes(String(x).toLowerCase()))

@@ -81,6 +81,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  /* O PRÓPRIO E-MAIL VAI PARA A PASTA (10/09/2026). Ordem do Marco: a triagem
+     "vai LER O E-MAIL". O .msg ficava só no Storage (`casos.email_storage_path`,
+     sem linha em `anexos`), e a pasta recebia os anexos soltos, sem o corpo:
+     corretora, produto e as condições que o comercial escreveu nunca chegavam.
+     Com o .msg na pasta, o `ler-emails.mjs` do motor escreve o corpo como
+     documento e abre os e-mails que vierem embutidos. Anexo repetido não pesa:
+     a extração marca a cópia idêntica como duplicata. */
+  if (fila.caso_id) {
+    const { data: caso } = await sb
+      .from('casos').select('numero, email_storage_path').eq('id', fila.caso_id).maybeSingle()
+    const caminho = caso?.email_storage_path
+    if (caminho && !vistos.has(caminho)) {
+      vistos.add(caminho)
+      const { data: assinado } = await sb.storage.from(BUCKET).createSignedUrl(caminho, VALE_SEGUNDOS)
+      if (assinado?.signedUrl) {
+        const ext = caminho.toLowerCase().endsWith('.eml') ? '.eml' : '.msg'
+        documentos.push({ nome: `E-mail original do caso ${caso.numero}${ext}`, url: assinado.signedUrl, bytes: null })
+      } else {
+        falhas.push('o próprio e-mail (sem endereço assinado)')
+      }
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     pasta: fila.pasta,

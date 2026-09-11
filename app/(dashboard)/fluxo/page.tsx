@@ -34,7 +34,7 @@ export const dynamic = 'force-dynamic'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { fmtMoeda, maskCNPJ } from '@/lib/utils'
+import { fmtMoeda, maskCNPJ, validarCNPJ } from '@/lib/utils'
 // A regra do card mora num lugar só: a Mesa e este funil importam daqui, para
 // que "travado" no cartão e "travado" na seção nunca discordem.
 import {
@@ -44,7 +44,16 @@ import {
 
 // ── as peças de dado ────────────────────────────────────────────────────────
 
-interface Etapa { nome: string; cor: string | null; ordem: number | null }
+interface Etapa {
+  nome: string
+  cor: string | null
+  ordem: number | null
+  /* O TETO DE FILA DA ETAPA (limite de WIP). Veio da pesquisa de kanban de
+     09/09/2026: limitar trabalho em curso e o ponto original do metodo, e era
+     a unica regra dele que este funil ainda nao tinha. Nulo = sem teto, e o
+     teto nunca bloqueia: ele pinta a coluna. */
+  wip_limite: number | null
+}
 
 interface Operacao {
   id: string
@@ -59,6 +68,23 @@ interface Operacao {
   temperatura: string | null
   data_entrada: string | null
   voto_subscricao: string | null
+}
+
+/* O caso é o pedido ANTES de virar operação: o e-mail que o Comercial trouxe,
+   ou o CNPJ que ele digitou. Ele entrou no funil em 09/09/2026, porque a
+   primeira coluna do funil não existia: o trabalho começava numa tela separada
+   (/comercial) e o funil só via o que já tinha virado operação. */
+interface Caso {
+  id: string
+  numero: number
+  assunto: string
+  cnpj: string | null
+  razao_social: string | null
+  corretora_texto: string | null
+  produto: string | null
+  etapa: string
+  tomador_id: string | null
+  criado_em: string
 }
 
 interface Tomador { id: string; razao_social: string; cnpj: string | null; central_area: string | null }
@@ -82,6 +108,27 @@ function brlCurto(n: number): string {
 
 const pct = (n: number): string =>
   n ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%' : 'sem taxa'
+
+/* AS FAIXAS DE IDADE DO CARTAO, e o que cada uma quer dizer na pratica.
+   A pesquisa de kanban chama isso de card aging e recomenda tres degraus, e
+   nao um cronometro exato: o que a pessoa precisa e "esta parado demais?",
+   nao "ha 23,4 dias". Os cortes sao os do trabalho da FAM, e nao de um blog:
+   duas semanas ainda e um pedido normal, um mes ja e um pedido esquecido. */
+/* O visual dos filtros num lugar so: cinco selects escritos a mao divergiriam
+   na terceira mudanca, e a barra pareceria montada por pessoas diferentes. */
+const ESTILO_FILTRO: React.CSSProperties = {
+  padding: '7px 9px', fontSize: 12.5, border: '1px solid var(--border)',
+  borderRadius: 8, background: '#fff', color: '#22344d', maxWidth: 190,
+}
+
+const IDADE = [
+  { ate: 14, rotulo: 'fresca', cor: '#6080a0', fundo: 'transparent' },
+  { ate: 30, rotulo: 'esfriando', cor: '#8a6410', fundo: '#fdf4dd' },
+  { ate: Infinity, rotulo: 'parada', cor: '#a02020', fundo: '#fbe9e9' },
+] as const
+
+const faixaDeIdade = (dias: number | null) =>
+  dias === null ? null : IDADE.find(f => dias <= f.ate) ?? IDADE[2]
 
 /** Sem acento e em minúscula, para a busca achar "São" digitando "sao". */
 const chave = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
@@ -154,11 +201,72 @@ export default function FluxoPage() {
   const [soltandoEm, setSoltandoEm] = useState<string | null>(null)
   const [coluna, setColuna] = useState<ColunaLista>('entrada')
   const [direcao, setDirecao] = useState<Direcao>('desc')
+  // A primeira coluna do funil: os pedidos que ainda não são operação.
+  const [casos, setCasos] = useState<Caso[]>([])
+  const [abrindo, setAbrindo] = useState(false)
+  // Quando cada operacao entrou na etapa atual (id -> data ISO).
+  const [entrouNaEtapa, setEntrouNaEtapa] = useState<Map<string, string>>(new Map())
+  // Os filtros da barra. Vazio = tudo, e e o estado normal.
+  const [fCorretora, setFCorretora] = useState('')
+  const [fModalidade, setFModalidade] = useState('')
+  const [fArea, setFArea] = useState('')
+  const [fParadas, setFParadas] = useState(false)
+  const [fLmg, setFLmg] = useState('')
+  // Confortavel ou compacto. Gosto de cada um, entao fica gravado no navegador.
+  const [compacto, setCompacto] = useState(false)
+  // Colunas fechadas, por nome de etapa. A pesquisa diz para nao passar de 5 a
+  // 7 colunas; em vez de esconder etapa a forca, deixamos fechar a que nao
+  // interessa hoje, e o contador continua a vista.
+  const [fechadas, setFechadas] = useState<Set<string>>(new Set())
+  const [cnpjNovo, setCnpjNovo] = useState('')
+  const [criando, setCriando] = useState(false)
+
+  /* O GOSTO DELE FICA NO NAVEGADOR, e nao no banco: densidade e coluna fechada
+     sao preferencia de quem esta olhando agora, nao dado da empresa. Leitura
+     dentro de efeito porque `localStorage` nao existe no servidor. */
+  useEffect(() => {
+    try {
+      // O setState aqui e proposital, e e a convencao do projeto (NewsTicker):
+      // sincroniza o estado com o storage DEPOIS da hidratacao, porque
+      // localStorage nao existe no SSR e ler no initializer daria mismatch.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCompacto(localStorage.getItem('fam.funil.compacto') === '1')
+      const f = localStorage.getItem('fam.funil.fechadas')
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (f) setFechadas(new Set(JSON.parse(f) as string[]))
+    } catch { /* navegador com storage bloqueado: segue no padrao */ }
+  }, [])
+
+  const alternarDensidade = () => {
+    setCompacto(c => {
+      try { localStorage.setItem('fam.funil.compacto', c ? '0' : '1') } catch {}
+      return !c
+    })
+  }
+
+  const alternarColuna = (nome: string) => {
+    setFechadas(atual => {
+      const novo = new Set(atual)
+      if (novo.has(nome)) novo.delete(nome); else novo.add(nome)
+      try { localStorage.setItem('fam.funil.fechadas', JSON.stringify([...novo])) } catch {}
+      return novo
+    })
+  }
 
   const carregar = useCallback(async (vivo: { atual: boolean }) => {
     const supabase = createClient()
-    const [e, o, t, c, s, cat, anx] = await Promise.all([
-      supabase.from('status_fluxo_operacao').select('nome, cor, ordem').eq('ativo', true).order('ordem'),
+    const [e, o, t, c, s, cat, anx, ca, hist] = await Promise.all([
+      /* A REGUA, E O TETO DE FILA QUE PODE AINDA NAO EXISTIR.
+         `wip_limite` chega pela migration supabase-migration-funil-wip.sql. Em
+         09/09/2026 o funil pediu a coluna antes de a migration ser aplicada, o
+         Postgres recusou a consulta INTEIRA, e a tela ficou sem etapa nenhuma:
+         as 298 operacoes viraram "orfas" e o Kanban ficou so com a coluna de
+         triagem. Coluna nova nao pode derrubar tela: se ela nao existir, a
+         regua vem sem ela e o funil funciona igual, so sem os tetos. */
+      supabase.from('status_fluxo_operacao').select('nome, cor, ordem, wip_limite').eq('ativo', true).order('ordem')
+        .then(r => (r.error && /wip_limite/.test(r.error.message)
+          ? supabase.from('status_fluxo_operacao').select('nome, cor, ordem').eq('ativo', true).order('ordem')
+          : r)),
       supabase.from('operacoes')
         .select('id, tomador_id, corretora_id, modalidade, lmg, taxa, premio_previsto, status, prioridade, temperatura, data_entrada, voto_subscricao')
         .limit(3000),
@@ -171,11 +279,36 @@ export default function FluxoPage() {
       supabase.from('caso_item_catalogo').select('*').eq('ativo', true).order('ordem'),
       // `analise_documentos` está zerada, então o checklist lê só os anexos.
       supabase.from('anexos').select('tomador_id, nome_original').limit(3000),
+      // Os casos ABERTOS. Concluído (`analise`) sai da coluna: dali em diante o
+      // trabalho é da esteira, e ele já aparece como operação nas outras.
+      supabase.from('casos')
+        .select('id, numero, assunto, cnpj, razao_social, corretora_texto, produto, etapa, tomador_id, criado_em')
+        .in('etapa', ['comercial', 'triagem'])
+        .order('criado_em', { ascending: false })
+        .limit(500),
+      /* QUANDO CADA OPERACAO ENTROU NA ETAPA EM QUE ESTA. E o que faz o cartao
+         envelhecer a vista: a pesquisa de kanban chama isso de card aging, e e
+         o unico jeito de "parado ha 40 dias" aparecer sem alguem ir procurar.
+         Vem de `fam_historico`, que ja e escrito por trigger: nao inventamos
+         tabela nova para isso. */
+      supabase.from('fam_historico')
+        .select('registro_id, mudou_em')
+        .eq('tabela', 'operacoes')
+        .eq('campo', 'status')
+        .order('mudou_em', { ascending: false })
+        .limit(4000),
     ])
     if (!vivo.atual) return
     const falhou = e.error || o.error || t.error || c.error
     if (falhou) setErro(falhou.message)
-    setEtapas((e.data ?? []) as Etapa[])
+    /* A regua pode ter vindo sem `wip_limite` (migration nao aplicada). O `??`
+       transforma isso em "sem teto" em vez de undefined viajando pela tela. */
+    setEtapas(((e.data ?? []) as Partial<Etapa>[]).map(x => ({
+      nome: String(x.nome ?? ''),
+      cor: x.cor ?? null,
+      ordem: x.ordem ?? null,
+      wip_limite: x.wip_limite ?? null,
+    })))
     setOps((o.data ?? []) as unknown as Operacao[])
     setTomadores(new Map(((t.data ?? []) as Tomador[]).map(x => [x.id, x])))
     setCorretoras(new Map(((c.data ?? []) as Corretora[]).map(x => [x.id, x])))
@@ -197,6 +330,17 @@ export default function FluxoPage() {
       arqs.set(a.tomador_id, lista)
     })
     setArquivos(arqs)
+    setCasos((ca.data ?? []) as unknown as Caso[])
+
+    /* A consulta veio da mais nova para a mais velha, entao a PRIMEIRA vez que
+       um id aparece e a ultima mudanca de etapa dele. Quem nunca mudou de etapa
+       nao entra aqui, e o cartao cai no `data_entrada` como segunda melhor
+       resposta (dito na tela, para ninguem ler um numero achando que e outro). */
+    const desde = new Map<string, string>()
+    ;((hist.data ?? []) as { registro_id: string; mudou_em: string }[]).forEach(h => {
+      if (h.registro_id && !desde.has(h.registro_id)) desde.set(h.registro_id, h.mudou_em)
+    })
+    setEntrouNaEtapa(desde)
     setCarregando(false)
   }, [])
 
@@ -263,12 +407,32 @@ export default function FluxoPage() {
     })
   }, [tomadores])
 
-  // ── o que a busca deixou passar ───────────────────────────────────────────
+  /** Ha quantos dias esta operacao esta na etapa em que esta. Preferimos a
+   *  ultima mudanca de status; sem ela, cai para a data de entrada, que e uma
+   *  aproximacao pior e por isso a tela diz qual das duas esta mostrando. */
+  const diasParada = useCallback((o: Operacao): number | null => {
+    const marco = entrouNaEtapa.get(o.id) ?? o.data_entrada
+    if (!marco) return null
+    const dias = Math.floor((Date.now() - new Date(marco).getTime()) / 86400000)
+    return Number.isFinite(dias) && dias >= 0 ? dias : null
+  }, [entrouNaEtapa])
+
+  // ── o que a busca e os filtros deixaram passar ────────────────────────────
   const vistas = useMemo(() => {
     const q = chave(busca.trim())
     const digitos = q.replace(/\D/g, '')
     let r = ops
     if (soVivas) r = r.filter(o => !MORTAS.has(o.status ?? ''))
+    if (fCorretora) r = r.filter(o => o.corretora_id === fCorretora)
+    if (fModalidade) r = r.filter(o => (o.modalidade ?? '') === fModalidade)
+    if (fArea) r = r.filter(o => (o.tomador_id ? tomadores.get(o.tomador_id)?.central_area : null) === fArea)
+    if (fLmg) {
+      const piso = Number(fLmg)
+      if (Number.isFinite(piso)) r = r.filter(o => num(o.lmg) >= piso)
+    }
+    /* "So as paradas" e o filtro que a pesquisa chama de stale: e o unico que
+       responde "o que esta atrasado?" sem ninguem ler coluna por coluna. */
+    if (fParadas) r = r.filter(o => (diasParada(o) ?? 0) > 30 && !MORTAS.has(o.status ?? ''))
     if (q) {
       r = r.filter(o => {
         const t = o.tomador_id ? tomadores.get(o.tomador_id) : null
@@ -277,7 +441,39 @@ export default function FluxoPage() {
       })
     }
     return r
-  }, [ops, busca, soVivas, tomadores, nomeDoTomador, nomeDaCorretora])
+  }, [ops, busca, soVivas, fCorretora, fModalidade, fArea, fLmg, fParadas,
+      diasParada, tomadores, nomeDoTomador, nomeDaCorretora])
+
+  const filtrosLigados = !!(fCorretora || fModalidade || fArea || fLmg || fParadas)
+  const limparFiltros = () => {
+    setFCorretora(''); setFModalidade(''); setFArea(''); setFLmg(''); setFParadas(false)
+  }
+
+  /* As opcoes das listas saem do que EXISTE no funil, e nao de um cadastro
+     inteiro: filtro que oferece 99 corretoras das quais 12 tem operacao e um
+     filtro que faz a pessoa procurar. */
+  const opcoes = useMemo(() => {
+    const cs = new Map<string, string>()
+    const ms = new Set<string>()
+    const as = new Set<string>()
+    ops.forEach(o => {
+      if (o.corretora_id) cs.set(o.corretora_id, nomeDaCorretora(o.corretora_id))
+      if (o.modalidade) ms.add(o.modalidade)
+      const a = o.tomador_id ? tomadores.get(o.tomador_id)?.central_area : null
+      if (a) as.add(a)
+    })
+    return {
+      corretoras: [...cs.entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR')),
+      modalidades: [...ms].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+      areas: [...as].sort((a, b) => nomeArea(a).localeCompare(nomeArea(b), 'pt-BR')),
+    }
+  }, [ops, tomadores, nomeDaCorretora])
+
+  /* Quantas estao paradas ha mais de 30 dias. Vira numero no topo: e a conta
+     que ninguem faz sozinho, e e a que diz se o funil esta escoando. */
+  const paradas = useMemo(
+    () => vistas.filter(o => !MORTAS.has(o.status ?? '') && (diasParada(o) ?? 0) > 30).length,
+    [vistas, diasParada])
 
   // ── os números do topo, na conta do protótipo ─────────────────────────────
   const kpis = useMemo(() => {
@@ -352,6 +548,38 @@ export default function FluxoPage() {
     return vistas.filter(o => !conhecidas.has(o.status ?? ''))
   }, [vistas, etapas])
 
+  /* Os casos da primeira coluna, filtrados pela MESMA busca das operações: se a
+     busca escondesse só metade da tela, o funil mentiria sobre o que tem. */
+  const casosVistos = useMemo(() => {
+    const q = chave(busca.trim())
+    if (!q) return casos
+    return casos.filter(c =>
+      chave(`${c.razao_social ?? ''} ${c.assunto} ${c.cnpj ?? ''} ${c.corretora_texto ?? ''}`).includes(q))
+  }, [casos, busca])
+
+  /* ABRIR PELO CNPJ, sem e-mail nenhum. O pedido que chega por telefone ou por
+     WhatsApp entrava no CRM por caminho nenhum: ou virava .msg forçado, ou ia
+     para fora do sistema. Agora entra por aqui, e cai na mesma tela de Triagem
+     do caso que veio de e-mail. */
+  async function abrirPorCnpj() {
+    const digitos = cnpjNovo.replace(/\D/g, '')
+    if (!validarCNPJ(digitos)) { setErro('CNPJ inválido: confira os dígitos.'); return }
+    setCriando(true); setErro('')
+    try {
+      const r = await fetch('/api/casos/novo', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cnpj: digitos }),
+      })
+      const j = await r.json()
+      if (!r.ok) { setErro(j.erro ?? 'Não consegui abrir o cadastro.'); setCriando(false); return }
+      router.push(`/comercial/${j.caso.id}`)
+    } catch {
+      setErro('A conexão caiu. Tente de novo.')
+      setCriando(false)
+    }
+  }
+
   return (
     <div style={{ padding: '4px 0 26px' }}>
       {/* ── a faixa que ensina a regra, igual à do protótipo ── */}
@@ -376,11 +604,39 @@ export default function FluxoPage() {
         <Kpi rotulo="Operações" numero={String(kpis.vivas)} pe={`${kpis.mortas} recusadas ou perdidas`} />
         <Kpi rotulo="LMG emitido" numero={brlCurto(kpis.lmg)} pe={`${kpis.apolices} apólices`} cor="#27a96c" />
         <Kpi rotulo="Prêmio previsto" numero={brlCurto(kpis.premio)} pe="nas apólices emitidas" destaque />
+        {/* O numero que ninguem faz na mao: quantas estao envelhecendo na mesma
+            etapa. Clicar nele LIGA o filtro, para o numero levar ao trabalho em
+            vez de so informar que ele existe. */}
+        <button
+          onClick={() => setFParadas(p => !p)}
+          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
+        >
+          <Kpi
+            rotulo="Paradas há +30 dias"
+            numero={String(paradas)}
+            pe={fParadas ? 'filtrando só por elas' : 'clique para ver só elas'}
+            cor={paradas ? '#d64545' : undefined}
+          />
+        </button>
       </div>
 
-      {/* ── busca ── */}
-      <div className="card-panel" style={{ padding: '12px 14px', marginBottom: 14 }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+      {/* ══ A BARRA DE FILTROS ══════════════════════════════════════════════
+          Veio da pesquisa que ele pediu em 09/09/2026: filtrar por dono, etapa
+          e periodo e o basico que todo funil serio tem, e este so tinha busca
+          por texto. Cada filtro aqui responde a uma pergunta que alguem faz de
+          verdade: "o que e da corretora X", "o que e Judicial", "o que esta na
+          minha area", "o que ja passou de R$ 1 mi", "o que esta parado".
+
+          Os filtros SOMAM (E, e nao OU) e nunca escondem sem dizer: quando ha
+          filtro ligado, a barra fica azul e aparece o botao de limpar. Filtro
+          esquecido ligado e a forma mais comum de alguem jurar que um card
+          sumiu do sistema. */}
+      <div className="card-panel" style={{
+        padding: '12px 14px', marginBottom: 14,
+        borderColor: filtrosLigados ? '#3070c8' : undefined,
+        background: filtrosLigados ? '#f4f8fd' : undefined,
+      }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 9, alignItems: 'center' }}>
           <input
             type="search"
             value={busca}
@@ -388,14 +644,78 @@ export default function FluxoPage() {
             placeholder="Empresa, CNPJ, corretora ou produto"
             aria-label="Procurar no funil"
             style={{
-              flex: '1 1 260px', minWidth: 0, padding: '8px 11px', fontSize: 13.5,
+              flex: '1 1 220px', minWidth: 0, padding: '8px 11px', fontSize: 13.5,
               border: '1px solid var(--border)', borderRadius: 8, background: '#fff',
             }}
           />
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#22344d' }}>
+
+          <select value={fCorretora} onChange={e => setFCorretora(e.target.value)}
+            aria-label="Filtrar por corretora" style={ESTILO_FILTRO}>
+            <option value="">Toda corretora</option>
+            {opcoes.corretoras.map(([id, nome]) => <option key={id} value={id}>{nome}</option>)}
+          </select>
+
+          <select value={fModalidade} onChange={e => setFModalidade(e.target.value)}
+            aria-label="Filtrar por modalidade" style={ESTILO_FILTRO}>
+            <option value="">Toda modalidade</option>
+            {opcoes.modalidades.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+
+          <select value={fArea} onChange={e => setFArea(e.target.value)}
+            aria-label="Filtrar por área responsável" style={ESTILO_FILTRO}>
+            <option value="">Toda área</option>
+            {opcoes.areas.map(a => <option key={a} value={a}>{nomeArea(a)}</option>)}
+          </select>
+
+          <select value={fLmg} onChange={e => setFLmg(e.target.value)}
+            aria-label="Filtrar por LMG mínimo" style={ESTILO_FILTRO}>
+            <option value="">Todo valor</option>
+            <option value="1000000">LMG maior que R$ 1 mi</option>
+            <option value="5000000">LMG maior que R$ 5 mi</option>
+            <option value="10000000">LMG maior que R$ 10 mi</option>
+            <option value="50000000">LMG maior que R$ 50 mi</option>
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginTop: 10 }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#22344d' }}>
             <input type="checkbox" checked={soVivas} onChange={e => setSoVivas(e.target.checked)} />
             Esconder recusadas e perdidas
           </label>
+
+          <label style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5,
+            color: fParadas ? '#a02020' : '#22344d', fontWeight: fParadas ? 700 : 400,
+          }}>
+            <input type="checkbox" checked={fParadas} onChange={e => setFParadas(e.target.checked)} />
+            Só as paradas há mais de 30 dias
+          </label>
+
+          <button onClick={alternarDensidade} className="btn-clear"
+            style={{ fontSize: 12, padding: '4px 10px' }}
+            title="Quanto cabe na tela sem rolar">
+            {compacto ? 'Compacto' : 'Confortável'}
+          </button>
+
+          {fechadas.size > 0 && (
+            <button
+              onClick={() => {
+                setFechadas(new Set())
+                try { localStorage.removeItem('fam.funil.fechadas') } catch {}
+              }}
+              className="btn-clear" style={{ fontSize: 12, padding: '4px 10px' }}>
+              abrir as {fechadas.size} colunas fechadas
+            </button>
+          )}
+
+          <span style={{ flex: 1 }} />
+
+          {filtrosLigados && (
+            <button onClick={limparFiltros} className="btn-clear"
+              style={{ fontSize: 12, padding: '4px 10px', borderColor: '#3070c8', color: '#1e4080' }}>
+              limpar filtros
+            </button>
+          )}
           <span className="badge badge-blue">{vistas.length} operações</span>
         </div>
       </div>
@@ -628,33 +948,181 @@ export default function FluxoPage() {
         {/* ══════════ KANBAN ══════════ */}
         <div style={{
           display: modo === 'kanban' ? 'grid' : 'none',
-          gridTemplateColumns: `repeat(${Math.max(1, etapas.length)}, minmax(178px, 1fr))`,
+          /* Coluna fechada vira uma faixa fina em vez de sumir. A pesquisa
+             recomenda no maximo 5 a 7 colunas; esconder etapa a forca faria
+             trabalho sumir da vista, entao ela encolhe e continua contando. */
+          gridTemplateColumns: `minmax(178px, 1fr) ${etapas
+            .map(et => (fechadas.has(et.nome) ? '46px' : 'minmax(178px, 1fr)'))
+            .join(' ') || 'minmax(178px, 1fr)'}`,
           gap: 10, overflowX: 'auto', paddingBottom: 6,
         }}>
+          {/* ══ A COLUNA ZERO · TRIAGEM E CADASTRO ══════════════════════════
+              O funil começava na primeira etapa da OPERAÇÃO, mas o trabalho
+              começa antes disso: alguém recebeu um pedido e ainda não sabe de
+              quem é. Essa parte morava numa tela à parte (/comercial), e era
+              justamente o "primeiro passo confuso". Agora é a coluna 1 daqui.
+
+              Ela não vem de `status_fluxo_operacao` porque não é etapa de
+              operação: a operação ainda não existe. É a antessala do funil. */}
+          <div style={{
+            background: '#eaf1fb', border: '1px dashed #b8cbe8', borderRadius: 10,
+            padding: 9, minHeight: 120,
+          }}>
+            <h4 style={{
+              fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.7px',
+              color: '#1a3560', fontWeight: 700, display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px', gap: 6,
+            }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: '#1e4080' }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>Triagem / Cadastro</span>
+              </span>
+              <span style={{
+                background: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 11,
+                border: '1px solid var(--border)', flexShrink: 0,
+              }}>{casosVistos.length}</span>
+            </h4>
+
+            {abrindo ? (
+              <div style={{
+                background: '#fff', border: '1px solid #1e4080', borderRadius: 9,
+                padding: 9, marginBottom: 8,
+              }}>
+                <input
+                  className="fam-input" autoFocus value={maskCNPJ(cnpjNovo)}
+                  onChange={e => setCnpjNovo(e.target.value.replace(/\D/g, '').slice(0, 14))}
+                  onKeyDown={e => { if (e.key === 'Enter' && !criando) abrirPorCnpj() }}
+                  placeholder="00.000.000/0000-00" inputMode="numeric"
+                  style={{ fontSize: 12.5, padding: '5px 8px', marginBottom: 7 }}
+                />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    className="btn-primary" onClick={abrirPorCnpj}
+                    disabled={criando || cnpjNovo.replace(/\D/g, '').length !== 14}
+                    style={{ fontSize: 12, padding: '5px 10px' }}
+                  >
+                    {criando ? 'Buscando…' : 'Buscar na Receita'}
+                  </button>
+                  <button
+                    className="btn-clear" onClick={() => { setAbrindo(false); setCnpjNovo('') }}
+                    style={{ fontSize: 12, padding: '5px 8px' }}
+                  >
+                    cancelar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setAbrindo(true)}
+                style={{
+                  width: '100%', background: '#fff', border: '1px dashed #1e4080',
+                  color: '#1e4080', borderRadius: 9, padding: '8px 6px', fontSize: 12,
+                  fontWeight: 600, cursor: 'pointer', marginBottom: 8,
+                }}
+              >
+                ＋ Novo pelo CNPJ
+              </button>
+            )}
+
+            {casosVistos.length === 0 ? (
+              <div style={{ fontSize: 11.5, color: '#8fa3b8', padding: '6px 2px' }}>
+                nada esperando triagem
+              </div>
+            ) : (
+              casosVistos.map(c => (
+                <CartaoCaso
+                  key={c.id}
+                  caso={c}
+                  onAbrir={() => router.push(`/comercial/${c.id}`)}
+                />
+              ))
+            )}
+          </div>
+
           {etapas.map(et => {
             const doCol = porEtapa(et.nome)
+            const fechada = fechadas.has(et.nome)
+            /* O TETO DE FILA. Estourou, a coluna fica vermelha e diz quantas
+               estao acima. Ele nao impede nada: o objetivo e o gargalo aparecer
+               antes de virar atraso com o corretor, e travar o arrastar so
+               empurraria o trabalho para fora do sistema. */
+            const teto = et.wip_limite ?? null
+            const estourou = teto !== null && doCol.length > teto
+
+            if (fechada) {
+              return (
+                <button
+                  key={et.nome}
+                  onClick={() => alternarColuna(et.nome)}
+                  title={`Abrir a coluna ${et.nome} (${doCol.length})`}
+                  style={{
+                    background: '#eef3f9', border: '1px solid var(--border)', borderRadius: 10,
+                    padding: '9px 4px', minHeight: 120, cursor: 'pointer',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+                  }}
+                >
+                  <span style={{
+                    width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                    background: et.cor ?? '#3070c8',
+                  }} />
+                  <span style={{
+                    background: '#fff', borderRadius: 10, padding: '1px 6px', fontSize: 11,
+                    border: '1px solid var(--border)', color: '#1a3560', fontWeight: 700,
+                  }}>{doCol.length}</span>
+                  <span style={{
+                    writingMode: 'vertical-rl', fontSize: 10.5, color: '#1a3560',
+                    textTransform: 'uppercase', letterSpacing: '.6px', fontWeight: 700,
+                    maxHeight: 150, overflow: 'hidden',
+                  }}>{et.nome}</span>
+                </button>
+              )
+            }
+
             return (
               <div key={et.nome} style={{
-                background: '#eef3f9', border: '1px solid var(--border)', borderRadius: 10,
-                padding: 9, minHeight: 120,
+                background: estourou ? '#fdf1f1' : '#eef3f9',
+                border: '1px solid ' + (estourou ? '#e8b4b4' : 'var(--border)'),
+                borderRadius: 10, padding: 9, minHeight: 120,
               }}>
                 <h4 style={{
                   fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.7px',
                   color: '#1a3560', fontWeight: 700, display: 'flex',
                   justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px', gap: 6,
                 }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  <span
+                    onClick={() => alternarColuna(et.nome)}
+                    title="Fechar esta coluna"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      minWidth: 0, cursor: 'pointer',
+                    }}
+                  >
                     <span style={{
                       width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
                       background: et.cor ?? '#3070c8',
                     }} />
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{et.nome}</span>
                   </span>
-                  <span style={{
-                    background: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 11,
-                    border: '1px solid var(--border)', flexShrink: 0,
-                  }}>{doCol.length}</span>
+                  <span
+                    title={teto === null ? 'Sem teto de fila' : `Teto de fila: ${teto}`}
+                    style={{
+                      background: estourou ? '#d64545' : '#fff',
+                      color: estourou ? '#fff' : '#1a3560',
+                      borderRadius: 10, padding: '1px 7px', fontSize: 11,
+                      border: '1px solid ' + (estourou ? '#d64545' : 'var(--border)'),
+                      flexShrink: 0, whiteSpace: 'nowrap',
+                    }}
+                  >{doCol.length}{teto !== null ? `/${teto}` : ''}</span>
                 </h4>
+
+                {estourou && (
+                  <div style={{
+                    fontSize: 10.5, color: '#a02020', lineHeight: 1.4,
+                    margin: '-3px 0 8px', fontWeight: 600,
+                  }}>
+                    {doCol.length - (teto ?? 0)} acima do teto. Esta etapa virou gargalo.
+                  </div>
+                )}
 
                 {doCol.length === 0 ? (
                   <div style={{ fontSize: 11.5, color: '#8fa3b8', padding: '6px 2px' }}>vazio</div>
@@ -674,6 +1142,9 @@ export default function FluxoPage() {
                       area={resumoDe(o.tomador_id)?.area}
                       trava={resumoDe(o.tomador_id)?.trava}
                       paralisado={resumoDe(o.tomador_id)?.paralisado}
+                      dias={MORTAS.has(o.status ?? '') ? null : diasParada(o)}
+                      compacto={compacto}
+                      exato={entrouNaEtapa.has(o.id)}
                     />
                   ))
                 )}
@@ -849,7 +1320,45 @@ function Meta({ rotulo, valor, forte }: { rotulo: string; valor: string; forte?:
   )
 }
 
-function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbrir, onAbrir, area, trava, paralisado }: {
+/** O cartão da coluna zero. É mais magro que o das operações de propósito: aqui
+ *  ainda não há LMG nem taxa — há uma empresa que talvez nem tenha nome ainda.
+ *  O que ele precisa dizer é só uma coisa: o que falta para este pedido andar. */
+function CartaoCaso({ caso, onAbrir }: { caso: Caso; onAbrir: () => void }) {
+  const temCnpj = (caso.cnpj ?? '').replace(/\D/g, '').length === 14
+  const cadastrado = !!caso.tomador_id
+  const falta = !temCnpj ? 'falta o CNPJ' : !cadastrado ? 'falta cadastrar' : 'pronto para a análise'
+
+  return (
+    <div
+      onClick={onAbrir}
+      style={{
+        background: '#fff', border: '1px solid var(--border)', borderLeft: '3px solid #1e4080',
+        borderRadius: 9, padding: '8px 9px', marginBottom: 7, cursor: 'pointer',
+      }}
+    >
+      <div style={{
+        fontSize: 12.5, fontWeight: 700, color: '#0a1628', lineHeight: 1.3,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {caso.razao_social || caso.assunto}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--soft)', marginTop: 2 }}>
+        {temCnpj ? maskCNPJ(caso.cnpj ?? '') : `caso #${caso.numero}`}
+        {caso.corretora_texto ? ` · ${caso.corretora_texto}` : ''}
+      </div>
+      <div style={{
+        fontSize: 10.5, marginTop: 5, display: 'inline-block', padding: '1px 7px',
+        borderRadius: 9, fontWeight: 600,
+        background: cadastrado ? '#e6f4ec' : temCnpj ? '#fdf4dd' : '#fbe9e9',
+        color: cadastrado ? '#1a7a4c' : temCnpj ? '#8a6410' : '#a02020',
+      }}>
+        {falta}
+      </div>
+    </div>
+  )
+}
+
+function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbrir, onAbrir, area, trava, paralisado, dias, compacto, exato }: {
   empresa: string
   corretora: string
   modalidade: string | null
@@ -864,7 +1373,17 @@ function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbr
   area?: string
   trava?: string | null
   paralisado?: boolean
+  /** Há quantos dias esta operação está nesta etapa. Nulo quando não dá para
+   *  saber, e nas operações mortas (o relógio delas parou). */
+  dias?: number | null
+  /** Modo compacto: cabe mais coluna na tela, some o secundário. */
+  compacto?: boolean
+  /** Se o número de dias veio da mudança de etapa (exato) ou da data de
+   *  entrada (aproximado). A tela DIZ qual dos dois, porque um número que
+   *  parece uma coisa e é outra é pior do que número nenhum. */
+  exato?: boolean
 }) {
+  const idade = morta ? null : faixaDeIdade(dias ?? null)
   return (
     <div
       role={podeAbrir ? 'button' : undefined}
@@ -876,7 +1395,7 @@ function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbr
         : 'Esta operação não está ligada a um tomador cadastrado, então não há card para abrir'}
       style={{
         background: '#fff', border: '1px solid var(--border)', borderLeft: `4px solid ${cor}`,
-        borderRadius: 8, padding: '9px 11px', marginBottom: 8,
+        borderRadius: 8, padding: compacto ? '6px 8px' : '9px 11px', marginBottom: compacto ? 5 : 8,
         cursor: podeAbrir ? 'pointer' : 'default', opacity: morta ? 0.78 : 1,
         transition: 'transform .12s, box-shadow .12s',
       }}
@@ -890,19 +1409,49 @@ function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbr
         e.currentTarget.style.boxShadow = ''
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 700, color: '#102040', lineHeight: 1.3 }}>{empresa}</div>
-      {modalidade && (
+      <div style={{
+        fontSize: compacto ? 12 : 13, fontWeight: 700, color: '#102040', lineHeight: 1.3,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: compacto ? 'nowrap' : 'normal',
+      }}>{empresa}</div>
+
+      {/* NO COMPACTO SOME O SECUNDÁRIO, e não o essencial: a modalidade e a
+          corretora saem, o dinheiro e a idade ficam. É a diferença entre
+          "cabe mais" e "não dá para trabalhar". */}
+      {modalidade && !compacto && (
         <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 3 }}>{modalidade}</div>
       )}
-      <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 3 }}>
-        <b style={{ color: '#1a2a3a' }}>{brlCurto(lmg)}</b> · {pct(taxa)}
+
+      <div style={{
+        fontSize: compacto ? 11 : 11.5, color: 'var(--soft)', marginTop: 3,
+        display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+      }}>
+        <span><b style={{ color: '#1a2a3a' }}>{brlCurto(lmg)}</b> · {pct(taxa)}</span>
+
+        {/* A ETIQUETA DE IDADE. É o "card aging" da pesquisa: três degraus, e
+            não um cronômetro. A pergunta que ela responde é "está parado
+            demais?", e para isso 23 ou 24 dias dá no mesmo. */}
+        {idade && dias !== null && dias !== undefined && (
+          <span
+            title={exato
+              ? `Nesta etapa há ${dias} dias (desde a última mudança de status)`
+              : `Há ${dias} dias no CRM. Esta operação nunca mudou de etapa, então este é o tempo desde a entrada, e não o tempo nesta coluna.`}
+            style={{
+              fontSize: 10, fontWeight: 700, color: idade.cor, background: idade.fundo,
+              borderRadius: 9, padding: idade.fundo === 'transparent' ? 0 : '1px 6px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {dias}d{exato ? '' : '~'}{idade.rotulo === 'fresca' ? '' : ` · ${idade.rotulo}`}
+          </span>
+        )}
       </div>
-      {corretora && (
+
+      {corretora && !compacto && (
         <div style={{ fontSize: 11, color: '#8fa3b8', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {corretora}
         </div>
       )}
-      {area && (
+      {area && !compacto && (
         <div style={{
           marginTop: 6, paddingTop: 5, borderTop: '1px dotted #dbe6f2',
           fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap',
