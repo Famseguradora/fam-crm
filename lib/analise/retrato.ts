@@ -69,25 +69,54 @@ const num = (v: number | string | null): number | null => {
   return Number.isFinite(n) ? n : null
 }
 
-export interface Retrato {
+/** As contas de um conjunto de análises, sem dizer que conjunto é esse. */
+export interface ResumoAnalises {
   total: number
   empresas: number
-  versoesAnteriores: number
   revisadas: number
-  naFila: number
   aprovacao: { limpo: number; comRessalva: number; totalPct: number; limpoPct: number }
   limite: { mediana: number | null; efetivos: number }
   corretoras: { quantas: number; top5Pct: number; top: { nome: string; n: number }[] }
-  porMes: { mes: string; n: number; emCurso: boolean }[]
   decisao: { rot: string; n: number; cor: string }[]
   nivel: { rot: string; n: number }[]
   setor: { rot: string; n: number }[]
+}
+
+export interface Retrato extends ResumoAnalises {
+  versoesAnteriores: number
+  naFila: number
+  porMes: { mes: string; n: number; emCurso: boolean }[]
 }
 
 /** As contas, sobre as linhas VIGENTES (o acervo de hoje). `todas` só entra
  *  para dizer quantas versões anteriores existem. */
 export function retratoDoAcervo(todas: LinhaRetrato[]): Retrato {
   const l = todas.filter(x => x.vigente)
+  const resumo = resumoDasAnalises(l)
+
+  // Os últimos 12 meses pela data da análise, com o mês atual marcado em curso.
+  const agora = new Date()
+  const meses: { mes: string; n: number; emCurso: boolean }[] = []
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(agora.getFullYear(), agora.getMonth() - i, 1)
+    const mes = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    meses.push({ mes, n: 0, emCurso: i === 0 })
+  }
+  for (const x of l) {
+    const m = String(x.data_analise || '').slice(0, 7)
+    const alvo = meses.find(y => y.mes === m)
+    if (alvo) alvo.n++
+  }
+
+  return { ...resumo, versoesAnteriores: todas.length - resumo.total, naFila: resumo.total - resumo.revisadas, porMes: meses }
+}
+
+/* O RESUMO DE QUALQUER CONJUNTO DE ANÁLISES. A Gestão e a Sala usam sobre as
+   vigentes (o acervo de hoje); o relatório gerencial usa sobre as análises
+   feitas num mês. Separado em 11/09/2026 para as duas contas serem a MESMA:
+   "aprovação limpa" que muda de fórmula conforme a tela é número que ninguém
+   confia. */
+export function resumoDasAnalises(l: LinhaRetrato[]): ResumoAnalises {
   const total = l.length
   const empresas = new Set(l.map(x => x.cnpj || x.razao_social)).size
   const revisadas = l.filter(x => x.revisada).length
@@ -105,20 +134,6 @@ export function retratoDoAcervo(todas: LinhaRetrato[]): Retrato {
   const topCorr = Object.entries(porCorr).sort((a, b) => b[1] - a[1]).map(([nome, n]) => ({ nome, n }))
   const top5 = topCorr.slice(0, 5).reduce((s, c) => s + c.n, 0)
 
-  // Os últimos 12 meses pela data da análise, com o mês atual marcado em curso.
-  const agora = new Date()
-  const meses: { mes: string; n: number; emCurso: boolean }[] = []
-  for (let i = 11; i >= 0; i--) {
-    const d = new Date(agora.getFullYear(), agora.getMonth() - i, 1)
-    const mes = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    meses.push({ mes, n: 0, emCurso: i === 0 })
-  }
-  for (const x of l) {
-    const m = String(x.data_analise || '').slice(0, 7)
-    const alvo = meses.find(y => y.mes === m)
-    if (alvo) alvo.n++
-  }
-
   const conta = (f: (x: LinhaRetrato) => string) => {
     const c: Record<string, number> = {}
     for (const x of l) { const k = f(x); c[k] = (c[k] ?? 0) + 1 }
@@ -126,11 +141,10 @@ export function retratoDoAcervo(todas: LinhaRetrato[]): Retrato {
   }
 
   return {
-    total, empresas, versoesAnteriores: todas.length - total, revisadas, naFila: total - revisadas,
+    total, empresas, revisadas,
     aprovacao: { limpo, comRessalva, totalPct: pct(limpo + comRessalva), limpoPct: pct(limpo) },
     limite: { mediana, efetivos: limites.length },
     corretoras: { quantas: topCorr.filter(c => c.nome !== 'Sem corretora').length, top5Pct: total ? Math.round((top5 / total) * 1000) / 10 : 0, top: topCorr.slice(0, 8) },
-    porMes: meses,
     decisao: (['Aprovar', 'Aprovar com ressalvas', 'Reprovar', 'Bloqueio', 'Sem decisão'] as const).map(rot => ({ rot, n: sits.filter(s => s === rot).length, cor: COR_DECISAO[rot] })).filter(d => d.n),
     nivel: conta(x => nivelLimpo(x.nivel_risco)).sort((a, b) => {
       const ia = ORDEM_NIVEL.indexOf(a.rot), ib = ORDEM_NIVEL.indexOf(b.rot)

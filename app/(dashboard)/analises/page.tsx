@@ -50,7 +50,7 @@ const ABAS: AbaAnalises[] = ['mesa', 'recados', 'gestao', 'acervo', 'sala', 'equ
 const TITULO: Record<AbaAnalises, [string, string]> = {
   mesa: ['A Mesa', 'O que está andando, o que travou e o que precisa de gente. Clique num tomador para abrir o card dele.'],
   recados: ['Recados', 'O mural onde os funcionários virtuais falam com você. Recado não some sozinho e não se repete.'],
-  gestao: ['Gestão', 'O retrato do acervo: o que entrou, o que foi decidido, onde está a concentração.'],
+  gestao: ['Gestão', 'O relatório gerencial do mês: a performance da FAM inteira, da caixa de e-mail até a emissão.'],
   acervo: ['Acervo', 'As análises publicadas no banco, com os números do período.'],
   sala: ['Sala de Comando', 'O painel executivo, com a esteira ao vivo.'],
   equipe: ['A Equipe', 'O organograma dos funcionários virtuais: quem faz o quê, em que setor e quem responde a quem.'],
@@ -111,7 +111,7 @@ export default function AnaliseCreditoPage() {
           carga do banco a cada clique. As outras montam quando pedidas. */}
       <div hidden={aba !== 'mesa'}><Mesa aoAbrirAcervo={() => trocar('acervo')} /></div>
       {aba === 'recados' && <Recados nomeUsuario={nome} />}
-      {aba === 'gestao' && <Gestao aoAbrirSistema={() => trocar('sistema')} />}
+      {aba === 'gestao' && <Gestao />}
       {aba === 'acervo' && <Acervo />}
       {aba === 'sala' && <Sala aoAbrirMesa={() => trocar('mesa')} />}
       {aba === 'equipe' && <Equipe />}
