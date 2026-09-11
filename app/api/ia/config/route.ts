@@ -16,29 +16,18 @@
 // ============================================================================
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { gastoDoDia } from '@/lib/ia/travas'
+import { recusarOutraOrigem } from '@/lib/seguranca/mesma-origem'
 
 export const runtime = 'nodejs'
 
 const MODELOS = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] as const
 const ESFORCOS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
-async function gastoDoDia(sb: Awaited<ReturnType<typeof createClient>>) {
-  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-  const { data } = await sb
-    .from('ia_pedidos')
-    .select('custo_usd, cache_leitura')
-    .gte('criado_em', desde)
-    .not('custo_usd', 'is', null)
-  const linhas = data ?? []
-  return {
-    usd: linhas.reduce((s, l) => s + Number(l.custo_usd ?? 0), 0),
-    perguntas: linhas.length,
-    // Quantas já pegaram carona no cache. É a prova de que a economia está
-    // acontecendo: se este número for zero com várias perguntas, o prefixo
-    // cacheado está sendo invalidado por alguma coisa.
-    com_cache: linhas.filter((l) => Number(l.cache_leitura ?? 0) > 0).length,
-  }
-}
+/* O gasto ao lado do interruptor é o da FAM inteira, somado pelo banco
+   (`ia_gasto_24h`), e não o de quem abriu o painel. `com_cache` é a prova de
+   que a economia está acontecendo: zero com várias perguntas quer dizer que o
+   prefixo cacheado está sendo invalidado por alguma coisa. */
 
 export async function GET() {
   const supabase = await createClient()
@@ -70,6 +59,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const recusa = recusarOutraOrigem(req)
+  if (recusa) return recusa
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ erro: 'Sessão expirada.' }, { status: 401 })
