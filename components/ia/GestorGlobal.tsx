@@ -44,12 +44,33 @@
 // ============================================================================
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import BlocoIA, { type Bloco } from './BlocoIA'
 import { SecaoPainel, CartaoNumero, AbasPainel, Aviso } from '@/components/painel/Painel'
 /* `texto` já é o conteúdo do campo de pergunta aqui dentro, então a
    tipografia entra com outro nome. */
-import { cor, texto as tipografia, botaoCheio, corDaArea } from '@/lib/ui/painel'
+import { cor, texto as tipografia, botaoCheio, botaoVazado, corDaArea, raio, sombra } from '@/lib/ui/painel'
+import { createClient } from '@/lib/supabase/client'
+import { carregarBaseDoEmail } from '@/lib/email/carregar'
+import { COMANDOS, TEXTO_AJUDA, aplicarOperacoes, descreverOperacao, lerComando, narrarPonte, tabelaDaPonte, type Operacao } from '@/lib/email/comandos'
+import { janelaDoPeriodo, montarPonte, ROTULO_BALDE, simularRegua, type Balde } from '@/lib/email/ponte'
+import { diferencas, NOME_DO_PARAMETRO, normalizar, reguaVigente, validarParametros, type MudancaRegua, type ParametrosRegua } from '@/lib/email/regua'
+
+/* A PROPOSTA DE RÉGUA, feita pela conversa (fase 3 do Carteiro gerencial,
+   11/09/2026). A IA propõe, a pessoa aplica: nada é gravado até o "Aplicar",
+   que chama a mesma rota da tela da régua. */
+interface Proposta {
+  operacoes: string[]
+  parametros: ParametrosRegua
+  versaoBase: number
+  mudancas: MudancaRegua[]
+  simulacao: { degraus: [string, number, number][]; mudaram: number } | null
+  motivo: string
+  estado: 'aberta' | 'aplicando' | 'aplicada' | 'descartada'
+  versaoGravada?: number
+  erro?: string
+}
 
 interface Fala {
   quem: 'pessoa' | 'ia'
@@ -58,7 +79,23 @@ interface Fala {
   custo?: number | null
   cache?: boolean
   erro?: boolean
+  /** Respondido pelo CRM, sem IA e sem custo (os comandos com /). */
+  robo?: boolean
+  link?: { href: string; nome: string }
+  proposta?: Proposta
 }
+
+/** Uma linha da lista que aparece ao digitar / ou @. */
+interface Sugestao {
+  rotulo: string
+  dica: string
+  /** O pedaço do texto que a escolha substitui. */
+  inicio: number
+  fim: number
+  inserir: string
+}
+
+const DEGRAUS_DA_PROPOSTA: Balde[] = ['nao_demanda', 'continuacao', 'fora_apetite', 'sem_classificacao', 'resolvido', 'a_fazer']
 
 interface Config {
   api_ligada: boolean
@@ -210,6 +247,12 @@ export default function GestorGlobal() {
   const [conversas, setConversas] = useState<Conversa[]>([])
   const [verLista, setVerLista] = useState(false)
 
+  // ── os comandos / e as menções @ ──────────────────────────────────────────
+  const [sugestoes, setSugestoes] = useState<Sugestao[]>([])
+  const [iSugestao, setISugestao] = useState(0)
+  /** Modalidades, corretoras e tomadores para o @. Lido na primeira arroba. */
+  const catalogo = useRef<{ nome: string; tipo: string }[] | null>(null)
+
   // ── o robô ────────────────────────────────────────────────────────────────
   const [aba, setAba] = useState<'painel' | 'conversa'>('painel')
   const [cartoes, setCartoes] = useState<Cartao[] | null>(null)
@@ -280,7 +323,7 @@ export default function GestorGlobal() {
   }, [])
 
   const conversaNova = () => {
-    setConversaId(null); setTitulo(''); setFalas([]); setVerLista(false); setTexto('')
+    setConversaId(null); setTitulo(''); setFalas([]); setVerLista(false); setTexto(''); setSugestoes([])
     setAba('conversa')
   }
 
@@ -407,9 +450,212 @@ export default function GestorGlobal() {
     }
   }
 
+  /* ══ OS COMANDOS ═════════════════════════════════════════════════════════
+     "/analisar ontem", "/regras", "/regra sem apetite @[X]": lidos aqui, em
+     código, sem IA e sem custo. Só a frase livre depois de /regra vai para a
+     IA, e ela devolve operações da mesma lista. Nada é gravado sem "Aplicar". */
+  async function executarComando(entrada: string) {
+    const agora = new Date()
+    const cmd = lerComando(entrada, agora)
+    if (!cmd) return
+    setAba('conversa')
+    setTexto('')
+    setSugestoes([])
+    setFalas((f) => [...f, { quem: 'pessoa', texto: entrada }])
+    const responder = (fala: Omit<Fala, 'quem'>) => setFalas((f) => [...f, { quem: 'ia', robo: true, ...fala }])
+
+    if (cmd.tipo === 'ajuda') { responder({ texto: TEXTO_AJUDA }); return }
+    if (cmd.tipo === 'erro') { responder({ texto: cmd.mensagem, erro: true }); return }
+
+    setPensando(true)
+    try {
+      const base = await carregarBaseDoEmail(createClient())
+      if (base.erro) { responder({ texto: `Não consegui ler os e-mails: ${base.erro}`, erro: true }); return }
+      const entradaPonte = { versoes: base.versoes, modalidades: base.modalidades, gravadas: base.gravadas, metas: base.metas, agora }
+
+      if (cmd.tipo === 'analisar') {
+        const ponte = montarPonte(base.linhas, { ...entradaPonte, janela: cmd.janela })
+        responder({
+          texto: narrarPonte(ponte),
+          blocos: [{
+            tipo: 'tabela',
+            titulo: `A ponte ${cmd.janela.frase}`,
+            dados: tabelaDaPonte(ponte),
+            origem: 'e-mails da caixa (painel_pedidos), cada um julgado pela régua que valia quando chegou; soma em lib/email/ponte.ts',
+          }],
+          link: { href: '/comercial', nome: 'Abrir a ponte e a fila no Comercial' },
+        })
+        return
+      }
+
+      const vigente = reguaVigente(base.versoes)
+      if (!vigente) { responder({ texto: 'A régua ainda não existe no banco.', erro: true }); return }
+
+      if (cmd.tipo === 'regras') {
+        const p = vigente.parametros
+        responder({
+          texto: `Vale a versão ${vigente.versao}, gravada em ${new Date(vigente.criada_em).toLocaleString('pt-BR')} por ${vigente.criada_por_nome ?? 'sem autor'}: “${vigente.motivo}”.\n` +
+            `Sem apetite: ${p.excluidas.join(', ') || 'nenhuma modalidade'}.\n` +
+            `${p.sinonimos.length} sinônimos, ${p.termos_operacao.length} sinais de operação, ${p.termos_so_credito.length} de pedido só de crédito, ${p.nao_demanda_assunto.length + p.nao_demanda_remetentes.length} de "não é pedido".`,
+          blocos: [{
+            tipo: 'tabela',
+            titulo: 'As últimas versões da régua',
+            dados: {
+              colunas: ['Versão', 'Quando', 'Quem', 'Motivo'],
+              linhas: [...base.versoes].sort((a, b) => b.versao - a.versao).slice(0, 8)
+                .map((v) => [`v${v.versao}`, new Date(v.criada_em).toLocaleDateString('pt-BR'), v.criada_por_nome ?? '', v.motivo]),
+            },
+            origem: 'email_regua',
+          }],
+          link: { href: '/comercial/regua', nome: 'Abrir a tela da régua' },
+        })
+        return
+      }
+
+      let operacoes: Operacao[] = []
+      let entendimento = ''
+      if (cmd.tipo === 'regra') {
+        operacoes = cmd.operacoes
+      } else {
+        if (!ligada) {
+          responder({ texto: `Não reconheci uma forma curta, e sem a API ninguém interpreta frase livre.\n\n${TEXTO_AJUDA}`, erro: true })
+          return
+        }
+        const r = await fetch('/api/email/regua/interpretar', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ texto: cmd.texto }),
+        })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) { responder({ texto: j.erro ?? 'A IA não conseguiu entender a mudança.', erro: true }); return }
+        operacoes = j.operacoes ?? []
+        entendimento = j.entendimento ?? ''
+        if (!operacoes.length) { responder({ texto: j.duvida || 'A IA não achou mudança de régua nessa frase.', erro: true }); return }
+      }
+
+      /* Modalidade que não existe tem que ser dita, e não virar "a régua já
+         está assim" (achado da revisão). */
+      const oficiais = new Set(base.modalidades.map(normalizar))
+      const desconhecida = operacoes
+        .flatMap((o) => (o.acao === 'sem_apetite' || o.acao === 'com_apetite' ? [o.modalidade] : o.acao === 'sinonimo' ? o.modalidades : []))
+        .find((m) => !oficiais.has(normalizar(m)))
+      if (desconhecida) {
+        responder({ texto: `"${desconhecida}" não é uma modalidade cadastrada. Digite @ para escolher da lista.`, erro: true })
+        return
+      }
+
+      const validacao = validarParametros(aplicarOperacoes(vigente.parametros, operacoes), base.modalidades)
+      if (!validacao.ok) { responder({ texto: `Essa mudança não passa na régua: ${validacao.erros.join(' ')}`, erro: true }); return }
+      const mudancas = diferencas(vigente.parametros, validacao.parametros)
+      if (!mudancas.length) { responder({ texto: 'A régua já está assim: nada a mudar.' }); return }
+
+      const sim = simularRegua(
+        base.linhas,
+        { ...entradaPonte, janela: janelaDoPeriodo('30', agora) },
+        { versao: vigente.versao + 1, parametros: validacao.parametros, motivo: 'simulação', criada_por_nome: null, criada_em: agora.toISOString() },
+      )
+      responder({
+        texto: entendimento ? `Entendi assim: ${entendimento}` : 'Montei a proposta. Nada foi gravado ainda.',
+        proposta: {
+          operacoes: operacoes.map(descreverOperacao),
+          parametros: validacao.parametros,
+          versaoBase: vigente.versao,
+          mudancas,
+          simulacao: {
+            degraus: DEGRAUS_DA_PROPOSTA.map((b) => [ROTULO_BALDE[b], sim.antes.baldes[b], sim.depois.baldes[b]]),
+            mudaram: sim.mudaram.length,
+          },
+          motivo: `Pela IA Gestor: ${entrada}`.slice(0, 500),
+          estado: 'aberta',
+        },
+      })
+    } catch {
+      responder({ texto: 'A conexão caiu no meio do comando. Nada foi gravado.', erro: true })
+    } finally {
+      setPensando(false)
+    }
+  }
+
+  async function aplicarProposta(indice: number) {
+    const pr = falas[indice]?.proposta
+    if (!pr || pr.estado !== 'aberta') return
+    const mudar = (m: Partial<Proposta>) =>
+      setFalas((fs) => fs.map((f, i) => (i === indice && f.proposta ? { ...f, proposta: { ...f.proposta, ...m } } : f)))
+    mudar({ estado: 'aplicando', erro: undefined })
+    try {
+      const r = await fetch('/api/email/regua', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ parametros: pr.parametros, motivo: pr.motivo, versao_base: pr.versaoBase }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (r.status === 409) {
+        // A régua mudou depois da proposta: repetir o botão daria 409 para sempre.
+        mudar({ estado: 'descartada', erro: 'A régua mudou depois desta proposta. Refaça o comando para montar em cima da versão nova.' })
+      } else if (!r.ok) mudar({ estado: 'aberta', erro: j.erro ?? 'Não consegui gravar.' })
+      else mudar({ estado: 'aplicada', versaoGravada: j.versao })
+    } catch {
+      mudar({ estado: 'aberta', erro: 'A conexão caiu. Nada foi gravado.' })
+    }
+  }
+
+  const descartarProposta = (indice: number) =>
+    setFalas((fs) => fs.map((f, i) => (i === indice && f.proposta ? { ...f, proposta: { ...f.proposta, estado: 'descartada' } } : f)))
+
+  /* A LISTA DO / E DO @. A barra no começo lista os comandos; a arroba lista
+     modalidade, corretora e tomador, e a escolha entra como @[Nome], porque
+     nome de modalidade tem espaço. */
+  async function atualizarSugestoes(valor: string, cursor: number) {
+    const antes = valor.slice(0, cursor)
+    if (/^\/\S*$/.test(antes)) {
+      const q = normalizar(antes.slice(1))
+      setSugestoes(COMANDOS
+        .filter((c) => normalizar(c.nome.slice(1)).startsWith(q))
+        .map((c) => ({ rotulo: c.nome, dica: `${c.resumo} · ${c.exemplo}`, inicio: 0, fim: cursor, inserir: `${c.nome} ` })))
+      setISugestao(0)
+      return
+    }
+    /* A arroba só abre a lista no começo de uma palavra: dentro de um endereço
+       ("fulano@lock") ela não é menção, e o Enter trocava o e-mail por
+       @[Lockton] (achado da revisão). */
+    const m = /(^|\s)@\[?([^@[\]\n]{0,40})$/.exec(antes)
+    if (!m) { setSugestoes([]); return }
+    if (!catalogo.current) {
+      const sb = createClient()
+      const [mods, cors, toms] = await Promise.all([
+        sb.from('modalidades').select('nome'),
+        sb.from('corretoras').select('nome_fantasia, razao_social').limit(300),
+        sb.from('tomadores').select('razao_social').limit(2000),
+      ])
+      catalogo.current = [
+        ...[...new Set((mods.data ?? []).map((x) => String(x.nome)))].map((nome) => ({ nome, tipo: 'modalidade' })),
+        ...(cors.data ?? []).map((x) => ({ nome: String(x.nome_fantasia || x.razao_social || ''), tipo: 'corretora' })),
+        ...(toms.data ?? []).map((x) => ({ nome: String(x.razao_social ?? ''), tipo: 'tomador' })),
+      ].filter((x) => x.nome.trim())
+    }
+    // A pessoa pode ter continuado digitando enquanto o catálogo chegava.
+    if (campo.current && campo.current.value !== valor) return
+    const q = normalizar(m[2])
+    const ordem: Record<string, number> = { modalidade: 0, corretora: 1, tomador: 2 }
+    const achados = catalogo.current
+      .filter((x) => !q || normalizar(x.nome).includes(q))
+      .sort((a, b) => ordem[a.tipo] - ordem[b.tipo] || a.nome.localeCompare(b.nome, 'pt-BR'))
+      .slice(0, 8)
+    setSugestoes(achados.map((x) => ({ rotulo: x.nome, dica: x.tipo, inicio: cursor - m[0].length + m[1].length, fim: cursor, inserir: `@[${x.nome}] ` })))
+    setISugestao(0)
+  }
+
+  function aceitarSugestao(s: Sugestao) {
+    const novo = texto.slice(0, s.inicio) + s.inserir + texto.slice(s.fim)
+    setTexto(novo)
+    setSugestoes([])
+    const pos = s.inicio + s.inserir.length
+    requestAnimationFrame(() => { campo.current?.focus(); campo.current?.setSelectionRange(pos, pos) })
+  }
+
   async function perguntar(pergunta: string) {
     const p = pergunta.trim()
     if (!p || pensando) return
+    setSugestoes([])
+    // Comando não passa pela IA: o CRM responde sozinho, de graça.
+    if (p.startsWith('/')) { await executarComando(p); return }
     setAba('conversa')
     setTexto('')
     setFalas((f) => [...f, { quem: 'pessoa', texto: p }])
@@ -763,8 +1009,16 @@ export default function GestorGlobal() {
                     </p>
                     <p style={{ fontSize: 12.5, color: '#5a7290', lineHeight: 1.6, margin: '0 0 12px' }}>
                       Enquanto isso, o <b>Painel</b> responde as perguntas de diretoria com o
-                      dado real do banco, na hora e sem custo.
+                      dado real do banco, na hora e sem custo. E os <b>comandos com /</b> funcionam
+                      aqui mesmo: <b>/analisar ontem</b> monta a ponte dos e-mails, <b>/regras</b> mostra
+                      a régua, <b>/regra</b> propõe mudança com simulação.
                     </p>
+                    <button
+                      onClick={() => executarComando('/ajuda')}
+                      style={{ ...botaoVazado, padding: '7px 12px', fontSize: 12.5, marginRight: 8 }}
+                    >
+                      Ver os comandos
+                    </button>
                     <button
                       onClick={() => setAba('painel')}
                       style={{
@@ -797,6 +1051,24 @@ export default function GestorGlobal() {
                       whiteSpace: 'pre-wrap',
                     }}>{f.texto}</div>
                     {(f.blocos ?? []).map((b, j) => <BlocoIA key={j} bloco={b} />)}
+                    {f.proposta && (
+                      <CartaoProposta
+                        p={f.proposta}
+                        podeAplicar={!!estado?.pode_mexer}
+                        aoAplicar={() => aplicarProposta(i)}
+                        aoDescartar={() => descartarProposta(i)}
+                      />
+                    )}
+                    {f.link && (
+                      <Link href={f.link.href} style={{ display: 'inline-block', marginTop: 6, fontSize: 12, fontWeight: 600, color: cor.tinta2, textDecoration: 'none' }}>
+                        {f.link.nome} ›
+                      </Link>
+                    )}
+                    {f.robo && !f.erro && (
+                      <div style={{ fontSize: 10, color: 'var(--soft)', marginTop: 5 }}>
+                        respondido pelo CRM, sem IA e sem custo
+                      </div>
+                    )}
                     {f.custo != null && (
                       <div style={{ fontSize: 10, color: 'var(--soft)', marginTop: 5 }}>
                         US$ {f.custo.toFixed(4)}{f.cache ? ' · leu do cache' : ' · primeira do prefixo (grava o cache)'}
@@ -818,41 +1090,180 @@ export default function GestorGlobal() {
           {/* o campo */}
           <div style={{
             borderTop: '1px solid var(--border)', background: '#fff',
-            padding: '10px 12px', flexShrink: 0,
+            padding: '10px 12px', flexShrink: 0, position: 'relative',
           }}>
+            {/* A LISTA DO / E DO @, colada em cima do campo. Setas andam, Enter
+                ou Tab escolhem, Esc fecha (e não fecha o painel inteiro). */}
+            {sugestoes.length > 0 && (
+              <div
+                role="listbox"
+                aria-label="Sugestões"
+                style={{
+                  position: 'absolute', left: 12, right: 12, bottom: 'calc(100% - 4px)', zIndex: 10,
+                  background: cor.papel, border: `1px solid ${cor.borda}`, borderRadius: raio.controle,
+                  boxShadow: sombra.cartao, maxHeight: 240, overflowY: 'auto', padding: 4,
+                }}
+              >
+                {sugestoes.map((s, i) => (
+                  <button
+                    key={`${s.rotulo}-${s.dica}-${i}`}
+                    type="button"
+                    role="option"
+                    aria-selected={i === iSugestao}
+                    onMouseDown={(e) => { e.preventDefault(); aceitarSugestao(s) }}
+                    onMouseEnter={() => setISugestao(i)}
+                    style={{
+                      display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left',
+                      border: 'none', borderRadius: raio.controle - 2, padding: '6px 8px', cursor: 'pointer',
+                      background: i === iSugestao ? cor.destaque : 'transparent',
+                    }}
+                  >
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: cor.tinta, whiteSpace: 'nowrap' }}>{s.rotulo}</span>
+                    <span style={{ ...tipografia.nota, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.dica}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 7, alignItems: 'flex-end' }}>
               <textarea
                 ref={campo} value={texto} rows={2}
-                onChange={(e) => setTexto(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); perguntar(texto) }
+                onChange={(e) => {
+                  setTexto(e.target.value)
+                  atualizarSugestoes(e.target.value, e.target.selectionStart ?? e.target.value.length)
                 }}
-                placeholder={ligada ? 'Pergunte, ou peça um gráfico…' : 'Ligue a API para perguntar. O Painel funciona sem ela.'}
-                disabled={!ligada || pensando}
+                onKeyDown={(e) => {
+                  if (sugestoes.length) {
+                    if (e.key === 'ArrowDown') { e.preventDefault(); setISugestao((i) => (i + 1) % sugestoes.length); return }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); setISugestao((i) => (i - 1 + sugestoes.length) % sugestoes.length); return }
+                    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSugestoes([]); return }
+                    const escolhida = sugestoes[Math.min(iSugestao, sugestoes.length - 1)]
+                    // Enter com o comando já escrito inteiro envia, em vez de escolher de novo.
+                    // "/regra" escrito inteiro envia, mesmo com "/regras" destacado na lista.
+                    const jaEscrito = sugestoes.some((s) => s.inserir.trim() === texto.trim())
+                    if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !jaEscrito)) {
+                      e.preventDefault(); aceitarSugestao(escolhida); return
+                    }
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    if ((ligada || texto.trimStart().startsWith('/')) && texto.trim()) perguntar(texto)
+                  }
+                }}
+                placeholder={ligada
+                  ? 'Pergunte, peça um gráfico, ou digite / para os comandos…'
+                  : 'Digite / para os comandos, que funcionam sem a API.'}
+                disabled={pensando}
                 style={{
                   flex: 1, resize: 'none', fontSize: 12.5, lineHeight: 1.5,
                   border: '1px solid var(--border)', borderRadius: 8, padding: '7px 9px',
-                  fontFamily: 'inherit', color: '#0a1628', background: ligada ? '#fff' : '#f4f7fb',
+                  fontFamily: 'inherit', color: '#0a1628', background: '#fff',
                 }}
               />
               <button
-                onClick={() => perguntar(texto)} disabled={!ligada || pensando || !texto.trim()}
+                onClick={() => perguntar(texto)}
+                disabled={pensando || !texto.trim() || (!ligada && !texto.trimStart().startsWith('/'))}
+                title={!ligada && texto.trim() && !texto.trimStart().startsWith('/') ? 'Sem a API, só os comandos com / funcionam.' : undefined}
                 style={{
                   background: '#1e4080', color: '#fff', border: 'none', borderRadius: 8,
                   padding: '9px 13px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
-                  opacity: !ligada || pensando || !texto.trim() ? 0.45 : 1, flexShrink: 0,
+                  opacity: pensando || !texto.trim() || (!ligada && !texto.trimStart().startsWith('/')) ? 0.45 : 1, flexShrink: 0,
                 }}
               >
                 {pensando ? '…' : 'Enviar'}
               </button>
             </div>
             <div style={{ fontSize: 10, color: 'var(--soft)', marginTop: 6, lineHeight: 1.45 }}>
-              Ela enxerga só o que o seu perfil enxerga. Todo número vem de consulta ao banco,
-              e cada pergunta fica registrada com quem perguntou e quanto custou.
+              <b>/</b> para comandos (sem API, sem custo) · <b>@</b> para citar modalidade, corretora ou tomador.
+              Ela enxerga só o que o seu perfil enxerga, e cada pergunta à IA fica registrada com quem perguntou e quanto custou.
             </div>
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+/* ── A PROPOSTA DE RÉGUA, dentro da conversa ─────────────────────────────── */
+
+function CartaoProposta({ p, podeAplicar, aoAplicar, aoDescartar }: {
+  p: Proposta
+  podeAplicar: boolean
+  aoAplicar: () => void
+  aoDescartar: () => void
+}) {
+  const chip = (mais: boolean): React.CSSProperties => ({
+    fontSize: 11, padding: '1px 7px', borderRadius: 20,
+    background: mais ? cor.destaque : cor.papel, color: mais ? cor.tinta2 : cor.textoSub,
+    border: `1px solid ${mais ? cor.destaque : cor.borda}`, textDecoration: mais ? 'none' : 'line-through',
+  })
+  return (
+    <div style={{
+      marginTop: 8, background: cor.papel, border: `1px solid ${cor.borda}`, borderLeft: `3px solid ${cor.ouro}`,
+      borderRadius: raio.cartao, padding: '10px 12px',
+    }}>
+      <div style={{ ...tipografia.titulo, fontSize: 12.5 }}>Proposta · régua versão {p.versaoBase + 1}</div>
+      <ul style={{ margin: '5px 0 0', paddingLeft: 16, fontSize: 12, color: cor.texto, lineHeight: 1.5 }}>
+        {p.operacoes.map((o, i) => <li key={i}>{o}</li>)}
+      </ul>
+
+      {p.mudancas.map((m) => (
+        <div key={m.parametro} style={{ marginTop: 7 }}>
+          <div style={tipografia.nota}>{NOME_DO_PARAMETRO[m.parametro]}</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
+            {m.entrou.map((x) => <span key={'+' + x} style={chip(true)}>+ {x}</span>)}
+            {m.saiu.map((x) => <span key={'-' + x} style={chip(false)}>{x}</span>)}
+          </div>
+        </div>
+      ))}
+
+      {p.simulacao && (
+        <div style={{ marginTop: 9 }}>
+          <div style={{ ...tipografia.nota, marginBottom: 3 }}>
+            Se já valesse, nos últimos 30 dias ({p.simulacao.mudaram} {p.simulacao.mudaram === 1 ? 'pedido trocaria' : 'pedidos trocariam'} de degrau):
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+            <tbody>
+              {p.simulacao.degraus.map(([rotulo, antes, depois]) => (
+                <tr key={rotulo} style={{ borderTop: `1px solid ${cor.bordaSuave}` }}>
+                  <td style={{ padding: '3px 0', color: cor.texto }}>{rotulo}</td>
+                  <td style={{ padding: '3px 6px', textAlign: 'right', color: cor.textoFraco, fontVariantNumeric: 'tabular-nums' }}>{antes}</td>
+                  <td style={{ padding: '3px 0', color: cor.textoFraco }} aria-hidden>→</td>
+                  <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 700, color: depois !== antes ? cor.tinta2 : cor.textoFraco, fontVariantNumeric: 'tabular-nums' }}>{depois}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {p.erro && <div style={{ marginTop: 8 }}><Aviso tom="erro">{p.erro}</Aviso></div>}
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 10 }}>
+        {p.estado === 'aplicada' ? (
+          <span style={{ fontSize: 12, fontWeight: 600, color: cor.areaOperacao }}>
+            Gravada como versão {p.versaoGravada}. Vale para os e-mails que chegarem daqui em diante.
+          </span>
+        ) : p.estado === 'descartada' ? (
+          <span style={tipografia.nota}>Descartada. Nada foi gravado.</span>
+        ) : (
+          <>
+            {podeAplicar ? (
+              <button type="button" onClick={aoAplicar} disabled={p.estado === 'aplicando'}
+                style={{ ...botaoCheio, padding: '6px 12px', fontSize: 12, opacity: p.estado === 'aplicando' ? 0.6 : 1 }}>
+                {p.estado === 'aplicando' ? 'Gravando…' : `Aplicar como versão ${p.versaoBase + 1}`}
+              </button>
+            ) : (
+              <span style={tipografia.nota}>Só o proprietário aplica mudança na régua.</span>
+            )}
+            <button type="button" onClick={aoDescartar} disabled={p.estado === 'aplicando'} style={{ ...botaoVazado, padding: '5px 11px', fontSize: 12 }}>
+              Descartar
+            </button>
+          </>
+        )}
+        <Link href="/comercial/regua" style={{ fontSize: 12, fontWeight: 600, color: cor.tinta2, textDecoration: 'none' }}>
+          Abrir na régua ›
+        </Link>
+      </div>
     </div>
   )
 }

@@ -75,6 +75,10 @@ export const cor = {
   textoSub: '#5a7290',
   textoFraco: '#6080a0',
   textoSobreEscuro: '#8fa3b8',
+  /** O texto corrido sobre o marinho (o recibo da decisão). O `textoSobreEscuro`
+   *  é o rótulo apagado; este é o que se lê. */
+  textoClaroSobreEscuro: '#e6edf5',
+  branco: '#ffffff',
 } as const
 
 /** A paleta de série, para gráfico e para qualquer coisa que precise de N

@@ -15,7 +15,7 @@ aqui, abra o painel (Ctrl+I) e copie o que ele faz.
 | O quê | Onde | Para quê |
 |---|---|---|
 | Os tokens | `lib/ui/painel.ts` | cor, raio, sombra, tipografia. **Importe daqui, não redigite hex.** |
-| As peças | `components/painel/Painel.tsx` | `SecaoPainel`, `CartaoNumero`, `Moldura`, `AbasPainel`, `Aviso` |
+| As peças | `components/painel/Painel.tsx` | `SecaoPainel`, `CartaoNumero`, `GradeCartoes`, `Moldura`, `Barras`, `AbasPainel`, `Aviso` |
 | As variáveis CSS | `app/globals.css` | os mesmos valores, para quem usa `var(--x)` |
 | A referência viva | `components/ia/GestorGlobal.tsx` | a tela que consome tudo isso |
 
@@ -72,7 +72,10 @@ Denso. O rótulo é pequeno (11,5), o número é grande (21, peso 800), e o rest
 
 2. **O detalhe fica escondido até alguém pedir.** Tabela e gráfico só desenham
    com o cartão aberto. Treze tabelas abertas de uma vez é uma parede, e parede
-   ninguém lê.
+   ninguém lê. **Em grade, o detalhe abre embaixo dos cartões, na largura
+   inteira** (`GradeCartoes`, 11/09/2026): só um abre por vez, então não há por
+   que espremer a tabela na largura de um cartão. Detalhe dentro do cartão só no
+   painel estreito da IA Gestor, onde o cartão já é a largura toda.
 
 3. **Vermelho só onde há decisão a tomar**, nunca onde o número é apenas grande.
    Alarme que toca todo dia vira paisagem, e aí o vermelho não quer dizer mais
@@ -89,21 +92,24 @@ Denso. O rótulo é pequeno (11,5), o número é grande (21, peso 800), e o rest
 ## Como usar numa tela nova
 
 ```tsx
-import { SecaoPainel, CartaoNumero, Moldura } from '@/components/painel/Painel'
+import { SecaoPainel, CartaoNumero, GradeCartoes, Moldura } from '@/components/painel/Painel'
 import { corDaArea, botaoCheio, texto } from '@/lib/ui/painel'
 
 <SecaoPainel nome="Operações e subscrição" cor={corDaArea('operacoes')}>
-  <CartaoNumero
-    rotulo="Prêmio emitido"
-    numero="R$ 8,4 mi"
-    sub="realizado em 27 operações emitidas"
-    aberto={aberto === 'premio'}
-    aoAlternar={() => setAberto(aberto === 'premio' ? null : 'premio')}
-  >
-    <Moldura titulo="Por corretora" origem="operacoes.premio_previsto em status Emitido">
-      {/* a tabela ou o gráfico */}
+  <GradeCartoes detalhe={aberto === 'premio' && (
+    <Moldura titulo="Prêmio emitido · por corretora" origem="operacoes.premio_previsto em status Emitido">
+      {/* a tabela ou o gráfico, na largura inteira */}
     </Moldura>
-  </CartaoNumero>
+  )}>
+    <CartaoNumero
+      rotulo="Prêmio emitido"
+      numero="R$ 8,4 mi"
+      sub="realizado em 27 operações emitidas"
+      aberto={aberto === 'premio'}
+      aoAlternar={() => setAberto(aberto === 'premio' ? null : 'premio')}
+    />
+    {/* os outros cartões */}
+  </GradeCartoes>
 </SecaoPainel>
 ```
 

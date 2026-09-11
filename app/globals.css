@@ -1453,3 +1453,11 @@ textarea.cs-campo { min-height: 84px; resize: vertical; line-height: 1.55; }
   .cs-b { width: 100%; justify-content: center; }
   .cs-linha-b { flex-direction: column; align-items: stretch; }
 }
+
+/* ALVO DE TOQUE DE 44 PX NO CELULAR, para qualquer botão do padrão do painel.
+   Morava dentro do PainelEmail, e por isso não valia na tela da régua, que não
+   monta o painel (achado da revisão de 11/09/2026). No computador fica o
+   tamanho compacto que a densidade do painel pede. */
+@media (max-width: 900px) {
+  .painel-alvo { min-height: 44px; min-width: 44px; }
+}

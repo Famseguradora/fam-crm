@@ -49,13 +49,24 @@ import { lerAcervo, montarCartoes } from './robo'
 /* Preço por milhão de tokens, em dólar. Entrada e saída da tabela oficial; o
    cache é derivado dela (1,25x escrever, 0,10x ler) porque é assim que a
    Anthropic cobra, e não um número nosso. */
-const PRECO: Record<string, { entrada: number; saida: number }> = {
+export const PRECO: Record<string, { entrada: number; saida: number }> = {
   // Sonnet 5 e o padrao da IA Gestor. Opus 5 fica na tabela porque os motores
   // de analise de credito e de subscricao vao usa-lo, e a conta e a mesma.
   'claude-sonnet-5': { entrada: 2, saida: 10 },
   'claude-opus-5': { entrada: 5, saida: 25 },
   'claude-opus-4-8': { entrada: 5, saida: 25 },
   'claude-haiku-4-5': { entrada: 1, saida: 5 },
+}
+
+/** O custo em dólar de um uso medido. Mora aqui para toda IA do CRM (a Gestor
+ *  e o Carteiro gerencial) cobrar pela mesma conta. Modelo desconhecido cai no
+ *  padrão da casa, e não no mais caro. */
+export function custoDoUso(
+  modelo: string,
+  u: { entrada: number; saida: number; cacheEscrita: number; cacheLeitura: number },
+): number {
+  const preco = PRECO[modelo] ?? PRECO['claude-sonnet-5']
+  return (u.entrada * preco.entrada + u.cacheEscrita * preco.entrada * 1.25 + u.cacheLeitura * preco.entrada * 0.1 + u.saida * preco.saida) / 1_000_000
 }
 
 export interface BlocoIA {
@@ -614,12 +625,7 @@ export async function perguntarAoServidor(p: PerguntaIA): Promise<ResultadoIA> {
   /* Modelo desconhecido cai no PADRAO DA CASA (Sonnet 5), e nao no mais caro:
      se um dia entrar um id novo aqui sem preco, e melhor a conta sair baixa e
      alguem estranhar do que sair alta e ninguem conferir. */
-  const preco = PRECO[p.modelo] ?? PRECO['claude-sonnet-5']
-  const custo =
-    (entrada * preco.entrada
-      + cacheEscrita * preco.entrada * 1.25
-      + cacheLeitura * preco.entrada * 0.1
-      + saida * preco.saida) / 1_000_000
+  const custo = custoDoUso(p.modelo, { entrada, saida, cacheEscrita, cacheLeitura })
 
   return {
     ok: true,

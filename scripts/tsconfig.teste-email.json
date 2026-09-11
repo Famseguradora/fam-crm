@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "outDir": "../.tmp-carteiro",
+    "rootDir": "..",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "jsx": "react-jsx",
+    "plugins": []
+  },
+  "include": ["../lib/email/ponte.ts", "../lib/email/ia-saida.ts", "../lib/email/comandos.ts", "../lib/analise/triagem-lote.ts", "../lib/gestao/relatorio-mensal.ts"],
+  "exclude": []
+}

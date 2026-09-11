@@ -38,6 +38,7 @@ import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { pistasDoEmail } from '@/lib/casos/pistas'
 import { lerChecklistPorNome, type ItemCatalogo } from '@/lib/casos/checklist'
+import { cor } from '@/lib/ui/painel'
 
 export interface EmailCaixa {
   id: string
@@ -78,6 +79,7 @@ interface Conta {
   pasta: string
   so_com_anexo: boolean
   so_nao_lidos: boolean
+  so_remetente_interno: boolean
   dias_para_tras: number
   max_por_rodada: number
   remetentes: string[]
@@ -165,6 +167,13 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
   const [erro, setErro] = useState('')
   const [ocupado, setOcupado] = useState('')
   const [verCaixas, setVerCaixas] = useState(false)
+  /* O BOTÃO "AGENTE CARTEIRO" (10/09/2026). `pode_ligar` vem do servidor: só é
+     verdade no localhost da máquina do Marco, para o proprietário. Em qualquer
+     outro lugar o botão não existe — um botão que não pode ligar nada seria a
+     tela mentindo. */
+  const [agente, setAgente] = useState<{ pode_ligar: boolean; rodando?: boolean; desde?: string | null } | null>(null)
+  const [ligandoAgente, setLigandoAgente] = useState(false)
+  const [avisoAgente, setAvisoAgente] = useState('')
   const [possoGerenciar, setPossoGerenciar] = useState(false)
   const [pessoas, setPessoas] = useState<{ auth_id: string; nome: string }[]>([])
   const primeiraCarga = useRef(true)
@@ -332,6 +341,48 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
     esperando && !maquinaParada && segundosDesde(atual?.corpo_pedido_em ?? null) < ESPERA_MAXIMA_SEG
   const corpoDemorou = esperando && !buscandoCorpo
 
+  /* O AGENTE CARTEIRO. Pergunta uma vez, na abertura, se este CRM está na
+     máquina que pode ligá-lo. A pergunta custa um PowerShell no servidor, então
+     não entra no relógio de 20 s da tela: o "de pé ou parado" que muda sozinho
+     continua vindo do banco (`dePe`, pelo `ultimo_contato`). */
+  useEffect(() => {
+    let vivo = true
+    fetch('/api/agentes/carteiro')
+      .then((r) => r.json())
+      .then((j) => { if (vivo && typeof j?.pode_ligar === 'boolean') setAgente(j) })
+      .catch(() => { /* sem resposta, sem botão */ })
+    return () => { vivo = false }
+  }, [])
+
+  // De pé é o processo vivo na máquina OU a caixa respondendo no banco.
+  const agenteDePe = !!agente?.rodando || algumaDePe
+
+  async function ligarAgente() {
+    setLigandoAgente(true); setAvisoAgente(''); setErro('')
+    try {
+      const r = await fetch('/api/agentes/carteiro', { method: 'POST' })
+      const j = await r.json()
+      if (!r.ok) {
+        setErro(j.erro ?? 'Não consegui ligar o Carteiro.')
+        if (j.log) setAvisoAgente(`Últimas linhas do agentes.log:\n${j.log}`)
+      } else if (j.ja_estava) {
+        setAgente((a) => ({ ...(a ?? { pode_ligar: true }), rodando: true, desde: j.desde }))
+        setAvisoAgente(
+          `O Carteiro já estava de pé${j.desde ? ` desde ${new Date(j.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}` +
+          ' e olha o topo da caixa a cada 30 segundos. Se um e-mail de hoje não aparece, é o Outlook clássico que ainda não o recebeu.',
+        )
+      } else {
+        setAgente((a) => ({ ...(a ?? { pode_ligar: true }), rodando: true, desde: j.desde }))
+        setAvisoAgente('Carteiro ligado, sem janela. A primeira leitura da caixa leva até um minuto; a lista se atualiza sozinha.')
+        // A primeira olhada do Carteiro sai em segundos; buscar logo depois.
+        setTimeout(() => { carregar() }, 8000)
+      }
+    } catch {
+      setErro('A conexão com o CRM caiu. Tente de novo.')
+    }
+    setLigandoAgente(false)
+  }
+
   return (
     <div>
       {/* ── o estado das caixas, antes de tudo ── */}
@@ -381,9 +432,43 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
         >
           ⚙ Caixas{minhas.some((c) => !c.ligado) ? ' •' : ''}
         </button>
+
+        {/* O AGENTE CARTEIRO, ao lado das caixas que ele alimenta. Parado, é o
+            botão cheio: é a ação que falta. De pé, vira contorno com o ponto
+            verde, e clicar só confirma — nunca sobe um segundo Carteiro. */}
+        {agente?.pode_ligar && (
+          <button
+            type="button"
+            className={agenteDePe ? 'btn-secondary' : 'btn-primary'}
+            style={{ padding: '6px 12px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 7 }}
+            onClick={ligarAgente}
+            disabled={ligandoAgente}
+            title={agenteDePe
+              ? 'O Carteiro está lendo o Outlook desta máquina. Clique para conferir.'
+              : 'Liga o Carteiro nesta máquina, sem janela. É ele que traz o e-mail do Outlook para cá.'}
+          >
+            <span aria-hidden style={{
+              width: 8, height: 8, borderRadius: '50%', flex: 'none',
+              background: agenteDePe ? cor.areaOperacao : cor.borda,
+            }} />
+            {ligandoAgente ? 'Ligando o Carteiro…' : 'Agente Carteiro'}
+          </button>
+        )}
       </div>
 
       {erro && <div className="alert-error" style={{ marginBottom: 12 }}>{erro}</div>}
+
+      {avisoAgente && (
+        <div style={{
+          marginBottom: 12, fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+          background: cor.papelZebra, border: `1px solid ${cor.borda}`, color: cor.texto,
+          borderRadius: 8, padding: '10px 13px', display: 'flex', gap: 10, alignItems: 'flex-start',
+        }}>
+          <span style={{ flex: 1 }}>{avisoAgente}</span>
+          <button type="button" onClick={() => setAvisoAgente('')} aria-label="Fechar o aviso"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: cor.textoSub, fontSize: 15, lineHeight: 1 }}>×</button>
+        </div>
+      )}
 
       {/* A sua caixa esperando você ligar. Some assim que ligar. */}
       {minhas.some((c) => !c.ligado) && (
@@ -554,7 +639,7 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
               {pistas && (
                 <div style={{ background: '#f6f9fd', border: '1px solid var(--border)', borderRadius: 10, padding: 12, marginBottom: 14 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: '#1a3560', marginBottom: 8 }}>
-                    O QUE DÁ PARA LER DAQUI
+                    O que dá para ler daqui
                   </div>
                   {([
                     ['Tomador', pistas.tomador],
@@ -581,7 +666,7 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
               {leitura && (
                 <div style={{ marginBottom: 14 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: '#1a3560', marginBottom: 6 }}>
-                    O QUE A POLÍTICA PEDE ({leitura.tem.length} de {catalogo.length} pelo nome dos anexos)
+                    O que a política pede ({leitura.tem.length} de {catalogo.length} pelo nome dos anexos)
                   </div>
                   {[...leitura.tem, ...leitura.faltam]
                     .sort((a, b) => a.ordem - b.ordem)
@@ -606,7 +691,7 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
               {(atual.anexos ?? []).length > 0 && (
                 <div style={{ marginBottom: 14 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: '#1a3560', marginBottom: 6 }}>
-                    ANEXOS ({anexosReais(atual).length} documento{anexosReais(atual).length === 1 ? '' : 's'}
+                    Anexos ({anexosReais(atual).length} documento{anexosReais(atual).length === 1 ? '' : 's'}
                     {atual.anexos.length > anexosReais(atual).length &&
                       `, ${atual.anexos.length - anexosReais(atual).length} de enfeite`})
                   </div>
@@ -644,7 +729,7 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
               {/* ── o corpo ── */}
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#1a3560' }}>O E-MAIL</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#1a3560' }}>O e-mail</span>
                   {!somenteLeitura && atual.entry_id && (!atual.corpo_em || corpoFalhou) && (
                     <button
                       type="button"
@@ -839,6 +924,25 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
                         <b style={{ fontSize: 13.5, color: '#0a1628' }}>Só e-mail não lido</b>
                         <span style={{ display: 'block', fontSize: 12.5, color: 'var(--soft)' }}>
                           Cuidado: quem abre o e-mail no Outlook antes some da lista.
+                        </span>
+                      </span>
+                    </label>
+
+                    <label style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginTop: 8 }}>
+                      <input
+                        type="checkbox" checked={c.so_remetente_interno} style={{ marginTop: 3 }}
+                        disabled={somenteLeitura}
+                        onChange={(ev) => salvarCaixa(c.id, { so_remetente_interno: ev.target.checked })}
+                      />
+                      <span>
+                        <b style={{ fontSize: 13.5, color: '#0a1628' }}>
+                          Só e-mail interno (@famseguradora.com.br) conta como pedido de análise
+                        </b>
+                        <span style={{ display: 'block', fontSize: 12.5, color: 'var(--soft)' }}>
+                          Ligado de fábrica: o pedido de análise chega quase sempre por alguém da FAM
+                          encaminhando o que a corretora mandou. Corretora que escreve direto para esta
+                          caixa não vira pedido sozinha; fica em &quot;Todos os e-mails&quot;, só você vê, e
+                          você decide se traz mesmo assim.
                         </span>
                       </span>
                     </label>

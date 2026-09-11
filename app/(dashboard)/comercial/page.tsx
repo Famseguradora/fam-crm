@@ -24,8 +24,9 @@ import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { fmtData } from '@/lib/utils'
 import Caixa from './Caixa'
-import { SecaoPainel, CartaoNumero, Moldura } from '@/components/painel/Painel'
-import { cor, corDaArea, texto } from '@/lib/ui/painel'
+import PainelEmail from '@/components/comercial/PainelEmail'
+import { SecaoPainel, CartaoNumero, Moldura, GradeCartoes } from '@/components/painel/Painel'
+import { cor, corDaArea, texto, botaoVazado } from '@/lib/ui/painel'
 
 interface Caso {
   id: string
@@ -118,14 +119,25 @@ export default function ComercialPage() {
     }
   }, [casos, docsPorCaso])
 
-  /** A tabelinha que abre dentro de um cartão. Sempre com origem, porque número
-   *  sem origem é número que ninguém pode conferir. */
-  function ListaDeCasos({ lista, origem }: { lista: Caso[]; origem: string }) {
+  /** A tabela do cartão aberto, embaixo da grade e na largura inteira. Sempre
+   *  com origem, porque número sem origem é número que ninguém pode conferir. */
+  function ListaDeCasos({ lista, origem, rotulo, aoFechar }: {
+    lista: Caso[]; origem: string; rotulo: string; aoFechar: () => void
+  }) {
+    const fechar = (
+      <button type="button" onClick={aoFechar} style={{ ...botaoVazado, padding: '3px 10px', fontSize: 11.5 }}>
+        fechar
+      </button>
+    )
     if (!lista.length) {
-      return <div style={texto.nota}>Nenhum caso nesta situação agora.</div>
+      return (
+        <Moldura titulo={rotulo} acao={fechar}>
+          <div style={texto.nota}>Nenhum caso nesta situação agora.</div>
+        </Moldura>
+      )
     }
     return (
-      <Moldura titulo={`${lista.length} caso${lista.length === 1 ? '' : 's'}`} origem={origem}>
+      <Moldura titulo={`${rotulo} · ${lista.length} caso${lista.length === 1 ? '' : 's'}`} origem={origem} acao={fechar}>
         <div className="fam-table-wrap">
           <table className="fam-table">
             <thead>
@@ -188,7 +200,7 @@ export default function ComercialPage() {
     <div style={{ padding: '20px 0' }}>
       <div style={{ marginBottom: 18 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: cor.tinta, margin: 0 }}>Entrada do Comercial</h1>
-        <p style={{ color: cor.textoFraco, fontSize: 14, margin: '6px 0 0', maxWidth: '76ch' }}>
+        <p style={{ color: cor.textoFraco, fontSize: 14, margin: '6px 0 0' }}>
           A caixa de e-mail aparece aqui. Você lê, vê os anexos e escolhe qual e-mail vira demanda.
           O CRM guarda os documentos e abre o caso para a Triagem.
         </p>
@@ -198,54 +210,69 @@ export default function ComercialPage() {
           Quatro cartões e nada mais. A tentação era encher de indicador; o
           padrão pede o contrário: um número grande por cartão, e cartão que não
           muda decisão nenhuma não entra. */}
-      {!carregando && casos.length > 0 && (
-        <SecaoPainel nome="A esteira hoje" cor={corDaArea('comercial')}>
-          <div style={{
-            display: 'grid', gap: 8,
-            gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
-            alignItems: 'start',
-          }}>
-            {([
-              {
-                id: 'comercial', rotulo: 'No Comercial', lista: numeros.comercial,
-                sub: 'esperando você decidir se vira demanda',
-                origem: 'casos com etapa = comercial',
-              },
-              {
-                id: 'triagem', rotulo: 'Na Triagem', lista: numeros.triagem,
-                sub: 'já viraram demanda e seguiram',
-                origem: 'casos com etapa = triagem',
-              },
-              {
-                id: 'sem-cnpj', rotulo: 'Sem CNPJ', lista: numeros.semCnpj,
-                sub: 'não dá para abrir tomador nem análise sem ele',
-                origem: 'casos vivos com cnpj vazio',
-                alerta: numeros.semCnpj.length > 0,
-              },
-              {
-                id: 'sem-doc', rotulo: 'Sem documento', lista: numeros.semDoc,
-                sub: 'e-mail entrou, mas nenhum anexo foi guardado',
-                origem: 'casos em comercial sem linha em caso_documentos',
-                alerta: numeros.semDoc.length > 0,
-              },
-            ]).map((k) => (
-              <CartaoNumero
-                key={k.id}
-                rotulo={k.rotulo}
-                numero={String(k.lista.length)}
-                sub={k.sub}
-                alerta={k.alerta}
-                aberto={cartaoAberto === k.id}
-                aoAlternar={() => setCartaoAberto(cartaoAberto === k.id ? null : k.id)}
-              >
-                <ListaDeCasos lista={k.lista} origem={k.origem} />
-              </CartaoNumero>
-            ))}
-          </div>
-        </SecaoPainel>
-      )}
+      {!carregando && casos.length > 0 && (() => {
+        const cartoes = [
+          {
+            id: 'comercial', rotulo: 'No Comercial', lista: numeros.comercial,
+            sub: 'esperando você decidir se vira demanda',
+            origem: 'casos com etapa = comercial',
+          },
+          {
+            id: 'triagem', rotulo: 'Na Triagem', lista: numeros.triagem,
+            sub: 'já viraram demanda e seguiram',
+            origem: 'casos com etapa = triagem',
+          },
+          {
+            id: 'sem-cnpj', rotulo: 'Sem CNPJ', lista: numeros.semCnpj,
+            sub: 'não dá para abrir tomador nem análise sem ele',
+            origem: 'casos vivos com cnpj vazio',
+            alerta: numeros.semCnpj.length > 0,
+          },
+          {
+            id: 'sem-doc', rotulo: 'Sem documento', lista: numeros.semDoc,
+            sub: 'e-mail entrou, mas nenhum anexo foi guardado',
+            origem: 'casos em comercial sem linha em caso_documentos',
+            alerta: numeros.semDoc.length > 0,
+          },
+        ]
+        const aberto = cartoes.find((k) => k.id === cartaoAberto)
+        return (
+          <SecaoPainel nome="A esteira hoje" cor={corDaArea('comercial')}>
+            {/* O detalhe abre embaixo da grade, na largura inteira (11/09/2026). */}
+            <GradeCartoes
+              detalhe={aberto && (
+                <ListaDeCasos
+                  lista={aberto.lista} origem={aberto.origem} rotulo={aberto.rotulo}
+                  aoFechar={() => setCartaoAberto(null)}
+                />
+              )}
+            >
+              {cartoes.map((k) => (
+                <CartaoNumero
+                  key={k.id}
+                  rotulo={k.rotulo}
+                  numero={String(k.lista.length)}
+                  sub={k.sub}
+                  alerta={k.alerta}
+                  aberto={cartaoAberto === k.id}
+                  aoAlternar={() => setCartaoAberto(cartaoAberto === k.id ? null : k.id)}
+                />
+              ))}
+            </GradeCartoes>
+          </SecaoPainel>
+        )
+      })()}
 
-      <Caixa aoAbrirCaso={carregar} />
+      {/* O PAINEL VEIO PARA A FRENTE em 10/09/2026 ("não quero mais uma tela
+          de outlook, se fosse isso eu usaria o outlook"), e a caixa crua
+          voltou para cima, aberta, logo abaixo dos números, em 11/09/2026:
+          "a visualização dos e-mails igual o outlook deve ficar em cima
+          aberta". Quem desenha a caixa agora é o PainelEmail, no lugar em que
+          ficavam os mais antigos parados (que foram para o pé, recolhidos).
+
+          A caixa é o único caminho que existe hoje para um e-mail virar caso
+          (o botão "Trazer para a esteira" mora lá dentro). */}
+      <PainelEmail aoMudar={carregar} caixa={<Caixa aoAbrirCaso={carregar} />} />
 
       {/* ── a saída de emergência ── */}
       {!somenteLeitura && (

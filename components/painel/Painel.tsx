@@ -125,6 +125,40 @@ export function CartaoNumero({
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   GRADE DE CARTÕES
+
+   Cartões lado a lado, e o detalhe do aberto EMBAIXO da grade, na largura
+   inteira. Ordem do Marco em 11/09/2026, olhando a tabela de e-mails espremida
+   dentro de um cartão de 215 px: "esses cards só são abertos individualmente,
+   pode ocupar o espaço total da tela".
+
+   Só um cartão abre por vez (quem chama guarda UM id), então o detalhe nunca
+   disputa espaço com outro. Em grade, portanto, o `CartaoNumero` vai SEM
+   filhos, e o detalhe vem por `detalhe`. No painel estreito da IA Gestor a
+   regra antiga continua: lá o cartão já é a largura toda, e o detalhe mora
+   dentro dele.
+   ══════════════════════════════════════════════════════════════════════════ */
+export function GradeCartoes({ minimo = 210, detalhe, children }: {
+  /** Largura mínima de cada cartão, em px, antes de a grade quebrar a linha. */
+  minimo?: number
+  /** O detalhe do cartão aberto (normalmente uma `Moldura`), ou nada. */
+  detalhe?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <>
+      <div style={{
+        display: 'grid', gap: 8, alignItems: 'start',
+        gridTemplateColumns: `repeat(auto-fit, minmax(min(${minimo}px, 100%), 1fr))`,
+      }}>
+        {children}
+      </div>
+      {detalhe}
+    </>
+  )
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    MOLDURA
 
    A caixa branca com filete dourado no título, em volta de uma tabela, de um
@@ -133,9 +167,11 @@ export function CartaoNumero({
    `origem` não é enfeite e não é opcional por acaso: número sem origem é
    número que ninguém pode conferir, e este CRM já teve número assim.
    ══════════════════════════════════════════════════════════════════════════ */
-export function Moldura({ titulo, origem, children }: {
+export function Moldura({ titulo, origem, acao, children }: {
   titulo: string
   origem?: string | null
+  /** Um botão encostado à direita do título (um "fechar", um filtro). */
+  acao?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -151,12 +187,56 @@ export function Moldura({ titulo, origem, children }: {
           width: 3, height: 13, borderRadius: 2,
           background: cor.ouro, flexShrink: 0,
         }} />
-        {titulo}
+        <span style={{ flex: 1 }}>{titulo}</span>
+        {acao}
       </div>
       {children}
       {origem && (
         <div style={{ ...texto.nota, marginTop: 8 }}>origem: {origem}</div>
       )}
+    </div>
+  )
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BARRAS
+
+   A distribuição que cabe em qualquer largura: nome, trilho e número, uma
+   linha por item, a maior barra ocupando o trilho inteiro. Sem biblioteca de
+   gráfico, porque ranking de dez linhas não precisa de eixo: precisa ser lido.
+
+   Nasceu no relatório gerencial do mês (11/09/2026). Lista vazia não some:
+   diz que não tem dado, que é a regra 5 do docs/DESIGN-PAINEL.md.
+   ══════════════════════════════════════════════════════════════════════════ */
+export function Barras({ itens, cor: c = cor.acao, vazio = 'sem dado neste mês' }: {
+  itens: { nome: string; valor: number; texto?: string; cor?: string }[]
+  /** A cor das barras. Use a da área (`corDaArea`) ou um token. */
+  cor?: string
+  vazio?: string
+}) {
+  if (!itens.length) return <div style={texto.nota}>{vazio}</div>
+  const maior = Math.max(1, ...itens.map((i) => i.valor))
+  return (
+    <div role="list" style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+      {itens.map((i) => (
+        <div key={i.nome} role="listitem" style={{
+          display: 'grid', gridTemplateColumns: 'minmax(96px, 40%) 1fr auto', alignItems: 'center', gap: 10,
+        }}>
+          <span title={i.nome} style={{
+            fontSize: 12, color: cor.texto, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>{i.nome}</span>
+          <span aria-hidden style={{ height: 8, background: cor.bordaSuave, borderRadius: 4, overflow: 'hidden' }}>
+            <span style={{
+              display: 'block', height: '100%', borderRadius: 4, background: i.cor ?? c,
+              width: `${(i.valor / maior) * 100}%`, minWidth: i.valor > 0 ? 3 : 0,
+            }} />
+          </span>
+          <span style={{
+            fontSize: 12, fontWeight: 700, color: cor.tinta, textAlign: 'right',
+            fontVariantNumeric: 'tabular-nums', minWidth: 26,
+          }}>{i.texto ?? i.valor.toLocaleString('pt-BR')}</span>
+        </div>
+      ))}
     </div>
   )
 }
