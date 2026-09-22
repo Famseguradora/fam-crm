@@ -42,7 +42,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createClient } from '@/lib/supabase/server'
 // Achar o processo e ler o log moram num lugar só, com a Esteira (lib/agentes/processo.ts).
-import { processosDoScript, caudaDe, type Rodando } from '@/lib/agentes/processo'
+import { processosDoScript, pararProcessos, caudaDe, type Rodando } from '@/lib/agentes/processo'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -176,4 +176,77 @@ export async function POST() {
   }
 
   return NextResponse.json({ ok: true, ligado: true, rodando: true, desde: depois[0].desde })
+}
+
+/* ============================================================================
+   DESLIGAR  ·  22/09/2026
+
+   Ordem dele: "eu ligo clicando no botão dentro de comercial, mas eu preciso
+   também ter a opção de desligar dentro do sistema, nesse mesmo botão". Até
+   hoje desligar era o PARAR AGENTES.cmd, que é justamente o clique fora do
+   sistema que ele mandou acabar em 10/09.
+
+   MESMAS TRAVAS DO LIGAR, e não menos: sessão, proprietário e máquina local.
+   Desligar não é a operação inofensiva das duas — enquanto o Carteiro está
+   parado, e-mail novo não entra na caixa e o texto inteiro de um e-mail não
+   pode ser buscado. Por isso a resposta diz quantos foram parados, e o
+   agentes.log recebe a linha de quem desligou e quando: o dia em que alguém
+   perguntar "por que não chegou e-mail desde as 15h" tem que ter resposta.
+
+   PARA TODOS OS QUE ACHAR, e não só o primeiro. Se dois Carteiros subiram por
+   engano, desligar um deixaria o outro lendo a caixa e a tela apagaria a
+   bolinha: o estado mostrado mentiria sobre o que a máquina está fazendo.
+============================================================================ */
+export async function DELETE() {
+  const q = await quemPede()
+  if ('erro' in q) return q.erro
+
+  if (!ehMaquinaLocal()) {
+    return NextResponse.json(
+      {
+        erro: 'O Carteiro roda no notebook onde o Outlook está aberto. Este CRM não está nessa máquina, então daqui não dá para desligá-lo.',
+        local: false,
+      },
+      { status: 409 },
+    )
+  }
+  if (!q.proprietario) {
+    return NextResponse.json(
+      { erro: 'Só o proprietário do CRM desliga o Carteiro: ele roda na máquina dele.' },
+      { status: 403 },
+    )
+  }
+
+  const antes = await carteirosDePe()
+  if (!antes.length) {
+    // Já estava parado. Não é erro: o botão e a máquina só estavam fora de passo.
+    return NextResponse.json({ ok: true, ja_estava: true, rodando: false, quantos: 0 })
+  }
+
+  try {
+    fs.appendFileSync(
+      LOG,
+      `\n==== Agente Carteiro desligado pelo CRM (${q.nome}) em ${new Date().toLocaleString('pt-BR')} ====\n`,
+    )
+  } catch { /* o log é o registro, não a operação: falhar aqui não impede parar */ }
+
+  await pararProcessos(antes.map((p) => p.pid))
+
+  /* CONFERIR QUE PAROU MESMO. `Stop-Process` não devolve erro útil quando não
+     consegue, então quem responde é a máquina: pergunta de novo. Sem isto a
+     tela apagaria a bolinha com o Carteiro ainda lendo a caixa. */
+  await new Promise((r) => setTimeout(r, 1500))
+  const depois = await carteirosDePe()
+  if (depois.length) {
+    return NextResponse.json(
+      {
+        erro: `Mandei parar, mas ${depois.length === 1 ? 'o Carteiro continua' : `${depois.length} Carteiros continuam`} de pé. Tente de novo; se insistir, o PARAR AGENTES.cmd na máquina resolve.`,
+        rodando: true,
+        quantos: depois.length,
+      },
+      { status: 502 },
+    )
+  }
+
+  return NextResponse.json({ ok: true, desligado: true, rodando: false, quantos: antes.length })
 }

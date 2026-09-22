@@ -57,10 +57,21 @@ const TABS: Tab[] = [
      A primeira estação da esteira: o Comercial sobe o e-mail e o caso nasce
      dentro do CRM. */
   { label: '📥 Comercial',  href: '/comercial' },
-  /* O FUNIL EM CARDS, a tela do protótipo trazida para dentro do CRM
-     (08/09/2026). É de todas as áreas: o lugar onde Comercial, Cadastro,
-     Crédito e Subscrição olham para a MESMA fila, cada operação num cartão,
-     cada cartão abrindo o card da empresa. */
+  /* O FUNIL VOLTOU AO MENU EM 22/09/2026, e a Esteira de Risco saiu.
+
+     Em 21/09 a Esteira tomou este lugar. No dia seguinte ele olhou pronta e
+     disse: "não é exatamente o que eu quero... vamos manter a tela Funil que
+     está publicada e depois ajustaremos outras coisas."
+
+     Então o item de menu é o Funil de novo. A Esteira continua INTEIRA no
+     disco (`app/(dashboard)/esteira/`, `components/esteira/`), nunca foi
+     commitada e a rota `/esteira` responde para quem digitar: é rascunho
+     parado, não trabalho jogado fora. Quando o desenho dela for o que ele
+     quer, troca-se esta linha de volta e mais nada.
+
+     O que ficou da Esteira e NÃO se mexe é o fluxo por área DENTRO do card do
+     tomador (`components/tomador/SecoesDoCard.tsx`, na gaveta "Fluxo" de
+     `/tomadores/<id>`). Esse ele aprovou e está publicado. */
   { label: '📋 Funil',      href: '/fluxo' },
   /* A segunda estação: o caso que a Triagem concluiu vira análise de crédito.
      Item de primeiro nível, e não subitem de Tomadores, porque é ESTEIRA e não

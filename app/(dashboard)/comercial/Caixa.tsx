@@ -65,6 +65,8 @@ export interface EmailCaixa {
   estado_erro: string | null
   caso_id: string | null
   visto_em: string
+  /** Preenchido = não está mais na Caixa de Entrada do Outlook. */
+  saiu_em: string | null
 }
 
 /* UMA CAIXA POR PROFISSIONAL. Cada uma com o seu dono, o seu liga-desliga e a
@@ -136,6 +138,26 @@ const desde = (iso: string | null) => {
 
 const nomeDaCaixa = (c: Conta) => c.apelido || c.dono_nome || c.conta
 
+const CAMPOS_EMAIL =
+  'id, origem, conta_id, conta, entry_id, assunto, de, email_de, recebido_em, nao_lido, previa, corpo, corpo_pedido_em, corpo_em, anexos, anexos_uteis, serve, motivo, estado, estado_em, estado_por, estado_erro, caso_id, visto_em, saiu_em'
+
+/* A PESQUISA (14/09/2026). Pedido dele: "digitar o nome que eu quero, e
+   selecionar de quem eu recebi". Sem acento e sem caixa, porque ninguém digita
+   "Análise" do jeito que a corretora escreveu. Cada palavra digitada tem que
+   aparecer em algum lugar do e-mail (assunto, remetente, texto ou anexo). */
+const semAcento = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+const palavrasDa = (busca: string) => semAcento(busca).split(/\s+/).filter(Boolean)
+const chaveRemetente = (e: EmailCaixa) => (e.email_de || e.de || '').trim().toLowerCase()
+const textoDoEmail = (e: EmailCaixa) =>
+  semAcento([e.assunto, e.de, e.email_de, e.previa, e.corpo, e.conta, ...(e.anexos ?? []).map((a) => a?.nome)]
+    .filter(Boolean).join(' '))
+/* O banco não ignora acento no ilike, então a letra que pode vir acentuada vira
+   curinga de um caractere. Pega um pouco a mais, e o filtro da tela, que ignora
+   acento de verdade, tira o excesso. As vírgulas e parênteses saem porque são a
+   sintaxe do `or` do PostgREST. */
+const padraoNoBanco = (palavra: string) =>
+  `%${palavra.replace(/[,()"'\\:%*]/g, '').replace(/[aeiouc]/g, '_')}%`
+
 /* QUANTO TEMPO UM PEDIDO FEITO À MÁQUINA PODE FICAR SEM RESPOSTA antes de a
    tela chamar de falha. O Carteiro atende a tela a cada 5 segundos e o Outlook
    às vezes recusa a primeira chamada enquanto sincroniza (ele tenta 3 vezes,
@@ -162,6 +184,12 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
   const [catalogo, setCatalogo] = useState<ItemCatalogo[]>([])
   const [aba, setAba] = useState<Aba>('tudo')
   const [filtroCaixa, setFiltroCaixa] = useState('')
+  const [busca, setBusca] = useState('')
+  const [remetente, setRemetente] = useState('')
+  /* O que a pesquisa achou NO BANCO. A tela carrega os 500 mais recentes; sem
+     isto, a busca por um e-mail de dois meses atrás diria "nenhum" com ele
+     guardado lá, e busca que mente é pior que busca nenhuma. */
+  const [achados, setAchados] = useState<EmailCaixa[]>([])
   const [aberto, setAberto] = useState('')
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
@@ -173,6 +201,10 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
      tela mentindo. */
   const [agente, setAgente] = useState<{ pode_ligar: boolean; rodando?: boolean; desde?: string | null } | null>(null)
   const [ligandoAgente, setLigandoAgente] = useState(false)
+  /* Qual das duas ações está em curso, só para o rótulo do botão. Um booleano
+     de "ocupado" não bastava depois que o mesmo botão passou a desligar: dizia
+     "Ligando o Carteiro…" enquanto o desligava. */
+  const [acaoAgente, setAcaoAgente] = useState<'' | 'ligando' | 'desligando'>('')
   const [avisoAgente, setAvisoAgente] = useState('')
   const [possoGerenciar, setPossoGerenciar] = useState(false)
   const [pessoas, setPessoas] = useState<{ auth_id: string; nome: string }[]>([])
@@ -189,10 +221,15 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
     const [{ data: e, error: erroE }, { data: c }, respostaContas] = await Promise.all([
       supabase
         .from('emails_caixa')
-        .select('id, origem, conta_id, conta, entry_id, assunto, de, email_de, recebido_em, nao_lido, previa, corpo, corpo_pedido_em, corpo_em, anexos, anexos_uteis, serve, motivo, estado, estado_em, estado_por, estado_erro, caso_id, visto_em')
+        .select(CAMPOS_EMAIL)
         /* 500, e não 300: a régua de fábrica passou a trazer 200 por rodada e
            7 dias para trás, e uma lista que corta antes disso seria a tela
            escondendo e-mail de novo, agora por outro motivo. */
+        /* SÓ O QUE ESTÁ NA CAIXA DE ENTRADA (17/09/2026). O e-mail que ele
+           moveu para outra pasta do Outlook ganha `saiu_em` na varredura
+           completa e sai daqui. Nada é apagado: o caso que ele abriu, os
+           documentos e a trilha continuam onde estavam. */
+        .is('saiu_em', null)
         .order('recebido_em', { ascending: false, nullsFirst: false })
         .limit(500),
       primeiraCarga.current
@@ -292,17 +329,73 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
     return () => clearInterval(t)
   }, [emVoo, algumaDePe, carregar])
 
-  const listas = useMemo(() => {
-    const daCaixa = filtroCaixa ? emails.filter((e) => e.conta_id === filtroCaixa) : emails
-    return {
-      serve: daCaixa.filter((e) => e.serve && ['novo', 'a_trazer', 'erro'].includes(e.estado)),
-      tudo: daCaixa,
-      trazidos: daCaixa.filter((e) => e.estado === 'trazido'),
+  const palavras = useMemo(() => palavrasDa(busca), [busca])
+  const filtrando = palavras.length > 0 || !!remetente
+
+  /* A busca no banco espera a pessoa parar de digitar. Palavra de menos de 3
+     letras só filtra o que já está na tela: no banco ela traria meia caixa. */
+  useEffect(() => {
+    let vivo = true
+    const t = setTimeout(async () => {
+      const maior = palavras.reduce((a, p) => (p.length > a.length ? p : a), '')
+      if (!remetente && maior.length < 3) { if (vivo) setAchados([]); return }
+      let q = createClient()
+        .from('emails_caixa')
+        .select(CAMPOS_EMAIL)
+        .order('recebido_em', { ascending: false, nullsFirst: false })
+        .limit(200)
+      if (maior.length >= 3) {
+        const p = padraoNoBanco(maior)
+        q = q.or(`assunto.ilike.${p},de.ilike.${p},email_de.ilike.${p},previa.ilike.${p}`)
+      }
+      if (remetente) q = q.ilike(remetente.includes('@') ? 'email_de' : 'de', remetente)
+      const { data } = await q
+      if (vivo) setAchados((data ?? []) as EmailCaixa[])
+    }, 350)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [palavras, remetente])
+
+  // O recente vence o achado: o estado dele (trazido, tratado) é o mais novo.
+  const todos = useMemo(() => {
+    if (!filtrando || !achados.length) return emails
+    const ids = new Set(emails.map((e) => e.id))
+    return [...emails, ...achados.filter((a) => !ids.has(a.id))]
+  }, [emails, achados, filtrando])
+
+  /* QUEM MANDOU, com quantos e-mails cada um, do mais frequente para o menos.
+     Sai da caixa carregada, e o escolhido nunca some da lista enquanto está
+     escolhido. */
+  const remetentes = useMemo(() => {
+    const mapa = new Map<string, { chave: string; nome: string; email: string; n: number }>()
+    for (const e of emails) {
+      const chave = chaveRemetente(e)
+      if (!chave) continue
+      const item = mapa.get(chave) ?? { chave, nome: e.de || e.email_de || chave, email: e.email_de || '', n: 0 }
+      item.n++
+      mapa.set(chave, item)
     }
-  }, [emails, filtroCaixa])
+    if (remetente && !mapa.has(remetente)) mapa.set(remetente, { chave: remetente, nome: remetente, email: '', n: 0 })
+    return [...mapa.values()].sort((a, b) => b.n - a.n || a.nome.localeCompare(b.nome, 'pt-BR'))
+  }, [emails, remetente])
+
+  const listas = useMemo(() => {
+    let base = filtroCaixa ? todos.filter((e) => e.conta_id === filtroCaixa) : todos
+    if (remetente) base = base.filter((e) => chaveRemetente(e) === remetente)
+    if (palavras.length) {
+      base = base.filter((e) => {
+        const t = textoDoEmail(e)
+        return palavras.every((p) => t.includes(p))
+      })
+    }
+    return {
+      serve: base.filter((e) => e.serve && ['novo', 'a_trazer', 'erro'].includes(e.estado)),
+      tudo: base,
+      trazidos: base.filter((e) => e.estado === 'trazido'),
+    }
+  }, [todos, filtroCaixa, remetente, palavras])
 
   const lista = listas[aba]
-  const atual = emails.find((e) => e.id === aberto) ?? lista[0] ?? null
+  const atual = todos.find((e) => e.id === aberto) ?? lista[0] ?? null
 
   async function agir(acao: string, ids: string[], extra: Record<string, unknown> = {}) {
     setErro('')
@@ -347,18 +440,71 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
      continua vindo do banco (`dePe`, pelo `ultimo_contato`). */
   useEffect(() => {
     let vivo = true
-    fetch('/api/agentes/carteiro')
-      .then((r) => r.json())
-      .then((j) => { if (vivo && typeof j?.pode_ligar === 'boolean') setAgente(j) })
-      .catch(() => { /* sem resposta, sem botão */ })
-    return () => { vivo = false }
+    const perguntar = () => {
+      fetch('/api/agentes/carteiro')
+        .then((r) => r.json())
+        .then((j) => { if (vivo && typeof j?.pode_ligar === 'boolean') setAgente(j) })
+        .catch(() => { /* sem resposta, sem botão */ })
+    }
+    perguntar()
+
+    /* E PERGUNTA DE NOVO A CADA MINUTO (22/09/2026). Desde que a bolinha passou
+       a ser o processo desta máquina, ela precisa notar o Carteiro que morre
+       sozinho — o caso comum é o Outlook clássico fechar. Sem isto a bolinha
+       ficaria verde até alguém recarregar a página, que é exatamente o tipo de
+       tela que mente.
+
+       Um minuto, e não os 20 s do resto da tela: cada pergunta é um PowerShell
+       no servidor. A lista de e-mails continua no relógio dela. */
+    const relogio = setInterval(perguntar, 60_000)
+    return () => { vivo = false; clearInterval(relogio) }
   }, [])
 
-  // De pé é o processo vivo na máquina OU a caixa respondendo no banco.
-  const agenteDePe = !!agente?.rodando || algumaDePe
+  /* A BOLINHA DO BOTÃO É O PROCESSO DESTA MÁQUINA, e nada mais (22/09/2026).
+
+     Ela era `agente?.rodando || algumaDePe`, o que fazia sentido enquanto o
+     botão só ligava. Agora que o mesmo clique desliga, misturar as duas coisas
+     viraria mentira: desligar o Carteiro daqui com uma caixa ainda respondendo
+     no banco (outra máquina, ou o `ultimo_contato` dos últimos minutos) deixaria
+     a bolinha verde, e o botão pareceria ter desobedecido.
+
+     O botão controla o processo desta máquina, então a bolinha mostra o processo
+     desta máquina. O estado das caixas continua na etiqueta ao lado ("2 de 2
+     caixas de pé"), que é onde ele sempre esteve e onde todo mundo vê. */
+  const agenteDePe = !!agente?.rodando
+
+  async function alternarAgente() {
+    if (agenteDePe) return desligarAgente()
+    return ligarAgente()
+  }
+
+  async function desligarAgente() {
+    setLigandoAgente(true); setAcaoAgente('desligando'); setAvisoAgente(''); setErro('')
+    try {
+      const r = await fetch('/api/agentes/carteiro', { method: 'DELETE' })
+      const j = await r.json()
+      if (!r.ok) {
+        setErro(j.erro ?? 'Não consegui desligar o Carteiro.')
+        // Falhou: a bolinha volta ao que a máquina diz, não ao que eu queria.
+        if (typeof j.rodando === 'boolean') {
+          setAgente((a) => ({ ...(a ?? { pode_ligar: true }), rodando: j.rodando }))
+        }
+      } else {
+        setAgente((a) => ({ ...(a ?? { pode_ligar: true }), rodando: false, desde: null }))
+        setAvisoAgente(
+          j.ja_estava
+            ? 'O Carteiro já estava parado.'
+            : 'Carteiro desligado. Enquanto ele estiver parado, e-mail novo não entra na caixa e o texto inteiro de um e-mail não pode ser buscado. Clique de novo para religar.',
+        )
+      }
+    } catch {
+      setErro('A conexão com o CRM caiu. Tente de novo.')
+    }
+    setLigandoAgente(false); setAcaoAgente('')
+  }
 
   async function ligarAgente() {
-    setLigandoAgente(true); setAvisoAgente(''); setErro('')
+    setLigandoAgente(true); setAcaoAgente('ligando'); setAvisoAgente(''); setErro('')
     try {
       const r = await fetch('/api/agentes/carteiro', { method: 'POST' })
       const j = await r.json()
@@ -380,7 +526,7 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
     } catch {
       setErro('A conexão com o CRM caiu. Tente de novo.')
     }
-    setLigandoAgente(false)
+    setLigandoAgente(false); setAcaoAgente('')
   }
 
   return (
@@ -433,25 +579,41 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
           ⚙ Caixas{minhas.some((c) => !c.ligado) ? ' •' : ''}
         </button>
 
-        {/* O AGENTE CARTEIRO, ao lado das caixas que ele alimenta. Parado, é o
-            botão cheio: é a ação que falta. De pé, vira contorno com o ponto
-            verde, e clicar só confirma — nunca sobe um segundo Carteiro. */}
+        {/* O AGENTE CARTEIRO, ao lado das caixas que ele alimenta.
+
+            UM BOTÃO SÓ, QUE ALTERNA (22/09/2026, ordem dele). Parado, é o botão
+            cheio com o ponto cinza: é a ação que falta. De pé, vira contorno com
+            o ponto verde, e o mesmo clique desliga. Antes, clicar de pé só
+            confirmava, e desligar exigia o PARAR AGENTES.cmd fora do sistema.
+
+            O rótulo diz a AÇÃO quando ela está em curso ("Desligando…") e o NOME
+            quando está parada. Botão que troca de nome a cada estado ("Ligar" /
+            "Desligar") faz procurar o botão de novo a cada visita; o ponto e a
+            dica do mouse já dizem o que vai acontecer. */}
         {agente?.pode_ligar && (
           <button
             type="button"
             className={agenteDePe ? 'btn-secondary' : 'btn-primary'}
             style={{ padding: '6px 12px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 7 }}
-            onClick={ligarAgente}
+            onClick={alternarAgente}
             disabled={ligandoAgente}
+            aria-pressed={agenteDePe}
             title={agenteDePe
-              ? 'O Carteiro está lendo o Outlook desta máquina. Clique para conferir.'
+              ? 'O Carteiro está lendo o Outlook desta máquina. Clique para DESLIGAR: enquanto ele estiver parado, e-mail novo não entra na caixa.'
               : 'Liga o Carteiro nesta máquina, sem janela. É ele que traz o e-mail do Outlook para cá.'}
           >
             <span aria-hidden style={{
               width: 8, height: 8, borderRadius: '50%', flex: 'none',
-              background: agenteDePe ? cor.areaOperacao : cor.borda,
+              background: agenteDePe ? cor.areaOperacao : cor.textoSobreEscuro,
             }} />
-            {ligandoAgente ? 'Ligando o Carteiro…' : 'Agente Carteiro'}
+            {acaoAgente === 'ligando'
+              ? 'Ligando o Carteiro…'
+              : acaoAgente === 'desligando'
+                ? 'Desligando o Carteiro…'
+                : 'Agente Carteiro'}
+            <span style={{ fontSize: 11.5, color: agenteDePe ? cor.areaOperacao : cor.textoSobreEscuro, fontWeight: 600 }}>
+              {agenteDePe ? 'ligado' : 'desligado'}
+            </span>
           </button>
         )}
       </div>
@@ -490,8 +652,11 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
         </div>
       )}
 
-      {/* ── abas ── */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+      {/* ── abas, e a pesquisa na mesma linha ──
+          Na mesma linha e não numa de baixo: a altura da grade (100vh - 420)
+          foi medida com as abas sozinhas, e uma linha a mais empurraria o pé
+          da lista para fora da tela. Em tela estreita ela quebra sozinha. */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         {([
           ['tudo', 'Todos os e-mails', listas.tudo.length],
           ['serve', 'Para análise', listas.serve.length],
@@ -507,6 +672,42 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
             {rotulo} <span style={{ opacity: 0.75 }}>{n}</span>
           </button>
         ))}
+
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', flex: 1, justifyContent: 'flex-end', minWidth: 0 }}>
+          <input
+            type="search"
+            className="fam-input"
+            style={{ flex: '1 1 220px', maxWidth: 340, minWidth: 0, padding: '6px 10px', fontSize: 13 }}
+            placeholder="Pesquisar nome, assunto, e-mail ou anexo"
+            aria-label="Pesquisar e-mails"
+            value={busca}
+            onChange={(ev) => { setBusca(ev.target.value); setAberto('') }}
+          />
+          <select
+            className="fam-input"
+            style={{ flex: '0 1 220px', minWidth: 0, maxWidth: '100%', padding: '6px 10px', fontSize: 13, color: remetente ? cor.tinta : cor.textoFraco }}
+            aria-label="Filtrar por remetente"
+            value={remetente}
+            onChange={(ev) => { setRemetente(ev.target.value); setAberto('') }}
+          >
+            <option value="">De qualquer remetente</option>
+            {remetentes.map((r) => (
+              <option key={r.chave} value={r.chave}>
+                {r.nome}{r.email && r.email.toLowerCase() !== r.nome.toLowerCase() ? ` · ${r.email}` : ''}{r.n ? ` (${r.n})` : ''}
+              </option>
+            ))}
+          </select>
+          {filtrando && (
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ padding: '6px 11px', fontSize: 12.5 }}
+              onClick={() => { setBusca(''); setRemetente(''); setAberto('') }}
+            >
+              Limpar
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="caixa-grade">
@@ -516,7 +717,9 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
             <p style={{ color: 'var(--soft)', fontSize: 14, padding: 16 }}>Carregando…</p>
           ) : lista.length === 0 ? (
             <p style={{ color: 'var(--soft)', fontSize: 14, padding: 16 }}>
-              {aba === 'serve'
+              {filtrando
+                ? `Nenhum e-mail${busca.trim() ? ` com "${busca.trim()}"` : ''}${remetente ? ` de ${remetentes.find((r) => r.chave === remetente)?.nome ?? remetente}` : ''}${aba === 'tudo' ? '' : ' nesta aba'}.`
+                : aba === 'serve'
                 ? 'Nenhum e-mail marcado como pedido de análise. Todos continuam em "Todos os e-mails".'
                 : aba === 'tudo'
                   ? vazioTudo()
@@ -552,6 +755,17 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
                       {anx.length > 0 && ` · ${anx.length} anexo${anx.length === 1 ? '' : 's'}`}
                       {!filtroCaixa && contas.length > 1 && e.conta && ` · caixa de ${e.conta.split('@')[0]}`}
                     </div>
+                    {/* A PESQUISA ALCANÇA O QUE SAIU DA CAIXA, e a etiqueta explica
+                        por que ele está vendo aqui um e-mail que tirou da Caixa de
+                        Entrada: a lista limpa é uma coisa, achar de propósito é
+                        outra. Sem a etiqueta, seria a mesma confusão de novo — só
+                        que ao contrário. Trazer continua funcionando: a máquina
+                        reencontra a mensagem pelo Message-ID, em qualquer pasta. */}
+                    {e.saiu_em && (
+                      <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 4 }}>
+                        Não está mais na Caixa de Entrada (você moveu ou arquivou)
+                      </div>
+                    )}
                     {e.estado === 'a_trazer' && (
                       <div style={{ fontSize: 11.5, color: '#8a5a00', marginTop: 4 }}>
                         Esperando a máquina trazer…
@@ -980,6 +1194,13 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
                           disabled={somenteLeitura}
                           onBlur={(ev) => salvarCaixa(c.id, { remetentes: ev.target.value })}
                         />
+                        {/* Duas listas parecidas viram uma confusão se ninguém
+                            disser qual é qual (17/09/2026). Esta é a régua: ela
+                            decide o que a FAM aceita como pedido de análise. */}
+                        <span style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 4, lineHeight: 1.5 }}>
+                          Esta é a régua do Carteiro: decide o que vira pedido de análise para a FAM.
+                          De quem VOCÊ quer ver na sua mesa é outra lista, na aba “Fila do dia”.
+                        </span>
                       </div>
                       <div className="form-field full">
                         <span className="form-label">Ignorar assunto que contenha (um por linha)</span>
