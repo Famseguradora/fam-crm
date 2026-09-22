@@ -5,6 +5,16 @@ import { createClient } from '@/lib/supabase/client'
 import { useDateRange } from '@/lib/context/date-range-context'
 import { fmtData } from '@/lib/utils'
 
+/** O que `/api/agentes/backup-anexos` conta sobre o backup dos documentos. */
+interface BackupEstado {
+  /** Falso fora da máquina que tem a pasta da FAM, ou para quem não é o dono. */
+  pode: boolean
+  rodando?: boolean
+  /** O fim do backup-anexos.log, só enquanto roda. */
+  log?: string
+  ultimo?: { nome: string; quando: string; mb: number; pasta: string; quantos: number } | null
+}
+
 interface UsuarioRow {
   id: string
   nome: string
@@ -26,6 +36,66 @@ export default function SistemaConfig() {
   const [msg, setMsg] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
   const [dataForm, setDataForm] = useState(dataInicio)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+
+  /* O BACKUP DOS DOCUMENTOS (22/09/2026). `pode` vem do servidor e é falso fora
+     da máquina que tem a pasta da FAM: botão que não pode agir não aparece. */
+  const [backup, setBackup] = useState<BackupEstado | null>(null)
+
+  const verBackup = useCallback(async () => {
+    try {
+      const r = await fetch('/api/agentes/backup-anexos')
+      const j = await r.json()
+      if (typeof j?.pode === 'boolean') setBackup(j)
+    } catch { /* sem resposta, sem seção */ }
+  }, [])
+
+  /* A primeira pergunta vai inline, e não `verBackup()` direto no corpo do
+     efeito: o lint do React 19 recusa setState síncrono ali, e a forma com
+     `vivo` também evita gravar estado numa tela que já saiu. */
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      try {
+        const r = await fetch('/api/agentes/backup-anexos')
+        const j = await r.json()
+        if (vivo && typeof j?.pode === 'boolean') setBackup(j)
+      } catch { /* sem resposta, sem seção */ }
+    })()
+    return () => { vivo = false }
+  }, [])
+
+  /* ENQUANTO RODA, PERGUNTA A CADA 10 s. São minutos de download, e o valor da
+     tela é justamente mostrar o "300 de 574" andando. Parado, não pergunta
+     nada: cada consulta é um PowerShell no servidor. */
+  useEffect(() => {
+    if (!backup?.rodando) return
+    const t = setInterval(verBackup, 10_000)
+    return () => clearInterval(t)
+  }, [backup?.rodando, verBackup])
+
+  async function fazerBackup() {
+    setMsg(null)
+    setBackup((b) => (b ? { ...b, rodando: true } : b))
+    try {
+      const r = await fetch('/api/agentes/backup-anexos', { method: 'POST' })
+      const j = await r.json()
+      if (!r.ok) {
+        setMsg({ tipo: 'erro', texto: j.erro ?? 'Não consegui iniciar o backup.' })
+        setBackup((b) => (b ? { ...b, rodando: false } : b))
+        return
+      }
+      setMsg({
+        tipo: 'sucesso',
+        texto: j.ja_rodando
+          ? 'O backup já estava em andamento.'
+          : 'Backup iniciado. Pode sair desta tela: ele continua rodando e o resultado aparece aqui quando terminar.',
+      })
+      verBackup()
+    } catch {
+      setMsg({ tipo: 'erro', texto: 'A conexão com o CRM caiu. Tente de novo.' })
+      setBackup((b) => (b ? { ...b, rodando: false } : b))
+    }
+  }
 
   const carregarDados = useCallback(async () => {
     setLoading(true)
@@ -166,6 +236,73 @@ export default function SistemaConfig() {
           Parâmetros globais que afetam todos os usuários do CRM.
         </p>
       </div>
+
+      {/* ══ Seção: Backup dos documentos ═══════════════════════════════════════
+          Ordem dele em 22/09/2026: "insira um botão no CRM que só eu tenho
+          acesso (proprietário) de fazer backup, assim eu farei o backup quando
+          quiser". É manual de propósito: são 609 MB por execução, e repetir isso
+          três vezes por semana encheria a pasta da FAM de cópias iguais.
+          O backup do BANCO segue automático (Seg/Qua/Sex) e não passa por aqui.
+          Esta seção só aparece na máquina que tem a pasta da FAM sincronizada;
+          `pode` vem do servidor, e botão que não pode agir não deve existir. */}
+      {backup?.pode && (
+        <div style={estiloCard}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: '#a0c0e8', margin: '0 0 6px' }}>
+            🗄️ Backup dos documentos
+          </h2>
+          <p style={{ fontSize: 13, color: '#6080a0', margin: '0 0 16px', lineHeight: 1.5 }}>
+            {/* Sem número fixo de arquivos aqui: era "574", e número escrito na
+                tela envelhece calado. Quem conta é o pacote, no aviso abaixo. */}
+            Baixa todos os documentos dos tomadores e grava um pacote único na pasta de
+            Infraestrutura da FAM. <strong style={{ color: '#a0c0e8' }}>O backup diário do Supabase
+            não inclui documentos</strong> (só o banco), então esta é a única cópia deles.
+            Leva alguns minutos e guarda as 2 versões mais recentes.
+          </p>
+
+          {backup.ultimo ? (
+            <div style={{
+              background: 'rgba(39,169,108,.10)', border: '1px solid rgba(39,169,108,.45)',
+              borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#a0c0e8',
+            }}>
+              Último backup: <strong>{fmtData(backup.ultimo.quando)}</strong> · {backup.ultimo.mb} MB
+              <div style={{ fontSize: 11.5, color: '#6080a0', marginTop: 4, wordBreak: 'break-all' }}>
+                {backup.ultimo.pasta}\{backup.ultimo.nome}
+              </div>
+            </div>
+          ) : (
+            <div style={{
+              background: 'rgba(232,184,75,.10)', border: '1px solid rgba(232,184,75,.45)',
+              borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#e8b84b',
+            }}>
+              Nenhum backup de documentos encontrado na pasta da FAM.
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={fazerBackup}
+            disabled={!!backup.rodando}
+            style={{
+              ...estiloBtnPrimario,
+              background: backup.rodando ? '#0a1628' : '#1e4080',
+              color: backup.rodando ? '#6080a0' : 'white',
+              cursor: backup.rodando ? 'default' : 'pointer',
+            }}
+          >
+            {backup.rodando ? 'Fazendo o backup…' : 'Fazer backup agora'}
+          </button>
+
+          {/* Enquanto roda, o fim do log: é o que diz "300 de 574" em vez de
+              deixar a tela parada dizendo "aguarde". */}
+          {backup.rodando && backup.log && (
+            <pre style={{
+              marginTop: 14, marginBottom: 0, fontSize: 12, lineHeight: 1.6, color: '#6080a0',
+              background: '#071428', border: '1px solid #1e4080', borderRadius: 8,
+              padding: '10px 14px', whiteSpace: 'pre-wrap', fontFamily: "'Consolas',monospace",
+            }}>{backup.log}</pre>
+          )}
+        </div>
+      )}
 
       {/* ── Seção: Data de Início dos Cálculos ── */}
       <div style={estiloCard}>

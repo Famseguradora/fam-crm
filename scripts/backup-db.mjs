@@ -27,9 +27,35 @@ const PREFIX = 'fam-crm-backup-'
 const KEEP = 3
 const PAGE = 1000
 
-// TODAS as tabelas do schema public, em ordem de dependencia (mesma ordem usada
-// na restauracao). Tabelas que nao existirem no banco sao ignoradas com aviso.
-const TABLES = [
+// ============================================================================
+//  A LISTA DEIXOU DE SER FIXA EM 22/09/2026, E ESSE E O PONTO
+//
+//  Esta lista nasceu dizendo "TODAS as tabelas do schema public" e tinha 16
+//  nomes. Em 22/09/2026 o banco tinha 70 TABELAS. As 54 que nasceram depois
+//  nunca entraram no backup, e ninguem percebeu porque o backup terminava com
+//  "Backup OK" todos os dias.
+//
+//  O que estava ficando de fora: as 190 ANALISES DE CREDITO e tudo que as
+//  acompanha (exercicios, documentos, conflitos, edicoes, notas), os casos do
+//  Comercial, a caixa de e-mail, as secoes do card do tomador, os socios, os
+//  pedidos de Serasa, as conversas da IA e os 6.351 registros de
+//  `fam_historico` — que sozinho ja e maior que o backup inteiro que estava
+//  sendo gravado (2.764 linhas).
+//
+//  Agora a lista VEM DO BANCO, pelo catalogo que o PostgREST publica em
+//  `/rest/v1/`. Tabela nova entra no backup no dia em que nasce, sem ninguem
+//  lembrar de vir aqui. Uma lista escrita a mao envelhece em silencio; foi
+//  exatamente o que aconteceu por quatro meses.
+//
+//  A ORDEM: as conhecidas primeiro, na ordem de dependencia de sempre (e o que
+//  o restore-db.mjs espera), e as demais depois, em ordem alfabetica. Para uma
+//  restauracao completa isso pode exigir uma segunda passada nas que tem chave
+//  estrangeira para uma tabela que veio depois. E uma ressalva de RESTAURACAO,
+//  nao de backup: o dado esta salvo, que e o que nao se recupera de outro jeito.
+// ============================================================================
+
+/** A ordem de dependencia ja conhecida. O resto do banco entra depois desta. */
+const TABLES_BASE = [
   'produtos',
   'modalidades',
   'corretoras',
@@ -47,6 +73,21 @@ const TABLES = [
   'fam_skills_usuario',
   'audit_log',
 ]
+
+/** Toda tabela que o PostgREST publica em `/rest/v1/` (o catalogo OpenAPI do
+ *  schema `public`). E a mesma porta que o CRM usa, entao o que o backup
+ *  enxerga e exatamente o que o sistema enxerga. */
+async function tabelasDoBanco(url, key) {
+  const r = await fetch(`${url}/rest/v1/`, { headers: { apikey: key, Authorization: `Bearer ${key}` } })
+  if (!r.ok) throw new Error(`nao consegui listar as tabelas (HTTP ${r.status})`)
+  const api = await r.json()
+  const todas = Object.keys(api.definitions ?? api.components?.schemas ?? {})
+  if (!todas.length) throw new Error('o catalogo veio vazio')
+  // As conhecidas na ordem de sempre; as demais em seguida, em ordem alfabetica.
+  const conhecidas = TABLES_BASE.filter((t) => todas.includes(t))
+  const novas = todas.filter((t) => !TABLES_BASE.includes(t)).sort()
+  return [...conhecidas, ...novas]
+}
 
 // --- Carrega .env.local (parser simples de dotenv) ---
 function loadEnv() {
@@ -148,6 +189,19 @@ async function main() {
   }
 
   const supabase = createClient(url, key, { auth: { persistSession: false } })
+
+  /* A LISTA VEM DO BANCO. Se o catalogo nao responder, cai para a lista
+     conhecida em vez de nao fazer backup nenhum: backup parcial e ruim, backup
+     nenhum e pior. O aviso sai no log para nao passar despercebido — foi um
+     "Backup OK" tranquilo demais que escondeu 54 tabelas de fora por 4 meses. */
+  let TABLES
+  try {
+    TABLES = await tabelasDoBanco(url, key)
+    log(`Tabelas no banco: ${TABLES.length} (a lista vem do banco, nao do codigo).`)
+  } catch (e) {
+    TABLES = TABLES_BASE
+    log(`ATENCAO: ${e.message}. Usando a lista fixa de ${TABLES_BASE.length} tabelas; o backup deste dia pode estar INCOMPLETO.`, 'ERRO')
+  }
 
   log(`Iniciando backup -> ${destDir}`)
   const data = {}

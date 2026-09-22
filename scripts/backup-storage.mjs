@@ -16,6 +16,7 @@ import { createClient } from '@supabase/supabase-js'
 import { execSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -67,7 +68,15 @@ async function listAll(prefix = '') {
   return files
 }
 
-const OUT_DIR = '_anexos_tmp'
+/* A PASTA DE TRABALHO SAIU DE DENTRO DO ONEDRIVE (22/09/2026)
+   Era `_anexos_tmp`, relativo ao cwd — ou seja, DENTRO da pasta do projeto, que
+   e sincronizada. Baixar os 775 MB do bucket ali faz o OneDrive tentar subir
+   cada arquivo enquanto o script ainda escreve: gasta banda, engasga a
+   sincronizacao e termina em `EBUSY / WinError 32`. Flagrado com 136 MB ja
+   baixados.
+   Agora a pasta de trabalho fica no TEMP do Windows, fora de qualquer pasta
+   sincronizada. So o .tar.gz final vai para o destino que o usuario pediu. */
+const OUT_DIR = join(process.env.TEMP || process.env.TMP || tmpdir(), `fam-anexos-tmp-${process.pid}`)
 
 async function main() {
   console.log(`Listando arquivos do bucket "${BUCKET}"...`)
@@ -94,13 +103,42 @@ async function main() {
     mkdirSync(dirname(dest), { recursive: true })
     writeFileSync(dest, buf)
     ok++
+    // Sinal de vida: 574 arquivos e centenas de MB levam minutos, e sem isto
+    // nao ha como distinguir "baixando" de "travado".
+    if (ok % 50 === 0) console.log(`  ${ok}/${paths.length} arquivo(s)...`)
   }
   console.log(`${ok}/${paths.length} arquivo(s) baixado(s).`)
 
+  /* O `tar` LE "C:" COMO NOME DE SERVIDOR (22/09/2026)
+     `tar -czf "C:/.../arquivo.tar.gz"` falha com "Cannot connect to C: resolve
+     failed": para o tar do GNU, tudo que vem antes de ":" e um host remoto. E
+     falha DEPOIS de baixar os 574 arquivos, que e a pior hora possivel.
+     A saida e nao deixar a letra do disco no argumento do `-f`: o tar roda COM
+     O CWD na pasta de destino e recebe so o nome do arquivo. `--force-local`
+     resolveria no GNU, mas o tar que vem no Windows (bsdtar) nao conhece essa
+     opcao, e a tarefa agendada roda por ele. */
   const tarName = `${baseName}.tar.gz`
-  execSync(`tar -czf "${tarName}" -C "${OUT_DIR}" .`, { stdio: 'inherit' })
+  const pastaDoPacote = dirname(tarName)
+  const soONome = tarName.slice(pastaDoPacote.length + 1)
+  if (pastaDoPacote && !existsSync(pastaDoPacote)) mkdirSync(pastaDoPacote, { recursive: true })
+  execSync(`tar -czf "${soONome}" -C "${OUT_DIR}" .`, {
+    stdio: 'inherit',
+    cwd: pastaDoPacote || process.cwd(),
+  })
+
+  /* SO APAGA O TEMPORARIO DEPOIS DE CONFERIR O PACOTE. Apagar os 574 arquivos
+     confiando num tar que ninguem abriu e apagar o backup junto. */
+  const dentro = execSync(`tar -tzf "${soONome}"`, {
+    cwd: pastaDoPacote || process.cwd(), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  }).split(/\r?\n/).filter((l) => l.trim() && !l.trim().endsWith('/')).length
+
+  if (dentro !== ok) {
+    console.error(`ATENCAO: baixei ${ok} arquivo(s) e o pacote tem ${dentro}. O temporario fica em ${OUT_DIR} para conferencia.`)
+    process.exit(1)
+  }
+
   rmSync(OUT_DIR, { recursive: true, force: true })
-  console.log(`Empacotado em ${tarName}.`)
+  console.log(`Empacotado em ${tarName} — ${dentro} arquivo(s) conferido(s) dentro do pacote.`)
 }
 
 main().catch((err) => {
