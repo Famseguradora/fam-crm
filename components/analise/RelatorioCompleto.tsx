@@ -240,7 +240,9 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
         </div>
       </div>
 
-      <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 16, lineHeight: 1.5, maxWidth: '90ch' }}>
+      {/* Ocupa a largura da página e fica centralizado (ordem dele, 23/09/2026):
+          preso à esquerda em 90 colunas, sobrava um vazio do lado direito. */}
+      <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 16, lineHeight: 1.5, textAlign: 'center' }}>
         Esta análise vive <b>no banco do CRM</b>. O que o motor gerou na máquina chega aqui pela
         carga (<b>npm run publicar</b>); a partir do momento em que você edita aqui, esta análise
         passa a ser sua: a carga não a sobrescreve mais, e o que vier diferente do disco aparece

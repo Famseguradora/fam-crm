@@ -1413,6 +1413,22 @@ async function principal() {
     for (const f of falhas.slice(0, 10)) console.log('   ' + f)
     console.log('A carga foi ate o fim assim mesmo, que e a regra.')
   }
+
+  /* A COPIA DE LEITURA DO RELATORIO VAI JUNTO (23/09/2026). O relatorio de
+     verdade so abre no notebook; a equipe le no CRM do ar uma copia somente
+     leitura, e ela precisa acompanhar cada publicacao (Finalizar Analise,
+     `npm run publicar`, ordem "publicar" da esteira). Falhar aqui NUNCA
+     derruba a carga: e a regra desta carga, e a leitura pode ser refeita com
+     `node scripts/carga-relatorio.mjs --gravar`. */
+  if (MODO === 'gravar') {
+    try {
+      const { publicarRelatorios } = await import('./carga-relatorio.mjs')
+      await publicarRelatorios({ gravar: true, so: SO })
+    } catch (e) {
+      console.log(`\nATENCAO: a copia de leitura do relatorio NAO foi publicada (${e.message}).`)
+      console.log('Refaca com: node scripts/carga-relatorio.mjs --gravar')
+    }
+  }
 }
 
 // So roda quando chamado direto. Importado (pelo teste), exporta as funcoes e
