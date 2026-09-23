@@ -30,13 +30,14 @@ import EditorAnalise from '@/components/analise/EditorAnalise'
 import { SecaoResseguro, SecaoScore, SecaoEmpresa } from '@/components/analise/RelatorioBlocos'
 import { PortaDoRelatorio, SemSistemaLocal } from '@/components/analise/PortaDoRelatorio'
 import { usePermissoes } from '@/lib/context/permissoes-context'
+import Complementos from '@/components/analise/Complementos'
 
 /* A ORDEM DAS SEÇÕES É A DO RELATÓRIO DELE, e não a de quando cada uma foi
    construída: quem abre isto está lendo uma análise de crédito, e a leitura
    vai da decisão para o fundamento. As quatro do meio (empresa, score,
    resseguro) entraram em 09/09/2026, quando ele perguntou "cadê o relatório
    que consta da análise de crédito?" e a resposta era que faltava metade. */
-type Secao = 'analise' | 'tres' | 'score' | 'empresa' | 'resseguro' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos'
+type Secao = 'analise' | 'complemento' | 'tres' | 'score' | 'empresa' | 'resseguro' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos'
 
 /** As iniciais do brasão. Mesmo desenho da Mesa do Tomador. */
 function iniciaisDe(nome: string): string {
@@ -98,6 +99,8 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
 
   const ITENS: { s: Secao; nome: string; ico: React.ReactNode; meta?: string }[] = [
     { s: 'analise', nome: 'A análise', ico: <IcoVisao /> },
+    // 17/09/2026: documento novo lido contra esta análise. Ver Complementos.tsx.
+    { s: 'complemento', nome: 'Análise complementar', ico: <IcoDoc /> },
     { s: 'tres', nome: "Os 3 C's", ico: <IcoEscudo />, meta: ficha.tres_cs ? undefined : 'sem registro' },
     { s: 'score', nome: 'Como o Score foi formado', ico: <IcoGrafico />, meta: ficha.scoreMemoria ? undefined : 'sem memoria' },
     { s: 'empresa', nome: 'A empresa', ico: <IcoVisao />, meta: ficha.identificacao ? undefined : 'sem ficha' },
@@ -159,6 +162,13 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
             Ordem dele em 09/09/2026. */}
         <PortaDoRelatorio chave={ficha.chave_local} />
         {editaAnalise && (
+          <button type="button" className={!editando && secao === 'complemento' ? 'btn-primary' : 'btn-secondary'}
+            style={{ padding: '6px 13px', fontSize: 13 }}
+            onClick={() => { setEditando(false); setSecao('complemento') }}>
+            Análise complementar
+          </button>
+        )}
+        {editaAnalise && (
           <button type="button" className={editando ? 'btn-primary' : 'btn-secondary'}
             style={{ padding: '6px 13px', fontSize: 13 }}
             onClick={() => { setEditando(v => !v); if (editando) reler() }}>
@@ -198,6 +208,7 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
           {editando && <EditorAnalise ficha={ficha} aoSalvar={reler} />}
 
           {!editando && secao === 'analise' && <SecaoAnalise ficha={ficha} />}
+          {!editando && secao === 'complemento' && <Complementos ficha={ficha} />}
           {!editando && secao === 'tres' && <SecaoTresCs ficha={ficha} />}
           {!editando && secao === 'serasa' && <SecaoSerasa ficha={ficha} />}
 

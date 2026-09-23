@@ -111,6 +111,10 @@ export interface FichaAnalise {
   /** O tomador do CRM, quando a análise já está ligada a um. */
   tomador_id: string | null
   corretora: string | null
+  /** O nome da pasta no notebook, como a análise gravou. Não é o nome curto:
+   *  a Obrascon é "Obrascon Huarte" na tela e "Obrascon Huarte Lain, do Brasil"
+   *  no disco, e é este que o Refazer do Acervo precisa mostrar. */
+  pasta: string | null
 
   razao_social: string
   nome_curto: string | null
@@ -363,7 +367,7 @@ const AVISO_TIPO: Record<string, string> = {
 }
 
 const COLUNAS = `
-  id, chave_local, cnpj, tomador_id, corretora,
+  id, chave_local, cnpj, tomador_id, corretora, pasta,
   razao_social, nome_curto, grupo, segmento, setor,
   data_analise, versao, revisada, vigente,
   score_final, classe, porte, rating_txt, rating_cod, nivel_risco, recomendacao,
@@ -385,6 +389,7 @@ interface LinhaCrua {
   cnpj: string | null
   tomador_id: string | null
   corretora: string | null
+  pasta: string | null
   razao_social: string
   nome_curto: string | null
   grupo: string | null
@@ -619,6 +624,8 @@ async function montarFicha(
       // Mesma limpeza da razao social: e tudo texto do mesmo relatorio HTML,
       // e proteger um campo e deixar o vizinho de fora e so esperar a vez.
       corretora: semMarcador(linha.corretora ? semEntidadesHtml(linha.corretora) : null),
+      // Nome de pasta vai cru: limpar entidade aqui mostraria uma pasta que não existe.
+      pasta: linha.pasta?.trim() || null,
 
       razao_social: semEntidadesHtml(linha.razao_social),
       nome_curto: linha.nome_curto ? semEntidadesHtml(linha.nome_curto) : null,

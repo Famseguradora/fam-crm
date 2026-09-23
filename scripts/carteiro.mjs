@@ -232,18 +232,114 @@ async function varrer(c, regras, conta, { so_o_topo = false } = {}) {
     return
   }
 
+  /* A VARREDURA FOI COMPLETA? (17/09/2026)
+     Completa = varreu a régua inteira (não a olhada no topo) E o Outlook não
+     bateu no teto de `max`. Só nesse caso o CRM pode concluir que o e-mail
+     guardado e ausente da lista saiu da Caixa de Entrada.
+
+     Se bateu no teto, a lista foi CORTADA, e o que ficou de fora do corte não
+     sumiu de lugar nenhum: marcar aí seria o sistema apagando da tela e-mail
+     que está na caixa, que é pior do que o problema que isto resolve.
+
+     E SÓ PARA A CAIXA DE ENTRADA: se esta caixa estiver configurada para ler
+     uma subpasta, a lista que volta é a daquela pasta, e concluir dela que o
+     resto "saiu" apagaria da tela a caixa inteira de uma vez. */
+  const lidos = (r.emails || []).length
+  const completa = !so_o_topo && lidos > 0 && lidos < max && !regras.pasta
+
   const resp = await crm(c, '/api/carteiro', {
     acao: 'sincronizar',
     conta,
     maquina: os.hostname(),
     pasta: r.pasta || '',
     emails: r.emails || [],
+    completa,
+    janela_desde: desde,
   })
   if (!resp.ok) return console.error('  CRM recusou a sincronização:', resp.erro)
   console.log(
     `  ${so_o_topo ? 'Olhada' : 'Caixa'}: ${r.lidos} lidos, ${resp.novos} novos, ` +
-    `${resp.atualizados} atualizados, ${resp.iguais ?? 0} sem mudança.`,
+    `${resp.atualizados} atualizados, ${resp.iguais ?? 0} sem mudança` +
+    `${resp.sairam ? `, ${resp.sairam} saíram da caixa` : ''}` +
+    `${resp.voltaram ? `, ${resp.voltaram} voltaram` : ''}.`,
   )
+  /* O teto de saída foi batido: muita coisa sumindo de uma vez é sintoma de
+     lista incompleta, não de faxina. O CRM marcou só os primeiros 100 e contou
+     aqui; as rodadas seguintes vão limpando o resto, 100 por vez. */
+  if (resp.saida_suspeita) {
+    console.log(
+      `  Atenção: ${resp.saida_suspeita} e-mails não apareceram na caixa nesta varredura. ` +
+      `Marquei 100 como fora da caixa e parei; confira se a Caixa de Entrada está inteira.`,
+    )
+  }
+}
+
+/* O INVENTÁRIO DA CAIXA INTEIRA  ·  17/09/2026
+   ═══════════════════════════════════════════════════════════════════════════
+   Pergunta dele: "eu não entendo, porque ainda aparece e-mails que eu já tirei
+   da caixa de entrada?" Eram 84, medidos na hora, e nenhum dos últimos 7 dias.
+
+   A varredura lê a janela da régua (7 dias) e só sabe dizer "saiu da caixa"
+   sobre o que está dentro dela. O que é mais antigo nunca era reavaliado.
+
+   Este inventário pergunta outra coisa, sobre a caixa toda: quem está na Caixa
+   de Entrada AGORA. Só os dois identificadores, sem corpo nem anexo — 619
+   e-mails em 1,3 s. Roda junto da varredura completa, não da olhada de 30 s.
+
+   NADA É APAGADO. O que muda é `saiu_em`, que é onde a mensagem está hoje; a
+   linha continua inteira, e os KPIs, que leem a base toda, não sentem nada. */
+async function inventariar(c, regras, conta) {
+  const args = ['-Acao', 'inventario']
+  if (regras.pasta) args.push('-Pasta', regras.pasta)
+  const r = await ps(args, { timeout: 300_000 })
+  if (!r.ok) return console.error('  Inventário:', r.erro)
+
+  const resp = await crm(c, '/api/carteiro', {
+    acao: 'inventario',
+    conta,
+    maquina: os.hostname(),
+    itens: r.itens || [],
+    cortado: r.cortado === true,
+  })
+  if (!resp.ok) return console.error('  CRM recusou o inventário:', resp.erro)
+  if (resp.sairam || resp.voltaram) {
+    console.log(
+      `  Inventário: ${resp.na_caixa} na caixa` +
+      `${resp.sairam ? `, ${resp.sairam} saíram da tela` : ''}` +
+      `${resp.voltaram ? `, ${resp.voltaram} voltaram` : ''}` +
+      `${resp.faltam ? ` (faltam ${resp.faltam} para as próximas rodadas)` : ''}.`,
+    )
+  }
+}
+
+/* COMO SE ALCANÇA UM E-MAIL  ·  17/09/2026
+   ═══════════════════════════════════════════════════════════════════════════
+   Caso dele: "estou tentando trazer um e-mail, mas não está trazendo, está
+   dizendo que não encontrou o e-mail. Mas eu conferi e tem o e-mail."
+
+   Tinha mesmo. O que não existia mais era o ENDEREÇO: o EntryID do Outlook
+   carrega a pasta dentro de si, e aquele e-mail tinha sido arrastado da Caixa
+   de Entrada para uma subpasta. O EntryID guardado no dia da varredura virou
+   pó, e o script respondeu, com toda a razão do mundo, "não achei".
+
+   Por isso os dois identificadores vão juntos daqui para o PowerShell: o
+   EntryID, que resolve rápido quando nada mudou, e o Message-ID, que é o
+   número de nascimento da mensagem e acompanha ela para qualquer pasta. A
+   `pasta` guardada diz por qual caixa começar a procurar. */
+const alcancar = (p, args) => [
+  ...args,
+  ...(p.entry_id ? ['-EntryId', p.entry_id] : []),
+  ...(p.message_id ? ['-MessageId', p.message_id] : []),
+  ...(p.pasta ? ['-Pasta', p.pasta] : []),
+]
+
+/* E QUANDO FOI O MESSAGE-ID QUE SALVOU, o CRM tem que aprender o endereço
+   novo. Sem isto, cada leitura pagaria a varredura de todas as pastas outra
+   vez, e o banco seguiria guardando um EntryID que não abre nada. */
+async function guardarEndereco(c, p, r) {
+  if (!r?.entry_id || r.entry_id === p.entry_id) return
+  await crm(c, '/api/carteiro', { acao: 'endereco', id: p.id, entry_id: r.entry_id, pasta: r.pasta || '' })
+  console.log(`    O e-mail tinha mudado de pasta${r.pasta ? ` (${r.pasta})` : ''}. Endereço novo guardado.`)
 }
 
 /* TRAZER: a tela marcou, a máquina executa. O arquivo temporário é apagado
@@ -253,12 +349,13 @@ async function trazer(c, pendentes) {
   for (const p of pendentes) {
     console.log(`  Trazendo: ${p.assunto ?? p.entry_id}`)
     fs.mkdirSync(TEMP, { recursive: true })
-    const s = await ps(['-Acao', 'salvar', '-EntryId', p.entry_id, '-Destino', TEMP], { timeout: 300_000 })
+    const s = await ps(alcancar(p, ['-Acao', 'salvar', '-Destino', TEMP]), { timeout: 300_000 })
     if (!s.ok) {
       await crm(c, '/api/carteiro', { acao: 'erro', id: p.id, erro: s.erro })
       console.error('   ', s.erro)
       continue
     }
+    await guardarEndereco(c, p, s)
     try {
       const buf = fs.readFileSync(s.caminho)
       const form = new FormData()
@@ -286,17 +383,59 @@ async function trazer(c, pendentes) {
    assinatura com as imagens abre o e-mail no próprio Outlook. */
 async function buscarTextos(c, pendentes) {
   for (const p of pendentes) {
-    const r = await ps(['-Acao', 'texto', '-EntryId', p.entry_id], { timeout: 120_000 })
+    const r = await ps(alcancar(p, ['-Acao', 'texto']), { timeout: 120_000 })
     if (!r.ok) {
       await crm(c, '/api/carteiro', { acao: 'corpo', id: p.id, texto: `[não consegui ler: ${r.erro}]` })
       continue
     }
+    await guardarEndereco(c, p, r)
     await crm(c, '/api/carteiro', { acao: 'corpo', id: p.id, texto: r.texto || '' })
     console.log('  Texto entregue de um e-mail.')
   }
 }
 
 // ── a rodada ────────────────────────────────────────────────────────────────
+/* ── OS AVISOS DA LINHA DO TEMPO DO PEDIDO  ·  17/09/2026 ───────────────────
+   Pedido dele: avisar a cada nó do pedido (recebemos, triagem, análise,
+   subscrição), com a ordem dele por padrão e a chave de automático por nó.
+
+   O CRM decide O QUE seria dito, para quem, e se já está autorizado. Esta
+   máquina só entrega, porque é aqui que o Outlook está. A forma vem junto:
+   'rascunho' grava em Rascunhos (nada sai), 'enviar' manda de verdade.
+
+   Três travas, porque aqui sai e-mail em nome da FAM:
+     · só chega aqui o que o CRM já marcou como autorizado;
+     · `pegar` é uma corrida no banco: duas máquinas com o Carteiro de pé nunca
+       entregam o mesmo aviso duas vezes;
+     · falhou é gravado com o motivo, e o aviso fica visível na tela como erro,
+       nunca some calado. */
+async function entregarAvisos(c) {
+  const r = await crm(c, '/api/carteiro/avisos')
+  if (!r.ok || !r.avisos?.length) return
+  for (const a of r.avisos) {
+    const pego = await crm(c, '/api/carteiro/avisos', { acao: 'pegar', id: a.id, maquina: os.hostname() })
+    if (!pego.ok || !pego.pegou) continue
+    console.log(`  Aviso "${a.titulo}" de ${a.empresa ?? 'sem empresa'} para ${a.destino} (${a.modo}).`)
+    const saida = await ps([
+      '-Acao', 'novo',
+      '-Destino', String(a.destino),
+      '-Assunto', String(a.assunto),
+      '-Corpo', String(a.corpo),
+      '-Modo', a.modo === 'enviar' ? 'enviar' : 'rascunho',
+    ])
+    if (saida.ok) {
+      await crm(c, '/api/carteiro/avisos', {
+        acao: 'entregue', id: a.id, maquina: os.hostname(),
+        entregue_como: saida.modo === 'enviado' ? 'enviado' : 'rascunho',
+      })
+      console.log(`    ${saida.modo === 'enviado' ? 'Enviado.' : 'Gravado em Rascunhos, no seu Outlook.'}`)
+    } else {
+      await crm(c, '/api/carteiro/avisos', { acao: 'falhou', id: a.id, maquina: os.hostname(), erro: saida.erro ?? 'falhou' })
+      console.error('    Não deu:', saida.erro)
+    }
+  }
+}
+
 let ultimaVarredura = 0
 let ultimaOlhada = 0
 
@@ -315,6 +454,9 @@ async function rodada(c, { forcarVarredura = false } = {}) {
   if (ordem.a_trazer?.length) await trazer(c, ordem.a_trazer)
   if (ordem.precisa_corpo?.length) await buscarTextos(c, ordem.precisa_corpo)
 
+  // Os avisos do pedido: o CRM já autorizou, esta máquina entrega.
+  try { await entregarAvisos(c) } catch (e) { console.error('  avisos:', e.message) }
+
   const naHoraDaFunda = Date.now() - ultimaVarredura >= c.varredura_seg * 1000
   const naHoraDaOlhada = Date.now() - ultimaOlhada >= c.olhada_seg * 1000
   if (regras.ligado && (forcarVarredura || naHoraDaFunda)) {
@@ -322,6 +464,11 @@ async function rodada(c, { forcarVarredura = false } = {}) {
     ultimaVarredura = Date.now()
     ultimaOlhada = Date.now()
     await varrer(c, regras, conta)
+    /* O INVENTÁRIO VEM COLADO NA VARREDURA COMPLETA, e não tem relógio próprio:
+       são a mesma pergunta em dois alcances (a janela da régua e a caixa toda),
+       e dois relógios diferentes para elas seria a tela contando uma coisa numa
+       hora e outra noutra, sem ninguém saber explicar por quê. */
+    await inventariar(c, regras, conta)
   } else if (regras.ligado && naHoraDaOlhada) {
     ultimaOlhada = Date.now()
     await varrer(c, regras, conta, { so_o_topo: true })

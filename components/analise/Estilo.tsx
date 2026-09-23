@@ -218,7 +218,18 @@ export default function EstiloAnalises() {
 .an-bt.grande { padding:11px 20px; font-size:14px; }
 
 /* ── o kanban ─────────────────────────────────────────────────────────── */
-.an-kb { display:grid; grid-template-columns:repeat(5, minmax(210px,1fr)); gap:12px; overflow-x:auto; padding-bottom:6px; align-items:start; }
+.an-kb { display:grid; grid-auto-flow:column; grid-auto-columns:236px; gap:12px; overflow-x:auto; padding-bottom:6px; align-items:start; }
+.an-col-mexer { margin-left:4px; border:none; background:none; color:#6080a0; font-size:15px; line-height:1; cursor:pointer; padding:0 4px; border-radius:6px; }
+.an-col-mexer:hover { background:#fff; color:#0a1628; }
+.an-col-nova { min-height:60px; border-style:dashed; background:transparent; color:#6080a0; font:inherit; font-size:13px; font-weight:600; cursor:pointer; text-align:center; }
+.an-col-nova:hover { background:#eaf0f8; color:#0a1628; }
+.an-colunas-escolha { display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; }
+.an-col-op { display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid #dbe6f3; border-radius:8px; cursor:pointer; font-size:13px; color:#26374a; }
+.an-col-op:hover { background:#f7fafd; }
+.an-col-op.on { border-color:#3070c8; background:#eef4fc; }
+.an-col-op input { margin:0; }
+.an-col-op .pt { width:9px; height:9px; border-radius:50%; flex:none; }
+.an-col-op small { display:block; font-size:11.5px; color:#6080a0; font-weight:400; }
 .an-col { background:#eaf0f8; border:1px solid #dbe6f3; border-radius:13px; padding:10px; min-height:140px; }
 .an-col-cab { display:flex; align-items:center; gap:8px; padding:2px 4px 10px; }
 .an-col-cab b { font-size:13px; color:#0a1628; }
@@ -226,6 +237,38 @@ export default function EstiloAnalises() {
 .an-col-cab .pt { width:8px; height:8px; border-radius:50%; flex:none; }
 .an-col-cab small { margin-left:auto; color:#8ba3c0; font-size:11px; }
 .an-col-vazia { color:#8ba3c0; font-size:12px; text-align:center; padding:18px 6px; }
+
+/* ── a ordem da coluna, arrastando (23/09/2026) ───────────────────────────
+   O card ganhou uma moldura porque o número e as setas não podem morar DENTRO
+   do <button> da ficha (botão dentro de botão é HTML inválido, e o teclado
+   passa a tropeçar nele). A moldura é quem arrasta; a ficha continua sendo o
+   botão que abre o card.
+
+   AS SETAS EXISTEM POR CAUSA DO CELULAR. Arrastar com o dedo não dispara o
+   drag-and-drop do HTML, e ele usa o CRM no telefone o tempo todo: sem as
+   setas, a prioridade seria uma função que só funciona sentado. */
+.an-fi-box { position:relative; }
+.an-fi-box.arrastando { opacity:.45; }
+.an-fi-box.alvo .an-ficha { border-color:#3070c8; box-shadow:0 -3px 0 -1px #3070c8; }
+.an-fi-num { position:absolute; top:-5px; left:-5px; z-index:2; min-width:19px; height:19px; padding:0 5px;
+  border-radius:10px; background:#5a7290; color:#fff; font-size:11px; font-weight:700; line-height:19px;
+  text-align:center; font-variant-numeric:tabular-nums; box-shadow:0 1px 3px rgba(10,22,40,.3); }
+.an-fi-num.mao { background:#8a6410; }
+.an-fi-setas { position:absolute; top:6px; right:6px; z-index:2; display:flex; flex-direction:column; gap:2px; opacity:0; transition:opacity .12s; }
+.an-fi-box:hover .an-fi-setas, .an-fi-box:focus-within .an-fi-setas { opacity:1; }
+.an-fi-seta { border:1px solid #dbe6f3; background:#fff; color:#5a7290; border-radius:5px; width:20px; height:17px;
+  font-size:9px; line-height:1; cursor:pointer; padding:0; display:grid; place-items:center; }
+.an-fi-seta:hover:not(:disabled) { background:#eef4fc; color:#0a1628; border-color:#3070c8; }
+.an-fi-seta:disabled { opacity:.35; cursor:default; }
+/* No celular não há hover, e sem isto as setas nunca apareceriam — que é
+   justamente onde elas são a única forma de reordenar. Alvo de 30px. */
+@media (hover:none) {
+  .an-fi-setas { opacity:1; }
+  .an-fi-seta { width:30px; height:26px; font-size:11px; }
+  /* Os botões do cabeçalho da coluna (↺ e ⋯) no dedo: eram ~15px, que é menos
+     da metade do alvo mínimo. Mesma correção, mesmo motivo. */
+  .an-col-mexer { min-width:30px; min-height:28px; font-size:17px; }
+}
 
 .an-ficha { background:#fff; border:1px solid #e3ebf5; border-left:4px solid var(--cor,#8ba3c0); border-radius:11px; padding:11px 12px; margin-bottom:9px;
   cursor:pointer; text-align:left; width:100%; font:inherit; color:inherit; display:block; transition:.12s; }
@@ -312,8 +355,18 @@ export default function EstiloAnalises() {
 .an-card-aba i { font-style:normal; font-size:10.5px; font-weight:700; background:#e8f0fa; color:#26374a; border-radius:9px; padding:1px 6px; }
 .an-card-aba b.ponto { width:7px; height:7px; border-radius:50%; background:#e8b84b; display:inline-block; }
 .an-card-corpo { padding:16px 18px 22px; }
+.an-relatorio-comando { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:0 0 10px; }
+.an-relatorio-modos { display:inline-flex; border:1px solid #c5d5e8; border-radius:8px; overflow:hidden; background:#fff; }
+.an-relatorio-modos button { border:0; border-right:1px solid #c5d5e8; background:#fff; color:#6080a0; padding:7px 11px; font:inherit; font-size:11.5px; font-weight:600; cursor:pointer; }
+.an-relatorio-modos button:last-child { border-right:0; }
+.an-relatorio-modos button[aria-selected="true"] { background:#1e4080; color:#fff; }
+.an-relatorio-modos button:disabled { opacity:.45; cursor:not-allowed; }
+.an-relatorio-estado { color:#6080a0; font-size:11.5px; flex:1; min-width:180px; }
+.an-relatorio-integral { height:calc(100vh - 230px); min-height:720px; border:1px solid #c5d5e8; border-radius:10px; overflow:hidden; background:#f4f7fb; }
+.an-relatorio-integral iframe { display:block; width:100%; height:100%; border:0; background:#f4f7fb; }
+@media (max-width:760px){ .an-relatorio-integral { height:calc(100vh - 190px); min-height:620px; border-radius:8px; } .an-relatorio-comando { gap:7px; } .an-relatorio-estado { flex-basis:100%; } }
 .an-duas { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:14px; align-items:start; }
-@media (max-width:980px){ .an-duas { grid-template-columns:1fr; } .an-kb { grid-template-columns:repeat(5, 230px); } }
+@media (max-width:980px){ .an-duas { grid-template-columns:1fr; }  }
 
 .an-bloco { background:#fff; border:1px solid #e3ebf5; border-radius:13px; padding:14px 16px 16px; margin-bottom:14px; }
 .an-bloco h4 { margin:0 0 10px; font-size:11.5px; font-weight:600; color:#6080a0; letter-spacing:0; display:flex; align-items:center; gap:8px; }

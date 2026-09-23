@@ -60,6 +60,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { atenderComplementos } from './complemento.mjs'
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url))
 /** A raiz do repositório do CRM (este arquivo mora em `scripts/`). É de onde a
@@ -100,6 +101,9 @@ function config() {
     batida_seg: Number(arq.batida_seg ?? 10),
     sincronia_seg: Number(arq.sincronia_seg ?? 90),
     maquina: String(arq.maquina || os.hostname()),
+    // O robô do Serasa (scripts/serasa.mjs). Ligado por decisão dele em
+    // 14/09/2026; "serasa": false no esteira.json desliga sem mexer em código.
+    serasa: arq.serasa !== false,
   }
 }
 
@@ -457,8 +461,8 @@ async function sincronizar() {
    Quem decide o que sai da Mesa é o CRM (`naMesa`); este lado só informa.
 
    AS QUATRO TRAVAS, porque marcar errado some com card de verdade:
-     · OneDrive caído ou raiz errada: se a listagem falhar, vier sem o _sistema
-       ou com o _concluidas vazio, NÃO se marca nada nesta rodada.
+     · OneDrive caído ou raiz errada: se a listagem falhar ou vier sem o
+       _sistema, NÃO se marca nada nesta rodada.
      · Pasta renomeada pela análise: o nome velho some antes de o CRM juntar os
        dois cards. Por isso a pasta tem que faltar por FORA_MIN minutos
        seguidos; se reaparecer no meio, a contagem zera.
@@ -481,14 +485,22 @@ function nomesNoDisco() {
     raiz = pastas(c.raiz)
     concluidas = pastas(path.join(c.raiz, '_concluidas'))
   } catch { return null }
-  if (!raiz.includes('_sistema') || !concluidas.length) return null
+  /* _concluidas VAZIO VALE (14/09/2026): recortar a última pasta de lá é o
+     gesto normal dele, e a trava antiga fazia esse card nunca sair da Mesa.
+     O OneDrive caído continua barrado pelo _sistema na raiz e pelos FORA_MIN
+     minutos seguidos; marca errada em concluída se desfaz no `de_volta`. */
+  if (!raiz.includes('_sistema')) return null
   return new Set([...raiz, ...concluidas])
 }
 
-async function conferirDisco(fila) {
-  if (!c.raiz || !Array.isArray(fila) || !fila.length) return
+/* `agora: true` é o botão Varrer de Novo (17/09/2026): ele clicou porque acabou de
+   recortar pastas, então a pasta que falta sai já, sem os FORA_MIN minutos. As
+   outras travas continuam valendo. Devolve o que fez, ou null se o disco não
+   pôde ser lido (e aí nada foi marcado). */
+async function conferirDisco(fila, { agora: ja = false } = {}) {
+  if (!c.raiz || !Array.isArray(fila) || !fila.length) return { marcadas: 0, limpas: 0 }
   const disco = nomesNoDisco()
-  if (!disco) return
+  if (!disco) return null
   const agora = Date.now()
   const fora = []
   const deVolta = []
@@ -503,17 +515,19 @@ async function conferirDisco(fila) {
     }
     if (f.fora_do_disco_em) { faltando.delete(f.id); continue }
     if (!f.sincronizado_em || f.situacao === 'em_andamento' || f.ordem) { faltando.delete(f.id); continue }
+    if (ja) { fora.push(f.id); continue }
     const desde = faltando.get(f.id)
     if (!desde) { faltando.set(f.id, agora); continue }
     if (agora - desde >= FORA_MIN * 60000) fora.push(f.id)
   }
   for (const id of [...faltando.keys()]) if (!vistos.has(id)) faltando.delete(id)
-  if (!fora.length && !deVolta.length) return
+  if (!fora.length && !deVolta.length) return { marcadas: 0, limpas: 0 }
   const r = await crm('/api/esteira', { acao: 'fora_do_disco', fora, de_volta: deVolta })
-  if (!r.ok) return console.error('  CRM recusou a marca de pasta fora do computador:', r.erro)
+  if (!r.ok) { console.error('  CRM recusou a marca de pasta fora do computador:', r.erro); throw new Error(r.erro || 'o CRM recusou a marca') }
   for (const id of fora) faltando.delete(id)
   if (r.marcadas) console.log(`  ${r.marcadas} pasta(s) saíram do computador: análise concluída sai da Mesa.`)
   if (r.limpas) console.log(`  ${r.limpas} pasta(s) voltaram ao computador.`)
+  return { marcadas: r.marcadas ?? 0, limpas: r.limpas ?? 0 }
 }
 
 /* PUBLICAR SOZINHO O QUE JÁ FOI ANALISADO  ·  09/09/2026
@@ -610,7 +624,17 @@ async function sincronizarConversas() {
     }
     const r = await crm('/api/esteira', { acao: 'conversas', conversas, mensagens, atual: Conversas.atual() })
     if (!r.ok) console.error('  CRM recusou as conversas:', r.erro)
-    else if (r.conversas) console.log(`  Conversas da IA: ${r.conversas} assunto(s), ${r.mensagens} fala(s).`)
+    /* SÓ FALA QUANDO ALGO MUDOU (17/09/2026). Desde que o CRM passou a gravar
+       apenas o que mudou, a rodada normal devolve zero — e uma linha dizendo
+       "0 assuntos, 0 falas" a cada 10 segundos pareceria pane, quando é o
+       contrário: é o sistema não fazendo trabalho à toa. Quando muda, o log
+       diz o que mudou E de quanto era o total, para não sumir a referência. */
+    else if (r.conversas || r.mensagens) {
+      console.log(
+        `  Conversas da IA: ${r.conversas} assunto(s) e ${r.mensagens} fala(s) mudaram ` +
+        `(de ${conversas.length} e ${mensagens.length}).`,
+      )
+    }
   } catch (e) { console.error('  conversas:', e.message) }
 }
 
@@ -1006,11 +1030,21 @@ async function aplicarDecisoes(ordem) {
     await crm('/api/esteira', { acao: 'comando-aceito', id: cmd.id })
     try {
       if (cmd.comando === 'varrer') {
-        const local = await servidorLocal()
-        const r = local ? await servidor('/api/varredura', {}) : (await mod('varredura.mjs'))?.varrer?.()
-        const n = r?.novidades ?? r?.pastas_novas?.length ?? 0
-        await crm('/api/esteira', { acao: 'comando-feito', id: cmd.id, resultado: `Varri. ${n} novidade(s).` })
+        /* O VARRER DE NOVO VIROU "CONFERIR O QUE SAIU DO COMPUTADOR" (17/09/2026).
+           A varredura antiga era do pré-comercial (e-mail solto na raiz), que hoje
+           chega pela esteira automática. Pedido dele: o botão olha a raiz e o
+           _concluidas, e o card cuja pasta foi recortada para a rede sai da Mesa.
+           Só a Mesa esconde (`fora_do_disco_em`): análise, tomador e caso ficam. */
         await sincronizar()
+        const nova = await crm(`/api/esteira?maquina=${encodeURIComponent(c.maquina)}`)
+        const r = await conferirDisco(nova.ok ? nova.fila : ordem.fila, { agora: true })
+        const resultado = !r
+          ? 'Não consegui ler a pasta Análises FAM no notebook (OneDrive fora?). Nada saiu da Mesa.'
+          : [
+              r.marcadas ? `${r.marcadas} card(s) saíram da Mesa: a pasta não está mais no notebook.` : 'Nenhuma pasta nova fora do notebook.',
+              r.limpas ? `${r.limpas} voltaram (a pasta reapareceu).` : '',
+            ].filter(Boolean).join(' ')
+        await crm('/api/esteira', { acao: 'comando-feito', id: cmd.id, resultado })
       } else if (cmd.comando === 'relatorio') {
         const local = await servidorLocal()
         const r = local ? await servidor('/api/auditoria', {}) : await (await mod('auditoria.mjs'))?.reportar?.()
@@ -1138,6 +1172,19 @@ async function automatizar(fila) {
 
     // 2. CADASTRO: só com a triagem verde (ou liberada por ele).
     const sit = Cad.situacaoCadastro(cad)
+    // 1b. SERASA: se é a ÚNICA coisa que falta, o robô busca. Com outro
+    // documento faltando o caso não anda de qualquer jeito, e a consulta,
+    // que é cobrada, esperaria à toa. O PDF novo muda o hash e a triagem
+    // recomeça sozinha na volta seguinte.
+    if (sit.status === 'bloqueado' && c.serasa && sit.bloqueios.length === 1 && sit.bloqueios[0].id === 'serasa_pj') {
+      // O CNPJ lido pela triagem nos documentos vence o do banco, que pode ser
+      // o chute do caso (revisão de 14/09/2026): consulta errada também é cobrada.
+      const cnpj = digitos(cad?.identificacao?.cnpj || f.cnpj)
+      if (cnpj.length === 14 && !buscandoSerasa && !serasaEsperandoLogin() && tentados.get(`serasa|${f.pasta}`) !== hash) {
+        tentados.set(`serasa|${f.pasta}`, hash)
+        buscarSerasa(f, dir, cnpj)
+      }
+    }
     if (sit.status === 'bloqueado' || sit.status === 'pendente') continue
     if (f.cadastro_agente?.hash === hash) continue
     if (cadastrando || tentados.get(`cadastro|${f.pasta}`) === hash) continue
@@ -1198,6 +1245,179 @@ async function agenteDeCadastro(f, hash, cad) {
   }
 }
 
+/* O ROBÔ DO SERASA (14/09/2026). Um de cada vez, como triagem e cadastro: é um
+   Chrome só, com uma sessão só. O import é tardio porque o Playwright pesa, e a
+   esteira não deve carregar isso enquanto nenhum caso precisar. Quem decide se
+   consulta, reaproveita ou recusa é o serasa.mjs; aqui só se chama e se anota. */
+let buscandoSerasa = null
+/* SEM SESSÃO NO SERASA (15/09/2026): a sessão do portal cai quando o Chrome do
+   robô fecha e em ~12 h. O robô para de tentar por 3 minutos, o caso da pasta
+   não gasta a tentativa e o pedido do botão volta para a fila: depois do login,
+   tudo anda sozinho. */
+let loginSerasaEm = 0
+const serasaEsperandoLogin = () => Date.now() - loginSerasaEm < 3 * 60000
+
+async function buscarSerasa(f, dir, cnpj) {
+  buscandoSerasa = f.pasta
+  apressar()
+  console.log(`  Robô do Serasa: buscando o Serasa de ${cnpj} para "${f.pasta}"…`)
+  try {
+    const S = await import(pathToFileURL(path.join(AQUI, 'serasa.mjs')).href)
+    const r = await S.consultarSerasa({ cnpj, destino: dir, log: (m) => console.log(`    ${m}`) })
+    if (!r.ok && r.login) { loginSerasaEm = Date.now(); tentados.delete(`serasa|${f.pasta}`) }
+    console.log(r.ok
+      ? `    Serasa salvo em "${f.pasta}": ${r.arquivo}${r.reaproveitado ? ' (reaproveitado de consulta recente, sem cobrança nova)' : ''}.`
+      : `    Robô do Serasa parou em "${f.pasta}": ${r.motivo}`)
+    /* A primeira camada entrou sozinha. Os sócios que o relatório trouxe vão
+       para o CRM esperando aprovação: regra dele, sócio só com aprovação. */
+    if (r.ok) {
+      const s = await crm('/api/esteira/serasa', {
+        acao: 'socios', pasta: f.pasta, cnpj, tomador_id: f.tomador_id || null, razao: r.razao || null,
+        reaproveitado: !!r.reaproveitado, maquina: c.maquina, socios: r.socios || [],
+      })
+      if (!s.ok) console.log(`    O recibo da consulta não subiu para o CRM: ${s.erro || s.status}`)
+      else if (s.socios) console.log(`    ${s.socios} sócio(s) do quadro societário esperando aprovação no CRM.`)
+    }
+  } catch (e) {
+    console.error('    robô do Serasa:', e.message)
+  } finally {
+    buscandoSerasa = null
+  }
+}
+
+/* O BOTÃO "SERASA" DO CADASTRO DO TOMADOR. A pessoa clica no CRM, o pedido
+   fica em `serasa_pedidos`, e é aqui que ele vira consulta: o PDF sai numa
+   pasta temporária FORA do OneDrive e sobe para o CRM como anexo do tomador.
+   O ROBÔ É UM SÓ para a pasta e para o botão (`buscandoSerasa`). A marca só é
+   posta DEPOIS de haver pedido de verdade, e sem await entre olhar e marcar.
+   Na primeira versão ela ia antes da pergunta ao CRM, e como esta função roda
+   junto com `automatizar()` em toda volta, a pasta sempre achava o robô
+   "ocupado" e nunca era atendida (a ENGETECNICA ficou parada assim, 14/09). */
+/* O SERASA DOS SÓCIOS COMPÕE A ANÁLISE (15/09/2026). Regra dele: "buscar os
+   novos Serasas para compor a análise de cadastro e crédito". O PDF de cada
+   sócio espera em `_serasa-socios/` (invisível para o motor) e, quando o lote
+   aprovado acaba, passa inteiro para `Sócios - Serasa/`, que a triagem, o
+   cadastro e a análise leem. Um sócio por vez mudaria o hash a cada PDF: uma
+   triagem e um cadastro por sócio. Sócio esperando aprovação não segura o
+   lote, e sócio que falhou também não. */
+const PASTA_SOCIOS = 'Sócios - Serasa'
+async function publicarSocios(pedido) {
+  if (!pedido?.pasta) return
+  let base
+  try { base = pastaDentroDaRaiz(pedido.pasta) } catch { return }
+  const espera = path.join(base, '_serasa-socios')
+  if (!fs.existsSync(espera)) return
+  const arquivos = fs.readdirSync(espera).filter((n) => n.toLowerCase().endsWith('.pdf'))
+  if (!arquivos.length) return
+  const r = await crm('/api/esteira/serasa', { acao: 'restantes', pasta: pedido.pasta, tomador_id: pedido.tomador_id || null })
+  if (!r.ok) return console.log(`    Não soube se ainda há sócio na fila: ${r.erro || r.status}. O Serasa dos sócios espera.`)
+  if (r.restantes > 0) return console.log(`    Ainda há ${r.restantes} sócio(s) na fila: o Serasa dos sócios entra na análise quando o lote acabar.`)
+  const alvo = path.join(base, PASTA_SOCIOS)
+  fs.mkdirSync(alvo, { recursive: true })
+  let movidos = 0
+  for (const n of arquivos) {
+    let destino = path.join(alvo, n)
+    if (fs.existsSync(destino)) destino = path.join(alvo, n.replace(/\.pdf$/i, ` (${new Date().toISOString().slice(0, 10)}).pdf`))
+    // Arquivo preso pelo OneDrive fica para a próxima varredura, e não derruba os outros.
+    try { fs.renameSync(path.join(espera, n), destino); movidos++ } catch (e) { console.log(`    "${n}" não saiu da espera agora (${e.code || e.message}): tento de novo depois.`) }
+  }
+  try { fs.rmdirSync(espera) } catch { }
+  if (movidos) console.log(`    Serasa de ${movidos} sócio(s) em "${PASTA_SOCIOS}": entra na triagem, no cadastro e na análise.`)
+}
+
+/* A VARREDURA DOS LOTES PARADOS (achado da revisão de 15/09/2026). O
+   `publicarSocios` só roda depois de um pedido de sócio: se no último do lote o
+   CRM não respondeu ou o OneDrive prendeu o arquivo, os PDFs ficariam para
+   sempre em `_serasa-socios/`, com a tela dizendo "consultado". A cada 10
+   minutos a esteira olha as pastas da raiz e tenta de novo. */
+let varridoSociosEm = 0
+async function varrerSociosParados() {
+  if (!c.serasa || buscandoSerasa || Date.now() - varridoSociosEm < 10 * 60000) return
+  varridoSociosEm = Date.now()
+  for (const d of fs.readdirSync(c.raiz, { withFileTypes: true })) {
+    if (!d.isDirectory() || d.name.startsWith('_')) continue
+    if (!fs.existsSync(path.join(c.raiz, d.name, '_serasa-socios'))) continue
+    await publicarSocios({ pasta: d.name, tomador_id: null }).catch((e) => console.log(`    Serasa dos sócios de "${d.name}": ${e.message}`))
+  }
+}
+
+let olhandoPedidosSerasa = false
+async function atenderPedidosSerasa() {
+  if (!c.serasa || buscandoSerasa || olhandoPedidosSerasa || serasaEsperandoLogin()) return
+  olhandoPedidosSerasa = true
+  let pedido = null
+  let peguei = false
+  const dir = () => path.join(os.tmpdir(), 'fam-serasa-entrega', pedido.id)
+  try {
+    const r = await crm('/api/esteira/serasa')
+    if (!r.ok || !r.pedidos?.length) return
+    if (buscandoSerasa) return // a pasta pegou o robô enquanto eu perguntava
+    buscandoSerasa = 'pedido do CRM'
+    peguei = true
+    const aceite = await crm('/api/esteira/serasa', { acao: 'aceito', id: r.pedidos[0].id, maquina: c.maquina })
+    if (!aceite.ok) return
+    pedido = r.pedidos[0]
+    apressar()
+    const socio = pedido.camada === 'socio'
+    console.log(`  Robô do Serasa: ${socio ? `sócio ${pedido.nome || pedido.documento} (aprovado)` : `pedido de ${pedido.pedido_por || 'alguém'} no cadastro`}, documento ${pedido.documento}…`)
+    fs.mkdirSync(dir(), { recursive: true })
+    const S = await import(pathToFileURL(path.join(AQUI, 'serasa.mjs')).href)
+    const res = await S.consultarSerasa({
+      documento: pedido.documento, tipo: pedido.tipo_pessoa, socio, destino: dir(), log: (m) => console.log(`    ${m}`),
+      // Pergunta de novo ao CRM no último segundo: pedido apagado ou fechado não é cobrado.
+      antesDeGerar: async () => (await crm('/api/esteira/serasa', { acao: 'conferir', id: pedido.id })).estado === 'consultando',
+    })
+    if (!res.ok && res.login) {
+      loginSerasaEm = Date.now()
+      await crm('/api/esteira/serasa', { acao: 'devolver', id: pedido.id, motivo: 'O Serasa pediu login de novo no notebook. O pedido espera: entre na janela do robô com o login da FAM.' })
+      console.log(`    ${res.motivo} O pedido voltou para a fila.`)
+      return
+    }
+    if (!res.ok) {
+      await crm('/api/esteira/serasa', { acao: 'falhou', id: pedido.id, motivo: res.motivo })
+      console.log(`    Robô do Serasa parou: ${res.motivo}`)
+      return
+    }
+    /* Pedido de uma PASTA de análise: o PDF fica guardado nela. O de SÓCIO
+       espera em `_serasa-socios/`, que o motor não enxerga (o "_" é o prefixo
+       dos arquivos de controle), e só entra à vista quando o lote acaba: ver
+       `publicarSocios`. A pasta que chega aqui já é a de hoje (a rota resolve
+       o nome novo quando a análise renomeou). */
+    if (pedido.pasta) {
+      try {
+        const base = pastaDentroDaRaiz(pedido.pasta)
+        if (fs.existsSync(base)) {
+          const alvo = socio ? path.join(base, '_serasa-socios') : base
+          fs.mkdirSync(alvo, { recursive: true })
+          fs.copyFileSync(path.join(dir(), res.arquivo), path.join(alvo, res.arquivo))
+        } else console.log(`    A pasta "${pedido.pasta}" não está mais no disco: o PDF fica só no CRM.`)
+      } catch (e) { console.log(`    Não copiei o PDF para a pasta: ${e.message}`) }
+    }
+    const form = new FormData()
+    form.set('id', pedido.id)
+    form.set('reaproveitado', res.reaproveitado ? '1' : '')
+    if (res.consultado_em) form.set('consultado_em', res.consultado_em)
+    if (!socio) form.set('socios', JSON.stringify(res.socios || []))
+    form.set('arquivo', new Blob([fs.readFileSync(path.join(dir(), res.arquivo))], { type: 'application/pdf' }), res.arquivo)
+    const up = await fetch(c.url + '/api/esteira/serasa', { method: 'POST', headers: { 'x-carteiro-token': c.token }, body: form })
+    const j = await up.json().catch(() => ({}))
+    if (!up.ok) {
+      await crm('/api/esteira/serasa', { acao: 'falhou', id: pedido.id, motivo: `O PDF saiu, mas não subiu para o CRM: ${j.erro || `HTTP ${up.status}`}` })
+      console.log(`    O PDF do Serasa não subiu: ${j.erro || up.status}`)
+      return
+    }
+    console.log(`    Serasa entregue: ${res.arquivo}${res.reaproveitado ? ' (reaproveitado, sem cobrança nova)' : ''}${j.socios ? `. ${j.socios} sócio(s) esperando aprovação` : ''}.`)
+  } catch (e) {
+    console.error('    pedido do Serasa:', e.message)
+    if (pedido) await crm('/api/esteira/serasa', { acao: 'falhou', id: pedido.id, motivo: e.message }).catch(() => { })
+  } finally {
+    if (pedido?.camada === 'socio') await publicarSocios(pedido).catch((e) => console.log(`    Serasa dos sócios não entrou na pasta: ${e.message}`))
+    if (pedido) { try { fs.rmSync(dir(), { recursive: true, force: true }) } catch { } }
+    if (peguei) buscandoSerasa = null
+    olhandoPedidosSerasa = false
+  }
+}
+
 /* O QUE A IA RECEBE: só o texto que a triagem já extraiu, dos documentos que
    importam para o cadastro. Não lê balanço (é da análise), e cada classe tem
    teto, para um Serasa de 40 páginas não afogar o contrato social.
@@ -1206,9 +1426,12 @@ async function agenteDeCadastro(f, hash, cad) {
    contratual chamada "servico-assinado atualizacao 2024.pdf" é classificada
    como `outro` pelo robô da triagem, e sem ela a IA concluiu "não veio contrato
    social". A IA reconhece o documento pelo conteúdo; o robô só chuta a classe. */
-const TETO_CADASTRO = { cartao_cnpj: 15000, serasa_pj: 70000, contrato_social: 90000, email: 12000, outro: 40000 }
+/* `serasa_socio` (15/09/2026): o Serasa dos sócios que o robô pôs em "Sócios -
+   Serasa". Tem teto próprio: sem ele, um PJ de sócio lido antes gastaria o teto
+   do `serasa_pj` e o Serasa do próprio tomador ficaria de fora. */
+const TETO_CADASTRO = { cartao_cnpj: 15000, serasa_pj: 70000, serasa_socio: 30000, contrato_social: 90000, email: 12000, outro: 40000 }
 
-const PROMPT_CADASTRO = `Você é o agente de Cadastro da FAM Seguradora (seguro garantia). Abaixo estão os textos extraídos dos documentos de UM tomador: Serasa, contrato social, cartão CNPJ, o e-mail do pedido e outros documentos da pasta. A "classe provável" de cada um foi dada por um robô e pode estar errada: reconheça o documento pelo conteúdo (uma alteração contratual ou consolidação é contrato social, mesmo com outro nome de arquivo).
+const PROMPT_CADASTRO = `Você é o agente de Cadastro da FAM Seguradora (seguro garantia). Abaixo estão os textos extraídos dos documentos de UM tomador: Serasa, contrato social, cartão CNPJ, o e-mail do pedido e outros documentos da pasta. A "classe provável" de cada um foi dada por um robô e pode estar errada: reconheça o documento pelo conteúdo (uma alteração contratual ou consolidação é contrato social, mesmo com outro nome de arquivo). O documento de classe "serasa_socio" é o Serasa de um SÓCIO (pessoa física ou empresa sócia), nunca o do tomador: não use para identificar o tomador; use para a situação dos sócios e escreva em "observacoes" a restrição ou anotação que pesar.
 
 Faça três coisas:
 1. Identifique o tomador (a empresa que pede a garantia, não a corretora, não o segurado, não o contador, não um avalista).
@@ -1262,6 +1485,7 @@ async function lerCadastroComIA(pasta) {
     const nome = String(item.arquivo || '')
     let classe = 'outro'
     if (/^e-?mail/i.test(path.basename(nome))) classe = 'email'
+    else if (/^S[óo]cios - Serasa[\\/]/i.test(nome) || /^Serasa Experian - S[óo]cio - /i.test(path.basename(nome))) classe = 'serasa_socio'
     else { try { classe = D?.classificarArquivo?.({ rel: nome, tipo: item.tipo, texto })?.classe || 'outro' } catch { } }
     if (!(classe in TETO_CADASTRO)) continue
     const resta = TETO_CADASTRO[classe] - usados[classe]
@@ -1309,6 +1533,11 @@ async function rodada({ forcar = false } = {}) {
   await aplicarDecisoes(ordem)
   // Não espera: triagem e cadastro rodam soltos, um de cada, e a rodada segue.
   automatizar(ordem.fila).catch((e) => console.error('  automação:', e.message))
+  // O botão "Serasa" do cadastro: também solto, um de cada vez.
+  atenderPedidosSerasa().catch((e) => console.error('  pedidos do Serasa:', e.message))
+  varrerSociosParados().catch((e) => console.error('  sócios do Serasa:', e.message))
+  // A análise complementar (17/09/2026): documento novo lido contra a análise anterior. Solta, uma por vez.
+  atenderComplementos({ crm, raiz: c.raiz, maquina: c.maquina }).catch((e) => console.error('  complemento:', e.message))
   // Depois das ordens: quem perguntou está olhando a tela, mas quem mandou
   // analisar está esperando há mais tempo.
   if (ordem.ia?.length) {

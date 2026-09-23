@@ -88,7 +88,7 @@ export default function AnaliseCreditoPage() {
   const [tit, sub] = TITULO[aba]
 
   return (
-    <div className="an-area" style={{ padding: 'clamp(12px, 2vw, 20px) clamp(10px, 2.5vw, 28px) 30px' }}>
+    <div className="an-area" style={{ padding: 'clamp(12px, 2vw, 20px) clamp(18px, 3.5vw, 40px) 30px' }}>
       <EstiloAnalises />
       <BarraAnalises atual={aba} aoTrocar={trocar} contagens={contagens} />
 

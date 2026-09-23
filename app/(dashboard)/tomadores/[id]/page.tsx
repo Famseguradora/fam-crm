@@ -41,6 +41,7 @@ import {
   SecaoDemonstracoes, fmtScore,
 } from '@/components/analise/Relatorio'
 import CadastroTomador from '@/components/tomador/CadastroTomador'
+import VinculoHolding from '@/components/tomador/VinculoHolding'
 import OrganogramaModal from '@/components/OrganogramaModal'
 import OrganogramaAnalise from '@/components/tomador/OrganogramaAnalise'
 // A análise deste tomador, ao vivo, com a caixa de autorização. Tudo do tomador
@@ -74,6 +75,13 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
   const [operacoes, setOperacoes] = useState<Operacao[]>([])
   const [socios, setSocios] = useState<Socio[]>([])
   const [ficha, setFicha] = useState<FichaAnalise | null>(null)
+  // Quando este tomador é uma SPE sem análise própria, a ficha acima pode vir
+  // da holding vinculada (ver components/tomador/VinculoHolding). Esta flag é
+  // o que liga o aviso "estes dados são da holding" nas gavetas que os mostram.
+  const [fichaDaHolding, setFichaDaHolding] = useState(false)
+  // Só a contagem, para o selo ao lado do nome — a lista em si mora na gaveta
+  // Grupo (components/tomador/VinculoHolding), que não precisa subir pro topo.
+  const [nEmpresasDoGrupo, setNEmpresasDoGrupo] = useState(0)
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
   const [gaveta, setGaveta] = useState<Gaveta>('visao')
@@ -113,7 +121,20 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
       return
     }
     const t = tom as Tomador
+
+    // A holding é buscada à parte (não embutida no select acima): PostgREST
+    // exige um hint explícito de FK para auto-referência, e uma segunda
+    // consulta simples evita esse acoplamento.
+    if (t.holding_id) {
+      const { data: hold } = await supabase.from('tomadores')
+        .select('id,razao_social,cnpj').eq('id', t.holding_id).maybeSingle()
+      t.holding = hold ?? null
+    }
     setTomador(t)
+
+    const { count: nGrupo } = await supabase.from('tomadores')
+      .select('id', { count: 'exact', head: true }).eq('holding_id', t.id).eq('ativo', true)
+    setNEmpresasDoGrupo(nGrupo ?? 0)
 
     const [{ data: ops }, { data: socs }] = await Promise.all([
       supabase.from('operacoes')
@@ -127,8 +148,16 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
     setSocios((socs as Socio[]) ?? [])
 
     // A análise vem depois e sozinha: ela pode não existir, e a falta dela não
-    // pode impedir a ficha de aparecer.
-    setFicha(await fichaDaAnalise(t.id, t.cnpj))
+    // pode impedir a ficha de aparecer. Quando este tomador é uma SPE sem
+    // análise própria, cai para a análise vigente da holding vinculada.
+    const fichaPropria = await fichaDaAnalise(t.id, t.cnpj)
+    if (fichaPropria) {
+      setFicha(fichaPropria); setFichaDaHolding(false)
+    } else if (t.holding) {
+      setFicha(await fichaDaAnalise(t.holding.id, t.holding.cnpj)); setFichaDaHolding(true)
+    } else {
+      setFicha(null); setFichaDaHolding(false)
+    }
     setCarregando(false)
   }, [id])
 
@@ -377,19 +406,26 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
     // lista: ordem dele, "tudo deve ser feito na tela quando clicar na linha".
     { g: 'cadastro', nome: 'Cadastro', ico: <IcoCarteira /> },
     { g: 'operacoes', nome: 'Operações', ico: <IcoDoc />, badge: String(operacoes.length) },
-    { g: 'analise', nome: 'Análise de crédito', ico: <IcoDoc />, meta: ficha ? fmtData(ficha.data_analise) : 'sem análise' },
+    {
+      g: 'analise', nome: 'Análise de crédito', ico: <IcoDoc />,
+      meta: ficha ? `${fmtData(ficha.data_analise)}${fichaDaHolding ? ' · da holding' : ''}` : 'sem análise',
+    },
     {
       g: 'serasa', nome: 'Serasa', ico: <IcoEscudo />,
       meta: ficha?.serasa
-        ? (ficha.serasa.score !== null ? `score ${ficha.serasa.score}` : 'sem score')
+        ? `${ficha.serasa.score !== null ? `score ${ficha.serasa.score}` : 'sem score'}${fichaDaHolding ? ' · da holding' : ''}`
         : 'sem análise',
     },
     {
       g: 'grupo', nome: 'Grupo e organograma', ico: <IcoRede />,
-      meta: ficha?.estrutura ? `${ficha.estrutura.entidades.filter(e => e.tipo === 'emp').length} empresas`
+      meta: tomador.holding ? `holding: ${tomador.holding.razao_social.split(' ')[0]}…`
+        : ficha?.estrutura ? `${ficha.estrutura.entidades.filter(e => e.tipo === 'emp').length} empresas`
         : nSocios ? `${nSocios} sócios` : 'a montar',
     },
-    { g: 'demonstracoes', nome: 'Demonstrações', ico: <IcoGrafico />, meta: ficha ? `${ficha.exercicios.length} exercícios` : '—' },
+    {
+      g: 'demonstracoes', nome: 'Demonstrações', ico: <IcoGrafico />,
+      meta: ficha ? `${ficha.exercicios.length} exercícios${fichaDaHolding ? ' · da holding' : ''}` : '—',
+    },
     // "0" ao lado de Documentos leria como "este tomador não mandou nada".
     // Enquanto o índice não subir, o rótulo honesto é "a indexar".
     { g: 'documentos', nome: 'Documentos', ico: <IcoDoc />, meta: ficha && ficha.documentos.length > 0 ? String(ficha.documentos.length) : 'a indexar' },
@@ -407,7 +443,25 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
         <div className="mt-ident">
           <div className="mt-brasao">{iniciais}</div>
           <div style={{ minWidth: 0 }}>
-            <h1 className="mt-nome">{tomador.razao_social}</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <h1 className="mt-nome">{tomador.razao_social}</h1>
+              {/* O vínculo de grupo econômico precisa aparecer AQUI, sem clicar em
+                  nada: pedido do Marco em 18/09/2026, depois do caso Yuny (a SPE
+                  Yuny Stan não mostrava, de forma nenhuma, que pertencia à holding). */}
+              {tomador.holding ? (
+                <button type="button" className="mt-chip co" style={{ cursor: 'pointer' }}
+                  onClick={() => router.push(`/tomadores/${tomador.holding!.id}`)}
+                  title={`Abrir a holding: ${tomador.holding.razao_social}`}>
+                  <IcoRede size={12} /> Grupo: {tomador.holding.razao_social}
+                </button>
+              ) : nEmpresasDoGrupo > 0 ? (
+                <button type="button" className="mt-chip co" style={{ cursor: 'pointer' }}
+                  onClick={() => setGaveta('grupo')}
+                  title="Ver as empresas vinculadas a esta holding">
+                  <IcoRede size={12} /> Holding · {nEmpresasDoGrupo} empresa{nEmpresasDoGrupo > 1 ? 's' : ''} do grupo
+                </button>
+              ) : null}
+            </div>
             {/* Ordem dele, 30/08: CNPJ colado na razão social, e embaixo só a
                 corretora. Rating, score, risco e status foram para a Visão geral. */}
             <div className="mt-sub mt-num">{tomador.cnpj ? maskCNPJ(tomador.cnpj) : 'sem CNPJ'}</div>
@@ -625,6 +679,7 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
               que a análise recomenda, e no acervo não há cadastro para confrontar.
               Sem conflito, `confronto` vai nulo e a seção sai igual à do acervo. */}
           {gaveta === 'analise' && <>
+            {fichaDaHolding && tomador.holding && <AvisoFichaHolding nome={tomador.holding.razao_social} />}
             <SecaoAnalise
               ficha={ficha}
               confronto={conflitoLimite ? {
@@ -645,10 +700,14 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
             )}
           </>}
 
-          {gaveta === 'serasa' && <SecaoSerasa ficha={ficha} />}
+          {gaveta === 'serasa' && <>
+            {fichaDaHolding && tomador.holding && <AvisoFichaHolding nome={tomador.holding.razao_social} />}
+            <SecaoSerasa ficha={ficha} />
+          </>}
 
-          {gaveta === 'grupo' && (
-            <Bloco titulo="Grupo econômico e organograma" cor="#e8b84b"
+          {gaveta === 'grupo' && (<>
+            <VinculoHolding tomador={tomador} usuarioInfo={usuarioInfo} onMudou={carregar} />
+            <Bloco titulo="Organograma societário" cor="#e8b84b"
               acao={nSocios === 0 && diretores.length === 0 ? 'Montar organograma' : 'Editar organograma'}
               onAcao={() => setEditorOrg(true)}>
               {ficha?.grupo && (
@@ -677,11 +736,17 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
                 </div>
               )}
             </Bloco>
-          )}
+          </>)}
 
-          {gaveta === 'demonstracoes' && <SecaoDemonstracoes ficha={ficha} />}
+          {gaveta === 'demonstracoes' && <>
+            {fichaDaHolding && tomador.holding && <AvisoFichaHolding nome={tomador.holding.razao_social} />}
+            <SecaoDemonstracoes ficha={ficha} />
+          </>}
 
-          {gaveta === 'documentos' && <SecaoDocumentos ficha={ficha} />}
+          {gaveta === 'documentos' && <>
+            {fichaDaHolding && tomador.holding && <AvisoFichaHolding nome={tomador.holding.razao_social} />}
+            <SecaoDocumentos ficha={ficha} />
+          </>}
 
           {editorOrg && (
             <OrganogramaModal
@@ -701,6 +766,16 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
 }
 
 // ── gavetas ─────────────────────────────────────────────────────────────────
+
+/** O aviso em toda gaveta que, sem análise própria, está mostrando a da
+ *  holding vinculada (ver components/tomador/VinculoHolding). */
+function AvisoFichaHolding({ nome }: { nome: string }) {
+  return (
+    <div className="mt-nota at" style={{ marginBottom: 10 }}>
+      Este tomador não tem análise própria: os dados abaixo são da holding vinculada, <b>{nome}</b>.
+    </div>
+  )
+}
 
 function TabelaOps({ ops }: { ops: Operacao[] }) {
   const pill = (s: string) =>

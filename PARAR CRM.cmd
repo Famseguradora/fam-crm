@@ -11,6 +11,9 @@ REM  computador, que ele sobe sozinho).
 REM ============================================================================
 cd /d "%~dp0"
 
+REM Parado de proposito: sem este arquivo, o crm-vigia.ps1 religaria em 3 minutos.
+echo parado pelo PARAR CRM.cmd > crm-parado.flag
+
 set achou=0
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /r /c:"TCP.*:3000 .*LISTENING"') do (
   taskkill /F /PID %%p >nul 2>&1

@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { acharOuCriarTomadorPorCnpj } from '@/lib/tomador/criar-por-cnpj'
+import { abrirNaFila } from '@/lib/analise/abrir-fila'
 import { soDigitos } from '@/lib/analise/cnpj'
 import { validarCNPJ } from '@/lib/utils'
 
@@ -32,6 +33,12 @@ export async function POST(req: NextRequest) {
   const razaoDigitada = String(corpo.razao_social ?? '').trim()
   const corretora = String(corpo.corretora ?? '').trim()
   const produto = String(corpo.produto ?? '').trim()
+  /* NA ESTEIRA? (23/09/2026) O caso aberto pelo CNPJ nascia só como caso: o
+     card dele NÃO aparecia na Mesa da Análise, e quem abriu ficava sem ver o
+     próprio pedido no quadro. A tela de Entrada do Comercial e o "+ Novo card"
+     da Mesa pedem a linha da esteira junto; o Funil continua como sempre foi,
+     porque não manda esta bandeira. */
+  const naEsteira = corpo.na_esteira === true
 
   if (cnpj.length !== 14 || !validarCNPJ(cnpj)) {
     return NextResponse.json({ erro: 'CNPJ inválido: confira os dígitos.' }, { status: 422 })
@@ -42,19 +49,39 @@ export async function POST(req: NextRequest) {
      para o e-mail; a porta do CNPJ não pode reabri-lo. */
   const { data: aberto } = await supabase
     .from('casos')
-    .select('id, numero')
+    .select('id, numero, assunto, razao_social, tomador_id, analise_fila_id')
     .eq('cnpj', cnpj)
     .in('etapa', ['comercial', 'triagem'])
     .maybeSingle()
-  if (aberto) {
-    return NextResponse.json(
-      { ok: true, ja_existia: true, caso: aberto },
-      { status: 200 },
-    )
-  }
 
   const { data: quem } = await supabase.from('usuarios').select('nome').eq('auth_id', user.id).maybeSingle()
   const autor = quem?.nome ?? user.email ?? 'alguém'
+
+  if (aberto) {
+    /* O CASO JÁ EXISTE, MAS O CARD PODE NÃO EXISTIR (23/09/2026, achado da
+       revisão). O caso aberto pelo Funil nasce sem linha de esteira, porque o
+       Funil não manda a bandeira. Se alguém digitar o mesmo CNPJ na Entrada de
+       pedidos, este caminho devolvia "já existia" e mandava para a Triagem — e
+       o card prometido nunca aparecia na Mesa, sem erro nenhum na tela.
+
+       `abrirNaFila` já é idempotente (procura pelo `caso_id` antes de criar),
+       então chamar aqui não duplica nada: ou acha a linha que existe, ou cria
+       a que faltava. */
+    let fila: { id: string; pasta: string } | undefined
+    let aviso: string | null = null
+    if (naEsteira) {
+      const r0 = await abrirNaFila(supabase, {
+        id: aberto.id, numero: aberto.numero, assunto: aberto.assunto,
+        cnpj, razao_social: aberto.razao_social, tomador_id: aberto.tomador_id,
+      }, autor)
+      if (r0.ok) fila = r0.fila
+      else aviso = `O card não entrou na Mesa (${r0.erro}).`
+    }
+    return NextResponse.json(
+      { ok: true, ja_existia: true, caso: { id: aberto.id, numero: aberto.numero }, fila, aviso },
+      { status: 200 },
+    )
+  }
 
   // O tomador primeiro: é dele que sai a razão social do assunto do caso.
   const r = await acharOuCriarTomadorPorCnpj(supabase, {
@@ -115,10 +142,25 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  /* A LINHA DA ESTEIRA, quando pediram. A regra é a MESMA do e-mail
+     (`abrirNaFila`), então o card nasce igual tenha vindo do .msg ou do CNPJ.
+     Sem `automatica`: aqui não chegou documento nenhum, e mandar o notebook
+     analisar uma pasta vazia seria só um erro mais cedo. */
+  let fila: { id: string; pasta: string } | undefined
+  if (naEsteira) {
+    const r2 = await abrirNaFila(supabase, {
+      id: caso.id, numero: caso.numero, assunto: caso.assunto,
+      cnpj, razao_social: r.tomador.razao_social, tomador_id: r.tomador.id,
+    }, autor)
+    if (r2.ok) fila = r2.fila
+    else avisoChecklist = [avisoChecklist, `O card não entrou na Mesa (${r2.erro}).`].filter(Boolean).join(' ')
+  }
+
   return NextResponse.json({
     ok: true,
     ja_existia: false,
     caso,
+    fila,
     tomador: r.tomador,
     tomador_criado: r.criado,
     receita: r.criado ? r.receita : { ok: true },

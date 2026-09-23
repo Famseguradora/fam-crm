@@ -3,6 +3,22 @@
 Esta lista aparece sozinha no começo de toda sessão do Claude Code.
 Pode editar à mão. Item entregue **sai da lista**, não fica marcado acumulando.
 
+## FALTA VOCÊ: ligar o Outlook ao CRM para o arrastar funcionar (23/09/2026)
+
+O **Outlook clássico** já funciona: arrasta e vira caso. O **Novo Outlook** não entrega o
+arquivo do e-mail para navegador nenhum (decisão da Microsoft) — entrega só o identificador
+da mensagem. O CRM já sabe ler esse identificador e buscar o e-mail inteiro no Microsoft 365,
+com anexos. Falta autorizar.
+
+- [ ] **Duplo clique em `LIGAR OUTLOOK.cmd`** (na pasta do CRM). Um login da Microsoft,
+      com código de seis letras, e ele registra o aplicativo e escreve o `.env.local` sozinho.
+      Depois: `REINICIAR CRM.cmd`, e colar o `COLAR-NA-VERCEL.txt` que ele gera nas variáveis
+      da Vercel — é o que faz o arrastar funcionar para a equipe, que usa o CRM publicado.
+      Se a sua conta não puder registrar aplicativos, o manual está em docs/LIGAR-OUTLOOK-NO-CRM.md.
+- [ ] Os colegas **não instalam nada e não mexem na máquina deles**: entram no CRM pelo
+      navegador e clicam uma vez em "Ligar minha caixa do Outlook". Permissão **delegada**
+      (`Mail.Read`): o CRM lê o e-mail de quem autorizou, e nada mais.
+
 ## EM ANDAMENTO: a IA Gestor em todo o CRM, e o funil reformado (09/09/2026)
 
 **As duas migrations já foram aplicadas** em 09/09/2026 (`ia-servidor` e `funil-wip`).
@@ -191,10 +207,23 @@ Nenhum destes se perde mais: cada um virou arquivo de memória, e não só conve
       comentários que o Supabase já tem.
 - [ ] **SLA por fase** visível como no print do Pipefy: contador, cor e motivo. Existe pela metade
       (a Mesa já fica vermelha quando estoura).
-- [ ] **Serasa pelo navegador, sem API.** A conversa original **não está nesta máquina**: foram
-      varridos os 374 MB de transcripts e não há nada. Foi no claude.ai web, cuja sincronização
-      está desligada de propósito. O desenho precisa ser refeito com ele: qual portal, se roda
-      sozinho ou sob comando, e se só baixa o PDF ou já grava os campos.
+- [ ] **Robô do Serasa (feito em 14/09/2026), o que sobrou.** O robô (`scripts/serasa.mjs`) e o
+      botão "Serasa" do cadastro do tomador estão prontos (tabela `serasa_pedidos` já aplicada).
+      Falta de você:
+      A camada dos sócios também está pronta: a empresa entra sempre, e o robô pergunta
+      ("Posso buscar o Serasa dos sócios?", no cadastro e no card da análise) com o percentual de
+      cada um; sócio com 0% vem numa autorização só, para todos. O Serasa aprovado vai para a
+      pasta, em "Sócios - Serasa", e entra na triagem e na análise. O card da análise ganhou o
+      botão "Buscar o Serasa" da empresa (15/09).
+      1. Conferir em "Gerenciar consulta" se o Usiblend de 14/09 foi cobrado duas vezes, e a
+         **consulta indevida de 15/09 às 14:58, CNPJ 11.222.333/0001-81** (uma escola estadual):
+         foi um teste meu que a esteira pegou. Se der para contestar com o Serasa, é essa. Já
+         corrigido: o robô agora pergunta ao CRM no último segundo se o pedido ainda vale.
+      2. **API do Serasa:** pedir ao Serasa a credencial "Basic IAM" da API do Relatório
+         Avançado PJ (`RELATORIO_AVANCADO_PJ_PME`), com acesso de homologação e de produção. O
+         portal não gera sozinho. Com a credencial, trocamos só a peça que consulta.
+      3. O primeiro Serasa de CPF (sócio pessoa física) ainda não foi gerado de verdade: o
+         ensaio passou, mas o formato do cabeçalho do relatório PF é suposição até o primeiro.
 - [ ] **Supabase mensal + backup** — ele contrata quando o trabalho todo fechar.
 - [x] **Baixar HTML** — pedido em 30/08: a análise deixa de morar em JSON, mas o botão de baixar
       HTML **fica**, porque ele manda o arquivo para a equipe. Já está feito na Mesa: um arquivo

@@ -14,13 +14,26 @@
    número: "a contagem é sempre o resultado matemático".
 
    A ORDEM DA TELA:
-     1. o período (hoje, ontem, 7 dias, 30 dias, tudo, ou um dia escolhido)
-     2. A PONTE: dos recebidos até o que há a fazer, fechando a conta
-     3. o passivo de qualquer data, numa linha
-     4. a fila do degrau escolhido, um pedido por linha, com teclado e recibo
-     5. a caixa de e-mail (a visualização do Outlook, aberta)
-     6. a porta de entrada no período (tempo até ser resolvido)
-     7. os mais antigos parados, recolhidos
+     1. o aviso de e-mail novo, quando chega algo sem classificação
+     2. a caixa de e-mail (a visualização do Outlook, aberta)
+     3. os mais antigos parados, recolhidos
+
+   O QUE SAIU DAQUI, e por quê: em 17/09/2026 a triagem em lote e a lista
+   "Tudo o que chegou" foram para PainelGestaoEsteira.tsx, a aba Painel — em
+   período grande (30 dias, tudo) viravam parede de informação no meio do
+   posto de trabalho do dia. Em 18/09/2026 foi a vez da ponte inteira ("E-mails
+   de pedido de análise"), a fila do degrau escolhido, o período e o botão da
+   IA: ordem do Marco, olhando a ponte RECOLHIDA nesta tela — "não está legal
+   (...) essas informações são mesmo necessárias nessa tela?". Não eram: a
+   Painel já tinha uma ponte equivalente (mais completa, cobre qualquer
+   período), então manter as duas aqui era duplicar a mesma informação.
+
+   O QUE FICOU: a caixa de e-mail e "os mais antigos parados" são o trabalho
+   de olhar o e-mail em si, não de classificar pela régua — isso continua
+   fazendo sentido nesta tela. `ponteTudo` (para o passivo e os mais antigos)
+   segue calculada aqui, com a MESMA régua da Painel, só que sempre no
+   período "tudo": não há seletor de período nesta tela porque não há mais
+   nada aqui que dependa dele.
 
    QUEM FAZ A CONTA: lib/email/ponte.ts, lib/email/classificar.ts e
    lib/email/regua.ts, puros e testados (npm run email:ponte:test). Esta tela
@@ -30,19 +43,19 @@
    docs/DESIGN-PAINEL.md. Nenhum hex redigitado aqui. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
-import { SecaoPainel, Moldura, Aviso } from '@/components/painel/Painel'
-import { cor, corDaArea, texto, raio, botaoCheio, botaoVazado } from '@/lib/ui/painel'
-import { lerPedido, resumir, horasTexto, estadoDoPedido, METAS_PADRAO, type LinhaPedido, type MetasEmail } from '@/lib/email/metricas'
+import { SecaoPainel, Aviso } from '@/components/painel/Painel'
+import { cor, corDaArea, texto, botaoCheio, botaoVazado } from '@/lib/ui/painel'
+import { estadoDoPedido, METAS_PADRAO, type LinhaPedido, type MetasEmail } from '@/lib/email/metricas'
 import { lerVersao, reguaVigente, type VersaoRegua } from '@/lib/email/regua'
 import type { ClassificacaoGravada } from '@/lib/email/classificar'
-import { janelaDoPeriodo, montarPonte, passivoDa, PERIODOS_PONTE, type Demanda, type PeriodoId } from '@/lib/email/ponte'
-import PonteDoDia, { type Selecao } from './PonteDoDia'
+import { janelaDoPeriodo, montarPonte, passivoDa, type Demanda } from '@/lib/email/ponte'
+import { useLembrado } from '@/lib/ui/lembrar'
 import FilaPedidos, { type AcoesFila, type TipoDecisao } from './FilaPedidos'
-import TriagemEmLote from './TriagemEmLote'
+
+const ehBooleano = (v: unknown): v is boolean => typeof v === 'boolean'
 
 type LinhaPonte = LinhaPedido & { previa?: string | null; anexos?: { nome?: string | null }[] | null }
 
@@ -51,10 +64,13 @@ const plural = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um :
 /* A ORDEM DA TELA, trocada em 11/09/2026 ("a visualização dos e-mails igual o
    outlook deve ficar em cima, aberta"): a caixa vem de fora, em `caixa`,
    porque é a página que sabe recarregar os casos quando um e-mail vira caso. */
-export default function PainelEmail({ aoMudar, caixa }: {
+export default function PainelEmail({ aoMudar, caixa, aoAbrirGestao }: {
   aoMudar?: () => void
-  /** A caixa de e-mail crua, desenhada logo abaixo da fila. */
+  /** A caixa de e-mail crua, desenhada logo abaixo dos mais antigos parados. */
   caixa?: React.ReactNode
+  /** Leva para a aba Painel: é para onde a ponte, a fila do degrau, a triagem
+   *  em lote e "Tudo o que chegou" se mudaram (17 e 18/09/2026). */
+  aoAbrirGestao?: () => void
 }) {
   const router = useRouter()
   const { somenteLeitura } = usePermissoes()
@@ -65,31 +81,25 @@ export default function PainelEmail({ aoMudar, caixa }: {
   const [gravadas, setGravadas] = useState<ClassificacaoGravada[]>([])
   const [metas, setMetas] = useState<MetasEmail>(METAS_PADRAO)
 
-  /* "Ontem" é o período de entrada: é o ritual que ele descreveu ("10 análises
-     para fazer hoje com data de ontem"). */
-  const [periodo, setPeriodo] = useState<PeriodoId>('ontem')
-  const [dia, setDia] = useState('')
-  const [selecao, setSelecao] = useState<Selecao>('a_fazer')
-
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
-  const [semRegua, setSemRegua] = useState(false)
   const [ocupado, setOcupado] = useState('')
   const [chegouAgora, setChegouAgora] = useState(0)
-  const [verCaixa, setVerCaixa] = useState(true)
-  const [verAntigos, setVerAntigos] = useState(false)
-  const [iaLigada, setIaLigada] = useState(false)
-  const [iaLendo, setIaLendo] = useState('')
-  const [iaRecado, setIaRecado] = useState('')
+  /* O QUE ESTÁ OCULTO FICA OCULTO ATÉ ELE MUDAR DE VOLTA (18/09/2026): "a
+     forma que eu sair dessa página é a mesma forma que quando eu voltar".
+     Cada seção que se mostra/recolhe lembra o estado no navegador, na sua
+     própria chave — ocultar uma não deveria mexer no que ele fez com a outra. */
+  const [verCaixa, setVerCaixa] = useLembrado('fam:comercial-email:ver-caixa', true, ehBooleano)
+  const [verAntigos, setVerAntigos] = useLembrado('fam:comercial-email:ver-antigos', false, ehBooleano)
   const conhecidos = useRef<Set<string> | null>(null)
 
   /* UM INSTANTE SÓ PARA A TELA INTEIRA. Se cada peça chamasse `new Date()`, um
-     e-mail poderia estar vencido na ponte e no prazo na fila. */
+     e-mail poderia estar com a idade errada nos mais antigos parados. */
   const [agora, setAgora] = useState(() => new Date())
 
   const carregar = useCallback(async () => {
     const supabase = createClient()
-    const [pedidos, m, regua, mods, classes, iaCfg] = await Promise.all([
+    const [pedidos, m, regua, mods, classes] = await Promise.all([
       /* 3.000 e não 1.000: com o limite baixo, "tudo" deixava de ser tudo, e o
          RE cujo primeiro e-mail ficava de fora virava pedido novo. Em 11/09 são
          278 e-mails; o dia em que isso apertar, a conta vai para o servidor. */
@@ -98,14 +108,16 @@ export default function PainelEmail({ aoMudar, caixa }: {
       supabase.from('email_regua').select('versao, parametros, motivo, criada_por_nome, criada_em').order('versao'),
       supabase.from('modalidades').select('nome'),
       supabase.from('email_classificacao').select('*').limit(5000),
-      supabase.from('ia_config').select('api_ligada').eq('id', 1).maybeSingle(),
     ])
     if (pedidos.error) setErro(pedidos.error.message)
     const lista = (pedidos.data ?? []) as LinhaPonte[]
 
     /* "CHEGOU E-MAIL NOVO", pela IDENTIDADE e não pela contagem: pela contagem,
        um e-mail que sai junto com outro que entra passaria calado. */
-    const candidatos = new Set(lista.filter((l) => estadoDoPedido(l) === 'a_classificar').map((l) => l.id))
+    // Quem saiu da caixa não conta como "chegou e-mail novo": ele saiu, não chegou.
+    const candidatos = new Set(
+      lista.filter((l) => !l.saiu_em && estadoDoPedido(l) === 'a_classificar').map((l) => l.id),
+    )
     if (conhecidos.current) {
       let novos = 0
       for (const id of candidatos) if (!conhecidos.current.has(id)) novos++
@@ -115,13 +127,10 @@ export default function PainelEmail({ aoMudar, caixa }: {
 
     setLinhas(lista)
     if (m.data) setMetas({ ...METAS_PADRAO, ...m.data })
-    // Sem a migration do Carteiro gerencial a tela segue: a ponte fica sem régua e diz isso.
-    setSemRegua(!!regua.error || !(regua.data ?? []).length)
     // Lida com desconfiança: uma versão malformada gravada por fora não derruba a tela.
     setVersoes(((regua.data ?? []) as Parameters<typeof lerVersao>[0][]).map(lerVersao) as VersaoRegua[])
     setModalidades([...new Set((mods.data ?? []).map((x) => String(x.nome)))])
     setGravadas((classes.data ?? []) as ClassificacaoGravada[])
-    setIaLigada(!!iaCfg.data?.api_ligada)
     setAgora(new Date())
     setCarregando(false)
   }, [])
@@ -153,18 +162,17 @@ export default function PainelEmail({ aoMudar, caixa }: {
     }
   }, [carregar])
 
-  const janela = useMemo(() => janelaDoPeriodo(periodo, agora, dia), [periodo, agora, dia])
   const vigente = reguaVigente(versoes)
   const excluidas = vigente?.parametros.excluidas ?? []
 
-  const { ponte, ponteTudo, resumo } = useMemo(() => {
-    const entrada = { versoes, modalidades, gravadas, metas, agora }
-    return {
-      ponte: montarPonte(linhas, { ...entrada, janela }),
-      ponteTudo: montarPonte(linhas, { ...entrada, janela: janelaDoPeriodo('tudo', agora) }),
-      resumo: resumir(linhas.map((l) => lerPedido(l, metas, agora)), metas, janela.desde, janela.ate),
-    }
-  }, [linhas, versoes, modalidades, gravadas, metas, agora, janela])
+  /* SÓ "TUDO", SEMPRE. Sem ponte de período nesta tela, `ponteTudo` alimenta
+     só o passivo e os mais antigos parados — os dois são fotografia do agora,
+     não recorte de um período escolhido. */
+  const naCaixa = useMemo(() => linhas.filter((l) => !l.saiu_em), [linhas])
+  const ponteTudo = useMemo(
+    () => montarPonte(naCaixa, { versoes, modalidades, gravadas, metas, agora, janela: janelaDoPeriodo('tudo', agora) }),
+    [naCaixa, versoes, modalidades, gravadas, metas, agora],
+  )
 
   const passivo = passivoDa(ponteTudo, agora)
   const maisAntigos: Demanda[] = useMemo(
@@ -174,67 +182,6 @@ export default function PainelEmail({ aoMudar, caixa }: {
       .slice(0, 5),
     [ponteTudo],
   )
-
-  /* OS CASOS DO PERÍODO, para a triagem em lote: os pedidos resolvidos que
-     viraram caso. É "os 10 elegíveis de ontem que eu trouxe". */
-  const casosDoPeriodo = useMemo(() => {
-    const mapa: Record<string, { titulo: string; numero?: number | null }> = {}
-    for (const d of ponte.demandas) {
-      if (!d.resolvido) continue
-      for (const e of d.emails) {
-        if (e.caso_id) mapa[e.caso_id] = { titulo: e.razao_social || d.tomador || String(d.primeiro.assunto ?? ''), numero: e.caso_numero ?? null }
-      }
-    }
-    return mapa
-  }, [ponte])
-
-  /* O QUE A IA PODE LER: os pedidos sem classificação do período que ainda não
-     passaram por ela. Vai o e-mail representante de cada pedido (o mais
-     recente com anexo), que é o que costuma trazer mais contexto. */
-  const alvosDaIA = useMemo(() => {
-    const comIA = new Set(gravadas.filter((g) => g.origem === 'ia').map((g) => g.email_id))
-    return ponte.demandas
-      .filter((d) => d.balde === 'sem_classificacao' && !d.emails.some((e) => comIA.has(e.id)))
-      .map((d) => d.representante.id)
-  }, [ponte, gravadas])
-
-  async function pedirIA() {
-    const ids = alvosDaIA
-    if (!ids.length) return
-    setErro('')
-    setIaRecado('')
-    let lidos = 0
-    let semCerteza = 0
-    let custo = 0
-    for (let i = 0; i < ids.length; i += 40) {
-      setIaLendo(`A IA está lendo ${Math.min(i + 40, ids.length)} de ${ids.length}…`)
-      try {
-        const r = await fetch('/api/email/classificar-ia', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids: ids.slice(i, i + 40) }),
-        })
-        const j = await r.json().catch(() => ({}))
-        if (!r.ok) { setErro(j.erro ?? 'A IA não conseguiu classificar.'); break }
-        lidos += j.classificados ?? 0
-        semCerteza += j.sem_certeza ?? 0
-        custo += j.custo_usd ?? 0
-        if (j.parou) { setErro(j.parou); break }
-      } catch {
-        setErro('A conexão caiu no meio da leitura da IA. O que já foi lido ficou gravado.')
-        break
-      }
-    }
-    setIaLendo('')
-    if (lidos) {
-      setIaRecado(
-        `A IA leu ${plural(lidos, 'pedido', 'pedidos')}` +
-        (semCerteza ? `; ${semCerteza} sem certeza continuam sem classificação` : '') +
-        ` · US$ ${custo.toFixed(2).replace('.', ',')}`,
-      )
-    }
-    await carregar()
-  }
 
   /* ── as ações ────────────────────────────────────────────────────────────── */
 
@@ -291,168 +238,42 @@ export default function PainelEmail({ aoMudar, caixa }: {
   }, [carregar, aoMudar, postar, gravadas, vigente, router])
 
   const cores = corDaArea('comercial')
-  const pctNoPrazo = resumo.com_tempo ? Math.round((resumo.no_prazo / resumo.com_tempo) * 100) : null
-  const hojeISO = new Date(agora.getTime() - 3 * 3_600_000).toISOString().slice(0, 10)
 
   return (
     <div>
-      {/* ── o período ── */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <div role="group" aria-label="Período" style={{ display: 'flex', gap: 2, background: cor.bordaSuave, padding: 3, borderRadius: raio.controle }}>
-          {PERIODOS_PONTE.map((p) => {
-            const ativo = periodo === p.id
-            return (
-              <button
-                key={p.id}
-                type="button"
-                className="painel-alvo"
-                aria-pressed={ativo}
-                onClick={() => { setPeriodo(p.id); setDia('') }}
-                style={{
-                  border: 'none', cursor: 'pointer', padding: '5px 11px',
-                  borderRadius: raio.controle - 2, fontSize: 12.5, fontWeight: 600,
-                  background: ativo ? cor.papel : 'transparent',
-                  color: ativo ? cor.tinta : cor.textoSub,
-                }}
-              >
-                {p.nome}
-              </button>
-            )
-          })}
-        </div>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, ...texto.apoio }}>
-          <span>ou o dia</span>
-          <input
-            type="date"
-            className="fam-input painel-alvo"
-            value={periodo === 'dia' ? dia : ''}
-            max={hojeISO}
-            onChange={(ev) => { if (ev.target.value) { setDia(ev.target.value); setPeriodo('dia') } }}
-            style={{ width: 'auto', padding: '4px 8px', fontSize: 16 }}
-          />
-        </label>
-
-        <span style={{ flex: 1 }} />
-
-        {chegouAgora > 0 && (
+      {/* ── o aviso de e-mail novo, quando há algo sem classificação ── */}
+      {chegouAgora > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
           <button
             type="button"
             className="painel-alvo"
-            onClick={() => { setChegouAgora(0); setPeriodo('hoje'); setSelecao('sem_classificacao') }}
+            onClick={() => { setChegouAgora(0); aoAbrirGestao?.() }}
+            title="Abre a aba Painel, onde a ponte mostra os pedidos sem classificação"
             style={{ ...botaoCheio, display: 'inline-flex', alignItems: 'center', gap: 7, background: cor.areaOperacao }}
           >
             <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: cor.papel }} />
             {plural(chegouAgora, 'e-mail novo', 'e-mails novos')}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {erro && <div style={{ marginBottom: 12 }}><Aviso tom="erro">{erro}</Aviso></div>}
 
-      {/* ══ A PONTE ═════════════════════════════════════════════════════════ */}
-      <SecaoPainel
-        nome={`E-mails de pedido de análise · ${janela.frase}`}
-        cor={cores}
-        acao={
-          <Link
-            href="/comercial/regua"
-            style={{ ...texto.apoio, fontWeight: 600, color: cor.tinta2, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5 }}
-            title="Os parâmetros que decidem o que é pedido, a modalidade e o apetite"
-          >
-            {vigente ? `Régua v${vigente.versao}` : 'Régua'} <span aria-hidden>›</span>
-          </Link>
-        }
-      >
-        {carregando ? (
-          <Aviso>Lendo os e-mails e a régua…</Aviso>
-        ) : (
-          <div style={{ background: cor.papel, border: `1px solid ${cor.borda}`, borderRadius: raio.cartao, padding: '10px 8px 8px' }}>
-            {semRegua && (
-              <div style={{ margin: '0 4px 10px' }}>
-                <Aviso>A régua ainda não existe no banco: sem ela, nenhum pedido é classificado e todos ficam sem classificação.</Aviso>
-              </div>
-            )}
-            {!ponte.fecha && (
-              <div style={{ margin: '0 4px 10px' }}>
-                <Aviso tom="erro">A conta da ponte não fechou neste período. Isso é defeito do sistema, e não do e-mail: avise.</Aviso>
-              </div>
-            )}
-            <PonteDoDia ponte={ponte} selecionado={selecao} aoSelecionar={setSelecao} excluidas={excluidas} />
-
-            {/* A IA NA PONTE: um botão, e só quando há o que ela ler. A régua
-                continua decidindo o apetite; a IA só diz o que o e-mail é. */}
-            {!somenteLeitura && (alvosDaIA.length > 0 || !!iaLendo || !!iaRecado) && (
-              <div style={{ margin: '10px 12px 0', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-                {(alvosDaIA.length > 0 || !!iaLendo) && (
-                  <button
-                    type="button"
-                    className="painel-alvo"
-                    disabled={!iaLigada || !!iaLendo}
-                    onClick={pedirIA}
-                    title={iaLigada
-                      ? 'A IA lê o assunto, o nome dos anexos e o começo do e-mail (sem CPF, telefone nem endereço de pessoa) e diz o tipo e a modalidade, com o trecho que sustenta.'
-                      : 'A IA pela API está desligada. Quem liga é o proprietário, no painel da IA (Ctrl+I).'}
-                    style={{ ...botaoVazado, padding: '5px 12px', fontSize: 12, borderColor: cor.ouro, opacity: !iaLigada || iaLendo ? 0.6 : 1, cursor: !iaLigada ? 'not-allowed' : iaLendo ? 'progress' : 'pointer' }}
-                  >
-                    {iaLendo || `Pedir à IA para ler ${alvosDaIA.length === 1 ? 'o pedido' : `os ${alvosDaIA.length} pedidos`} sem classificação`}
-                  </button>
-                )}
-                <span style={texto.nota}>
-                  {iaRecado || (iaLigada ? 'A régua decide o apetite; a IA só diz o que o e-mail é, e cada decisão fica com recibo.' : 'A IA pela API está desligada.')}
-                </span>
-              </div>
-            )}
-            <div style={{ ...texto.nota, margin: '8px 12px 2px', display: 'flex', flexWrap: 'wrap', gap: '2px 10px' }}>
-              <span>
-                origem: e-mails da caixa por data de chegada; pedido = o e-mail que abriu o assunto; julgados pela régua que valia quando chegaram
-                {ponte.versoes_usadas.length ? ` (v${ponte.versoes_usadas.join(', v')})` : ''}
-              </span>
-            </div>
-          </div>
-        )}
-      </SecaoPainel>
-
       {/* ── o passivo de qualquer data, numa linha ── */}
-      {!carregando && passivo.abertos > 0 && periodo !== 'tudo' && (
-        <div style={{ margin: '-6px 0 16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, ...texto.apoio }}>
+      {!carregando && passivo.abertos > 0 && (
+        <div style={{ margin: '0 0 16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, ...texto.apoio }}>
           <span>
             De qualquer data: <b style={{ color: cor.tinta }}>{plural(passivo.abertos, 'pedido aberto', 'pedidos abertos')}</b>
             {passivo.sem_classificacao ? ` (${passivo.sem_classificacao} sem classificação)` : ''}
             {passivo.parados ? <> · <b style={{ color: cor.alerta }}>{plural(passivo.parados, 'parado', 'parados')}</b></> : ''}
             {passivo.mais_velho_dias !== null ? ` · o mais velho chegou há ${Math.floor(passivo.mais_velho_dias)} dias` : ''}
           </span>
-          <button
-            type="button"
-            className="painel-alvo"
-            onClick={() => { setPeriodo('tudo'); setDia(''); setSelecao('a_fazer') }}
-            style={{ ...botaoVazado, padding: '3px 10px', fontSize: 11.5 }}
-          >
-            ver todos
-          </button>
+          {aoAbrirGestao && (
+            <button type="button" className="painel-alvo" onClick={aoAbrirGestao} style={{ ...botaoVazado, padding: '3px 10px', fontSize: 11.5 }}>
+              ver na Painel
+            </button>
+          )}
         </div>
-      )}
-
-      {/* ══ A FILA DO DEGRAU ESCOLHIDO ══════════════════════════════════════ */}
-      {!carregando && linhas.length > 0 && (
-        <div style={{ marginBottom: 18 }}>
-          <FilaPedidos
-            ponte={ponte}
-            selecionado={selecao}
-            metas={metas}
-            modalidades={modalidades}
-            excluidas={excluidas}
-            somenteLeitura={somenteLeitura}
-            ocupado={ocupado}
-            acoes={acoes}
-          />
-        </div>
-      )}
-
-      {/* ══ A TRIAGEM EM LOTE, AO VIVO ══════════════════════════════════════
-          Os casos que vieram dos pedidos do período, passando pela conferência
-          de documentos no notebook. Some quando não há caso no período. */}
-      {!carregando && Object.keys(casosDoPeriodo).length > 0 && (
-        <TriagemEmLote casos={casosDoPeriodo} somenteLeitura={somenteLeitura} />
       )}
 
       {/* ══ A CAIXA DE E-MAIL ══════════════════════════════════════════════
@@ -462,7 +283,7 @@ export default function PainelEmail({ aoMudar, caixa }: {
         <SecaoPainel
           nome="A caixa de e-mail"
           cor={cores}
-          acao={<BotaoRecolher aberto={verCaixa} aoAlternar={() => setVerCaixa((v) => !v)} />}
+          acao={<BotaoRecolher aberto={verCaixa} aoAlternar={() => setVerCaixa(!verCaixa)} />}
         >
           {verCaixa ? (
             <div className="card-panel">{caixa}</div>
@@ -474,36 +295,6 @@ export default function PainelEmail({ aoMudar, caixa }: {
         </SecaoPainel>
       )}
 
-      {/* ══ A PORTA DE ENTRADA ═════════════════════════════════════════════
-          Mede só quanto o e-mail esperou para ser resolvido. O tempo da
-          análise em si é da esteira, e fica na Análise. */}
-      {!carregando && resumo.resolvidos > 0 && (
-        <SecaoPainel nome={`A porta de entrada · e-mails que viraram caso ${janela.frase}`} cor={cores}>
-          <Moldura
-            titulo="Do e-mail até ser resolvido"
-            origem="recebido_em do e-mail até casos.criado_em, em horas úteis (9h às 18h, sem fim de semana)"
-          >
-            <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))' }}>
-              <Numerinho rotulo="Trazidos" valor={String(resumo.trazidos)} />
-              <Numerinho rotulo="Já analisados" valor={String(resumo.ja_analisados)} sub="por fora do sistema" />
-              <Numerinho rotulo="Mediana" valor={resumo.mediana_horas !== null ? horasTexto(resumo.mediana_horas, metas) : 'sem dado'} />
-              <Numerinho rotulo="Média" valor={resumo.media_horas !== null ? horasTexto(resumo.media_horas, metas) : 'sem dado'} />
-              <Numerinho
-                rotulo="No prazo"
-                valor={pctNoPrazo !== null ? `${pctNoPrazo}%` : 'sem dado'}
-                sub={resumo.com_tempo ? `${resumo.no_prazo} de ${resumo.com_tempo}` : undefined}
-              />
-            </div>
-            <div style={{ ...texto.nota, marginTop: 10 }}>
-              A meta é o e-mail entrar no sistema em {metas.horas_primeira_resposta} h úteis, com o relógio
-              correndo das {metas.hora_inicio}h às {metas.hora_fim}h{metas.conta_fim_de_semana ? '' : ', de segunda a sexta'}.
-              Mediana, média e prazo contam só os trazidos: o “já analisado” entra no total, mas não no
-              tempo, porque a hora do clique não é a hora da análise.
-            </div>
-          </Moldura>
-        </SecaoPainel>
-      )}
-
       {/* ══ OS MAIS ANTIGOS PARADOS ═════════════════════════════════════════
           De qualquer data, e recolhidos (11/09/2026): o número deles já está
           no título e no passivo, lá em cima. */}
@@ -511,7 +302,7 @@ export default function PainelEmail({ aoMudar, caixa }: {
         <SecaoPainel
           nome={`Os ${plural(maisAntigos.length, 'mais antigo parado', 'mais antigos parados')}`}
           cor={cores}
-          acao={<BotaoRecolher aberto={verAntigos} aoAlternar={() => setVerAntigos((v) => !v)} />}
+          acao={<BotaoRecolher aberto={verAntigos} aoAlternar={() => setVerAntigos(!verAntigos)} />}
         >
           {verAntigos && (
             <FilaPedidos
@@ -541,16 +332,6 @@ export default function PainelEmail({ aoMudar, caixa }: {
 }
 
 /* ── as peças pequenas ─────────────────────────────────────────────────── */
-
-function Numerinho({ rotulo, valor, sub }: { rotulo: string; valor: string; sub?: string }) {
-  return (
-    <div>
-      <div style={texto.rotulo}>{rotulo}</div>
-      <div style={{ ...texto.numero, fontSize: 18 }}>{valor}</div>
-      {sub && <div style={texto.nota}>{sub}</div>}
-    </div>
-  )
-}
 
 /** "mostrar" e "recolher", encostado à direita do título de uma seção. */
 function BotaoRecolher({ aberto, aoAlternar }: { aberto: boolean; aoAlternar: () => void }) {

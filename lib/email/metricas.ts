@@ -164,6 +164,9 @@ export interface LinhaPedido {
   cobrado_em: string | null
   analisado_fora_em?: string | null
   analisado_fora_por?: string | null
+  /** Quando a mensagem deixou de estar na Caixa de Entrada. Sai das LISTAS da
+      tela; continua inteira na conta (é o que preserva os KPIs do período). */
+  saiu_em?: string | null
 
   caso_id: string | null
   caso_numero?: number | null

@@ -25,8 +25,9 @@ REM  janela preta: quando alguma coisa quebrar, o erro esta ali, com hora.
 REM ============================================================================
 cd /d "%~dp0.."
 
-REM 1. Ja esta no ar? Entao nao ha nada a fazer.
-curl -s -o nul --max-time 3 http://localhost:3000/login
+REM 1. Ja esta no ar? Entao nao ha nada a fazer. O -f conta 404 e 500 como
+REM    fora do ar: em 15/09/2026 o servidor respondia 404 para tudo e passava.
+curl -sf -o nul --max-time 3 http://localhost:3000/login
 if not errorlevel 1 (
   echo O CRM ja esta de pe em http://localhost:3000
   exit /b 0
@@ -35,6 +36,11 @@ if not errorlevel 1 (
 REM 2. Nao responde. Se sobrou processo desta pasta, ele morre antes de subir o
 REM    novo: e o unico jeito de garantir um escritor so na pasta .next.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*next*' -and $_.CommandLine -like '*fam-crm*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+
+REM A MEMORIA NAO SE MEXE AQUI (15/09/2026): o next dev ja da ao servidor
+REM metade da RAM, uns 15 GB nesta maquina. Mesmo assim, de pe por 30 h, ele
+REM chegou a 80 por cento, se reiniciou sozinho e voltou respondendo 404 para
+REM tudo. Quem cuida disso e o scripts\crm-vigia.ps1.
 
 echo. >> crm-servidor.log
 echo ==== subindo o CRM em %DATE% %TIME% ==== >> crm-servidor.log

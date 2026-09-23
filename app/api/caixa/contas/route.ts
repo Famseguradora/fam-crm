@@ -23,7 +23,13 @@ export const runtime = 'nodejs'
 const CAMPOS_TEXTO = ['apelido', 'pasta'] as const
 const CAMPOS_BOOL = ['ligado', 'so_com_anexo', 'so_nao_lidos', 'so_remetente_interno'] as const
 const CAMPOS_NUM = { dias_para_tras: [1, 365], max_por_rodada: [1, 400] } as const
-const CAMPOS_LISTA = ['remetentes', 'assunto_contem', 'assunto_ignora'] as const
+/* `fila_remetentes` NÃO é régua, e é por isso que ela existe separada de
+   `remetentes` (17/09/2026): é de quem o dono da caixa quer ver na Fila do dia.
+   Gravar uma nunca pode mexer no que a outra decide — `remetentes` é o que o
+   Carteiro usa para gravar `serve`, e `serve` alimenta a aba "Para análise" e o
+   relatório gerencial. O porquê inteiro está em
+   supabase-migration-fila-remetentes.sql. */
+const CAMPOS_LISTA = ['remetentes', 'fila_remetentes', 'assunto_contem', 'assunto_ignora'] as const
 
 /* QUEM É O DONO é campo de gente que administra, e a RLS resolve isso sozinha:
    `email_contas_escrita` confere o WITH CHECK na linha NOVA, então um dono não
@@ -34,7 +40,7 @@ const CAMPOS_LISTA = ['remetentes', 'assunto_contem', 'assunto_ignora'] as const
    login de alguém no CRM pode ser um endereço e a caixa do Outlook outro. */
 const COLUNAS =
   'id, conta, apelido, dono_auth_id, dono_nome, ligado, pasta, so_com_anexo, so_nao_lidos, so_remetente_interno, ' +
-  'dias_para_tras, max_por_rodada, remetentes, assunto_contem, assunto_ignora, ' +
+  'dias_para_tras, max_por_rodada, remetentes, fila_remetentes, assunto_contem, assunto_ignora, ' +
   'maquina, ultimo_contato, ultima_varredura, ultimo_erro'
 
 /* O PostgREST não sabe o formato de uma lista de colunas montada em texto, e o

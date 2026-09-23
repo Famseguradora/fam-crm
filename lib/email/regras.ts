@@ -128,6 +128,16 @@ export function avaliarEmail(
   if (r.so_remetente_interno && !de.includes(`@${DOMINIO_INTERNO_FAM}`)) {
     return { serve: false, motivo: `Remetente não é da FAM (@${DOMINIO_INTERNO_FAM}).` }
   }
+  /* ESTA LISTA CONTINUA SENDO RESTRIÇÃO POR CIMA DO "SÓ INTERNO", e não um
+     atalho que o vence (17/09/2026). Chegou a ser o contrário por algumas
+     horas, para a Fila do dia poder escolher remetente de fora da FAM, e
+     estava errado: `remetentes` é o que o Carteiro usa para gravar `serve`, e
+     inverter isso fazia a caixa inteira mudar de régua só porque alguém montou
+     a lista da SUA fila. A promessa está escrita em
+     supabase-migration-email-so-interno.sql, e ela vale.
+
+     A Fila do dia tem lista própria (`email_contas.fila_remetentes`), que é de
+     quem a pessoa quer VER, e não de quem a FAM aceita como pedido. */
   if ((r.remetentes ?? []).length) {
     const bate = r.remetentes.some((x) => de.includes(String(x).toLowerCase()))
     if (!bate) return { serve: false, motivo: 'Remetente fora da lista.' }

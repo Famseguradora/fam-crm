@@ -20,7 +20,7 @@
    tal, e o que a pessoa decidiu continua vencendo. */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { lerEmail, anexosUteis, limparNome, ehArquivoDeEmail, type EmailLido } from '@/lib/email/ler-email'
+import { lerEmail, anexosUteis, limparNome, ehEmail, nomeDeEmail, type EmailLido } from '@/lib/email/ler-email'
 import { mimePorNome } from '@/lib/anexos/mime'
 import { lerChecklistPorNome, type ItemCatalogo } from '@/lib/casos/checklist'
 import { cnpjDoAssunto, corretoraDoRemetente } from '@/lib/casos/pistas'
@@ -80,9 +80,17 @@ export async function abrirCasoPorEmail(
 ): Promise<ReciboDeAbertura> {
   const vazio = { documentos: 0, ignorados: 0, falhas: [] as string[] }
 
-  if (!ehArquivoDeEmail(entrada.nomeArquivo)) {
+  /* O CONTEÚDO DECIDE, NÃO O NOME (23/09/2026). O e-mail arrastado direto do
+     Outlook é montado pelo navegador a partir de um item virtual (ele mora no
+     Exchange, não no disco), e o nome que chega depende do assunto e da versão
+     do Windows: às vezes vem sem extensão. Recusar por causa do nome era
+     recusar um e-mail que está inteiro ali dentro. `nomeDeEmail` devolve o
+     nome com a extensão certa, para o arquivo guardado abrir com dois cliques
+     depois. */
+  if (!ehEmail(entrada.nomeArquivo, entrada.bruto)) {
     return { ok: false, ...vazio, erro: `"${entrada.nomeArquivo}" não é um e-mail (.msg ou .eml).` }
   }
+  const nomeArquivo = nomeDeEmail(entrada.nomeArquivo, entrada.bruto)
   if (entrada.bruto.length > MAX_BYTES_EMAIL) {
     return {
       ok: false,
@@ -135,7 +143,7 @@ export async function abrirCasoPorEmail(
   }
 
   const documentos = anexosUteis(email)
-  const assunto = limparNome(email.assunto) || entrada.nomeArquivo.replace(/\.(msg|eml)$/i, '')
+  const assunto = limparNome(email.assunto) || nomeArquivo.replace(/\.(msg|eml)$/i, '')
 
   /* As pistas entram no caso já na abertura, e marcadas como pistas. O CNPJ só
      entra se passar no dígito verificador (ver `pistas.ts`): a triagem confirma
@@ -190,7 +198,7 @@ export async function abrirCasoPorEmail(
   const falhas: string[] = []
 
   // O e-mail original fica guardado: é a prova do que chegou.
-  const original = await guardar(entrada.nomeArquivo, entrada.bruto, mimePorNome(entrada.nomeArquivo))
+  const original = await guardar(nomeArquivo, entrada.bruto, mimePorNome(nomeArquivo))
   if (original.caminho) {
     await supabase.from('casos').update({ email_storage_path: original.caminho }).eq('id', caso.id)
   } else {

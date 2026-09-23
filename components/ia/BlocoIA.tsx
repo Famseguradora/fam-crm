@@ -87,8 +87,8 @@ function Moldura({ titulo, origem, children }: {
 
 export default function BlocoIA({ bloco }: { bloco: Bloco }) {
   if (bloco.tipo === 'tabela') {
-    const colunas = (bloco.dados.colunas ?? []) as string[]
-    const linhas = (bloco.dados.linhas ?? []) as unknown[][]
+    const colunas = (Array.isArray(bloco.dados.colunas) ? bloco.dados.colunas : []) as string[]
+    const linhas = (Array.isArray(bloco.dados.linhas) ? bloco.dados.linhas : []) as unknown[][]
     if (!colunas.length || !linhas.length) return null
 
     return (
@@ -128,8 +128,8 @@ export default function BlocoIA({ bloco }: { bloco: Bloco }) {
   }
 
   const eixo = String(bloco.dados.eixo ?? '')
-  const series = (bloco.dados.series ?? []) as { campo: string; rotulo: string }[]
-  const dados = (bloco.dados.dados ?? []) as Record<string, unknown>[]
+  const series = (Array.isArray(bloco.dados.series) ? bloco.dados.series : []) as { campo: string; rotulo: string }[]
+  const dados = (Array.isArray(bloco.dados.dados) ? bloco.dados.dados : []) as Record<string, unknown>[]
   if (!dados.length || !series.length) return null
 
   const formato = bloco.formato ?? 'barra'

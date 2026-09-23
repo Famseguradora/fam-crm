@@ -11,6 +11,6 @@
     "jsx": "react-jsx",
     "plugins": []
   },
-  "include": ["../lib/email/ponte.ts", "../lib/email/ia-saida.ts", "../lib/email/comandos.ts", "../lib/analise/triagem-lote.ts", "../lib/gestao/relatorio-mensal.ts"],
+  "include": ["../lib/email/ponte.ts", "../lib/email/fila.ts", "../lib/email/ia-saida.ts", "../lib/email/comandos.ts", "../lib/analise/triagem-lote.ts", "../lib/gestao/relatorio-mensal.ts"],
   "exclude": []
 }

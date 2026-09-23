@@ -30,6 +30,7 @@ param(
   [string]$Desde = '',
   [int]$Max = 60,
   [string]$EntryId = '',
+  [string]$MessageId = '',
   [string]$Destino = '',
   [string]$Assunto = '',
   [string]$Corpo = '',
@@ -96,6 +97,74 @@ function Conectar {
   }
   Falhar "O Outlook classico esta instalado, mas o perfil nao respondeu. Detalhe: $ultimo" `
     "Abra o Outlook CLASSICO, entre na conta e deixe ele terminar de sincronizar. Se ele ja estiver aberto, espere a sincronizacao acabar e tente de novo."
+}
+
+# ---------------------------------------------------------------------------
+# ACHAR O E-MAIL QUANDO ELE MUDOU DE PASTA (17/09/2026)
+# ---------------------------------------------------------------------------
+# Caso medido: "RE: M&A - TOMADOR: STEEL ROCHA MINERACAO". O e-mail estava na caixa dele, a
+# vista, e o CRM respondia "Nao achei este e-mail no Outlook. Ele pode ter sido movido ou
+# apagado." Estava certo pela metade: foi MOVIDO, da Caixa de Entrada para a subpasta "Ivan".
+#
+# O ENTRYID DO OUTLOOK NAO E ESTAVEL. Ele carrega a pasta dentro de si; arrastar a mensagem
+# para outra pasta gera um EntryID novo, e o antigo deixa de existir. O CRM guardou o EntryID
+# do dia da varredura, e a partir da mudanca de pasta nao alcancava mais nada.
+#
+# O MESSAGE-ID DA INTERNET, esse sim, nasce com a mensagem e nao muda nunca: acompanha ela
+# entre pastas, entre caixas e ate na copia arquivada. O CRM ja guarda esse campo
+# (`emails_caixa.message_id`) desde o comeco, so nao usava para reencontrar.
+#
+# Entao a ordem e: tenta o EntryID (barato, e acerta em 99% das vezes); se ele nao resolver
+# mais, procura pelo Message-ID nas pastas, e quem chamou recebe o EntryID NOVO de volta para
+# gravar. Na proxima vez o caminho barato funciona outra vez.
+#
+# A busca comeca pela caixa da pessoa (-Pasta traz o caminho gravado da pasta), porque
+# na maquina dele ha seis stores abertas e varrer todas custou 20 s no ensaio; com a store
+# certa na frente, custa menos de 2 s.
+$script:ItemAchado = $null
+function ProcurarPorMessageId($ns, $mid, $storePreferida) {
+  $script:ItemAchado = $null
+  # O Message-ID viaja com e sem os sinais de menor/maior, conforme quem gravou. O do MAPI tem.
+  $limpo = "$mid".Trim().Trim('<', '>')
+  if (-not $limpo) { return $null }
+  $filtro = "@SQL=""http://schemas.microsoft.com/mapi/proptag/0x1035001F"" = '<" + $limpo + ">'"
+
+  function VarrerPasta($f, $nivel) {
+    if ($script:ItemAchado -or $nivel -gt 6) { return }
+    try {
+      $r = $f.Items.Restrict($filtro)
+      if ($r.Count -gt 0) { $script:ItemAchado = $r.Item(1); return }
+    } catch { }
+    try { foreach ($sub in $f.Folders) { VarrerPasta $sub ($nivel + 1); if ($script:ItemAchado) { return } } } catch { }
+  }
+
+  $stores = @()
+  try { foreach ($st in $ns.Folders) { $stores += $st } } catch { }
+  if ($storePreferida) {
+    $pref = @($stores | Where-Object { "$($_.Name)" -eq "$storePreferida" })
+    if ($pref.Count) { $stores = $pref + @($stores | Where-Object { "$($_.Name)" -ne "$storePreferida" }) }
+  }
+  foreach ($st in $stores) { VarrerPasta $st 0; if ($script:ItemAchado) { break } }
+  return $script:ItemAchado
+}
+
+# A PORTA UNICA para "me da esse e-mail": EntryID primeiro, Message-ID como rede. Falha aqui
+# significa que a mensagem nao esta em nenhuma pasta desta maquina, e ai a frase antiga vale.
+function PegarItem($ns, $ondeFalhou) {
+  $it = $null
+  if ($EntryId) { try { $it = $ns.GetItemFromID($EntryId) } catch { $it = $null } }
+  if ($it) { return $it }
+  if ($MessageId) {
+    # `-Pasta` chega como o caminho gravado no CRM (duas barras, a conta, a pasta): o
+    # primeiro pedaco e o nome da store, que e por onde a busca comeca.
+    $store = ''
+    try { $store = ("$Pasta".TrimStart([char]92)).Split([char]92)[0] } catch { $store = '' }
+    $it = ProcurarPorMessageId $ns $MessageId $store
+    if ($it) { return $it }
+  }
+  if ($ondeFalhou) { Falhar $ondeFalhou }
+  Falhar 'Nao achei este e-mail no Outlook. Ele pode ter sido movido ou apagado.' `
+    'Procurei pelo identificador da mensagem em todas as pastas desta maquina e nao encontrei. Se ele foi arquivado numa conta que nao esta aberta neste Outlook, abra a conta e tente de novo.'
 }
 
 # O ENDERECO DE VERDADE DO REMETENTE (30/08/2026).
@@ -227,6 +296,48 @@ switch ($Acao) {
     Responder $r
   }
 
+  # ---------------------------------------------------------------------------
+  # O INVENTARIO DA CAIXA INTEIRA (17/09/2026)
+  # ---------------------------------------------------------------------------
+  # Pergunta dele: "eu nao entendo, porque ainda aparece e-mails que eu ja tirei da caixa de
+  # entrada?" Medido no mesmo dia: 84 e-mails que ja tinham saido da Caixa de Entrada
+  # continuavam na tela, e NENHUM deles era dos ultimos 7 dias.
+  #
+  # Era esse o buraco. A varredura le a janela da regua (7 dias) e so consegue concluir "saiu
+  # da caixa" sobre o que esta DENTRO dessa janela. E-mail de 3 de setembro, tirado da caixa em
+  # 10 de setembro, nunca mais era reavaliado por ninguem: ficava na tela para sempre.
+  #
+  # Este inventario responde uma pergunta so, e responde sobre a caixa TODA, sem janela: quais
+  # mensagens estao na Caixa de Entrada agora. So os dois identificadores, nada de assunto,
+  # corpo ou anexo, entao a resposta e pequena mesmo com 600 e-mails.
+  #
+  # POR QUE `GetTable` E NAO O `foreach` DE SEMPRE: percorrer 619 itens abrindo cada mensagem
+  # para ler o Message-ID levou mais de um minuto no ensaio. A tabela MAPI le as duas colunas
+  # de uma vez, sem materializar item nenhum, e responde em segundos. Aqui o volume e a caixa
+  # inteira, e nao a janela, entao a diferenca importa.
+  'inventario' {
+    $ns = Conectar
+    $alvo = AcharPasta $ns $Pasta
+    $tab = $alvo.GetTable()
+    $tab.Columns.RemoveAll()
+    $null = $tab.Columns.Add('EntryID')
+    $null = $tab.Columns.Add('http://schemas.microsoft.com/mapi/proptag/0x1035001F')
+    $itens = New-Object System.Collections.ArrayList
+    # O teto existe para a resposta nunca crescer sem limite; 20.000 e dez vezes a maior caixa
+    # medida na FAM. Quem bate no teto avisa, e o CRM NAO marca saida com inventario cortado.
+    while (-not $tab.EndOfTable -and $itens.Count -lt 20000) {
+      $linha = $tab.GetNextRow()
+      # `GetValues()` devolve as duas colunas na ordem em que foram pedidas. Ler pelo nome
+      # (`$linha.EntryID`) devolve VAZIO calado numa Row do Outlook: foi o primeiro ensaio, e
+      # ele respondeu 619 itens sem um unico identificador dentro.
+      $vals = $null
+      try { $vals = $linha.GetValues() } catch { $vals = $null }
+      if ($vals) { $null = $itens.Add(@{ eid = "$($vals[0])"; mid = "$($vals[1])".Trim('<', '>') }) }
+    }
+    Responder @{ ok = $true; pasta = "$($alvo.FolderPath)"; total_na_pasta = $alvo.Items.Count;
+      cortado = ($itens.Count -ge 20000); itens = @($itens) }
+  }
+
   'pastas' {
     $ns = Conectar
     $inbox = $ns.GetDefaultFolder(6)
@@ -252,15 +363,38 @@ switch ($Acao) {
     $itens = $alvo.Items
     $itens.Sort('[ReceivedTime]', $true)   # mais novo primeiro
 
-    # O Restrict do Outlook exige a data no formato dos Estados Unidos, sempre, mesmo em maquina
-    # em portugues. Passar dd/MM devolve zero e-mail sem erro nenhum, que e o pior tipo de bug:
-    # o sistema diria "nao chegou nada" para sempre.
+    # O FILTRO DE DATA, EM DASL (17/09/2026). A versao anterior usava
+    # "[ReceivedTime] >= 'MM/dd/yyyy hh:mm tt'", porque a documentacao diz que o
+    # Restrict quer a data no formato dos Estados Unidos. NA MAQUINA DO MARCO,
+    # em portugues, isso estava ERRADO e do jeito mais silencioso possivel:
+    #
+    #   janela de 7 dias -> 09/10/2026 -> o Outlook leu "9 de OUTUBRO de 2026",
+    #   uma data no futuro, e devolveu ZERO e-mail. Medido em 17/09/2026:
+    #   1 dia = 1 e-mail, 2 dias = 14, 3 dias = 17, 7 DIAS = 0, 30 dias = 52.
+    #
+    # Ou seja: toda janela que caia num dia <= 12 virava outro mes. A varredura
+    # da semana inteira voltava vazia havia tempos e ninguem via, porque a
+    # olhada de 1 dia continuava funcionando e a caixa do CRM ia se enchendo por
+    # ela. Em formato ambiguo nao ha aviso: ha silencio.
+    #
+    # O DASL (urn:schemas:httpmail:datereceived) le a data em 'yyyy-MM-dd HH:mm',
+    # que nao tem como ser lida de duas maneiras. O Restrict antigo fica de
+    # reserva: se a versao do Outlook recusar o DASL, e melhor voltar ao filtro
+    # duvidoso do que varrer a caixa inteira sem filtro nenhum.
     if ($Desde) {
-      try {
-        $d = [datetime]::Parse($Desde, [Globalization.CultureInfo]::InvariantCulture).ToLocalTime()
-        $filtro = "[ReceivedTime] >= '" + $d.ToString('MM/dd/yyyy hh:mm tt', [Globalization.CultureInfo]::GetCultureInfo('en-US')) + "'"
-        $itens = $itens.Restrict($filtro)
-      } catch { }
+      $d = $null
+      try { $d = [datetime]::Parse($Desde, [Globalization.CultureInfo]::InvariantCulture).ToLocalTime() } catch { }
+      if ($d) {
+        $dasl = "@SQL=""urn:schemas:httpmail:datereceived"" >= '" + $d.ToString('yyyy-MM-dd HH:mm') + "'"
+        $ok = $false
+        try { $itens = $itens.Restrict($dasl); $ok = $true } catch { }
+        if (-not $ok) {
+          try {
+            $filtro = "[ReceivedTime] >= '" + $d.ToString('MM/dd/yyyy hh:mm tt', [Globalization.CultureInfo]::GetCultureInfo('en-US')) + "'"
+            $itens = $itens.Restrict($filtro)
+          } catch { }
+        }
+      }
     }
 
     $saida = @()
@@ -327,9 +461,9 @@ switch ($Acao) {
   # A imagem embutida vira data: URI dentro do proprio HTML. A tela poe isso num iframe com
   # sandbox e CSP que so aceita data:, entao nada daqui liga para fora nem roda script.
   'corpo' {
-    if (-not $EntryId) { Falhar 'Falta o EntryId do e-mail.' }
+    if (-not $EntryId -and -not $MessageId) { Falhar 'Falta o EntryId do e-mail.' }
     $ns = Conectar
-    try { $it = $ns.GetItemFromID($EntryId) } catch { Falhar 'Nao achei este e-mail no Outlook. Ele pode ter sido movido ou apagado.' }
+    $it = PegarItem $ns
     $html = ''
     try { $html = "$($it.HTMLBody)" } catch { $html = '' }
     if ($html.Length -gt 400000) { $html = $html.Substring(0, 400000) }
@@ -363,14 +497,16 @@ switch ($Acao) {
       } catch { }
       try { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue } catch { }
     }
-    Responder @{ ok = $true; entry_id = "$EntryId"; html = $html; imagens = $trocadas }
+    # O entry_id devolvido e o DE AGORA, nao o que chegou: quando o e-mail mudou de pasta,
+    # e por esta resposta que o CRM aprende o endereco novo e para de procurar no lugar velho.
+    Responder @{ ok = $true; entry_id = "$($it.EntryID)"; pasta = "$(try { $it.Parent.FolderPath } catch { '' })"; html = $html; imagens = $trocadas }
   }
 
   'salvar' {
-    if (-not $EntryId) { Falhar 'Falta o EntryId do e-mail.' }
+    if (-not $EntryId -and -not $MessageId) { Falhar 'Falta o EntryId do e-mail.' }
     if (-not $Destino) { Falhar 'Falta a pasta de destino.' }
     $ns = Conectar
-    try { $it = $ns.GetItemFromID($EntryId) } catch { Falhar 'Nao achei este e-mail no Outlook. Ele pode ter sido movido ou apagado.' }
+    $it = PegarItem $ns
 
     # O nome do arquivo sai do assunto, com os caracteres que o Windows nao aceita trocados. O
     # ler-emails.mjs vai reler o assunto de dentro do proprio .msg depois, entao aqui o nome so
@@ -388,7 +524,8 @@ switch ($Acao) {
     # 3 = olMSG. O .msg guarda corpo E anexos num arquivo so, que e exatamente o que o
     # ler-emails.mjs ja sabe abrir desde 01/08. Nenhuma peca nova precisou ser inventada.
     $it.SaveAs($alvo, 3)
-    Responder @{ ok = $true; arquivo = "$(Split-Path -Leaf $alvo)"; caminho = "$alvo"; assunto = "$($it.Subject)"; de = "$($it.SenderName)" }
+    Responder @{ ok = $true; arquivo = "$(Split-Path -Leaf $alvo)"; caminho = "$alvo"; assunto = "$($it.Subject)"; de = "$($it.SenderName)";
+      entry_id = "$($it.EntryID)"; pasta = "$(try { $it.Parent.FolderPath } catch { '' })" }
   }
 
   # ---------------------------------------------------------------------------
@@ -409,9 +546,9 @@ switch ($Acao) {
   #    cliente antes de qualquer um perceber. `enviar` existe e e uma palavra na configuracao,
   #    decisao dele, quando o texto estiver aprovado.
   'responder' {
-    if (-not $EntryId) { Falhar 'Falta o EntryId do e-mail a responder.' }
+    if (-not $EntryId -and -not $MessageId) { Falhar 'Falta o EntryId do e-mail a responder.' }
     $ns = Conectar
-    try { $it = $ns.GetItemFromID($EntryId) } catch { Falhar 'Nao achei este e-mail no Outlook para responder.' }
+    $it = PegarItem $ns 'Nao achei este e-mail no Outlook para responder. Ele pode ter sido apagado.'
 
     $resp = $it.Reply()
     if ($Assunto) { $resp.Subject = $Assunto }
@@ -447,13 +584,50 @@ switch ($Acao) {
   # obriga a sanitizar, e o CRM nao tem esse aparato. Quem precisa ver a assinatura
   # com as imagens abre o e-mail no proprio Outlook.
   'texto' {
-    if (-not $EntryId) { Falhar 'Falta o EntryId do e-mail.' }
+    if (-not $EntryId -and -not $MessageId) { Falhar 'Falta o EntryId do e-mail.' }
     $ns = Conectar
-    try { $it = $ns.GetItemFromID($EntryId) } catch { Falhar 'Nao achei este e-mail no Outlook. Ele pode ter sido movido ou apagado.' }
+    $it = PegarItem $ns
     $t = ''
     try { $t = "$($it.Body)" } catch { $t = '' }
     if ($t.Length -gt 200000) { $t = $t.Substring(0, 200000) + "`r`n`r`n[...] Texto cortado. O e-mail inteiro esta no Outlook." }
-    Responder @{ ok = $true; entry_id = "$EntryId"; texto = $t }
+    Responder @{ ok = $true; entry_id = "$($it.EntryID)"; pasta = "$(try { $it.Parent.FolderPath } catch { '' })"; texto = $t }
+  }
+
+  # ---------------------------------------------------------------------------
+  # UM E-MAIL NOVO (17/09/2026)  ·  os avisos da linha do tempo do pedido
+  # ---------------------------------------------------------------------------
+  # Pedido dele: avisar a cada no do pedido (recebemos, triagem, analise, subscricao).
+  # E e-mail NOVO, e nao resposta no fio, por um motivo pratico: o remetente do pedido
+  # e quase sempre alguem de dentro da FAM encaminhando, e responder aquele fio
+  # mandaria o aviso para a pessoa errada. O destinatario vem escrito do CRM.
+  #
+  # 'rascunho' continua sendo o padrao, pela mesma razao da acao 'responder': texto
+  # automatico em nome da FAM so sai quando ele disser que o texto esta bom. Quem
+  # escolhe e a regua dos avisos, no CRM.
+  #
+  # O texto vai ESCAPADO para HTML. O corpo e montado no CRM e pode citar razao social
+  # com '&' ou '<': sem escapar, isso quebraria a mensagem ou injetaria marcacao.
+  'novo' {
+    if (-not $Destino) { Falhar 'Falta para quem mandar (-Destino).' }
+    if (-not $Assunto) { Falhar 'Falta o assunto (-Assunto).' }
+    $ns = Conectar
+    $app = $ns.Application
+    $msg = $app.CreateItem(0)
+    $msg.To = $Destino
+    $msg.Subject = $Assunto
+    # Escapado a mao, e nao por System.Web: aquela classe nem sempre esta carregada
+    # no PowerShell 5.1, e um erro aqui derrubaria o aviso inteiro por causa de um '&'.
+    $limpo = $Corpo -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+    $novoHtml = ($limpo -replace "`r`n", '<br>') -replace "`n", '<br>'
+    $msg.HTMLBody = '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:10.5pt">' + $novoHtml + '</div>'
+
+    if ($Modo -eq 'enviar') {
+      $msg.Send()
+      Responder @{ ok = $true; modo = 'enviado'; para = "$Destino"; assunto = "$Assunto" }
+    }
+    $msg.Save()
+    Responder @{ ok = $true; modo = 'rascunho'; para = "$Destino"; assunto = "$Assunto";
+      aviso = 'Gravei em Rascunhos, no seu Outlook. Nada foi enviado.' }
   }
 
   default { Falhar "Acao desconhecida: $Acao" }

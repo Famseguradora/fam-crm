@@ -16,3 +16,7 @@ raiz = fso.GetParentFolderName(WScript.ScriptFullName)
 Set sh = CreateObject("WScript.Shell")
 sh.CurrentDirectory = raiz
 sh.Run """" & raiz & "\scripts\crm-subir.cmd""", 0, False
+
+' O VIGIA (15/09/2026): pergunta ao CRM a cada minuto e reinicia quando ele
+' para de abrir. Se ja houver um vigia rodando, este sai sozinho.
+sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & raiz & "\scripts\crm-vigia.ps1""", 0, False

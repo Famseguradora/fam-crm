@@ -34,6 +34,9 @@ import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { maskCNPJ, validarCNPJ, fmtData } from '@/lib/utils'
 import { consultarCNPJpelaTela } from '@/lib/cnpj'
+import { cor } from '@/lib/ui/painel'
+import SociosSerasa from '@/components/serasa/SociosSerasa'
+import { type PedidoSerasa, SERASA_ABERTO, situacaoSerasa } from '@/lib/serasa/pedido'
 
 const CLASSES: { valor: string; rotulo: string }[] = [
   { valor: 'contabil', rotulo: 'Demonstração contábil' },
@@ -116,6 +119,13 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
   const [verCorpo, setVerCorpo] = useState(false)
   const [buscandoReceita, setBuscandoReceita] = useState(false)
 
+  // o Serasa pelo robô, ao lado da Receita
+  const [serasa, setSerasa] = useState<PedidoSerasa | null>(null)
+  const [pedindoSerasa, setPedindoSerasa] = useState(false)
+  const [pasta, setPasta] = useState<string | null>(null)
+  const [quem, setQuem] = useState<{ nome: string | null; analista: boolean }>({ nome: null, analista: false })
+  const serasaAntes = useRef<PedidoSerasa | null>(null)
+
   // rascunho da identificação
   const [cnpj, setCnpj] = useState('')
   const [razao, setRazao] = useState('')
@@ -130,16 +140,10 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
   const [arrastando, setArrastando] = useState(false)
   const seletor = useRef<HTMLInputElement>(null)
 
-  const carregar = useCallback(async () => {
+  /* Documentos e checklist, sem tocar no rascunho do passo 1: é o que recarrega
+     quando o PDF do Serasa chega, com a pessoa talvez digitando lá em cima. */
+  const carregarDocumentos = useCallback(async () => {
     const supabase = createClient()
-    const { data: c } = await supabase.from('casos').select('*').eq('id', id).maybeSingle()
-    if (!c) { setErro('Caso não encontrado.'); setCarregando(false); return }
-    setCaso(c as Caso)
-    setCnpj((c as Caso).cnpj ?? '')
-    setRazao((c as Caso).razao_social ?? '')
-    setCorretoraId((c as Caso).corretora_id ?? '')
-    setProduto((c as Caso).produto ?? '')
-
     const { data: d } = await supabase
       .from('caso_documentos')
       .select('id, nome, classe, certeza, nao_lido, bytes, anexo_id, anexos(storage_path)')
@@ -155,16 +159,90 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
       (a, b) => a.caso_item_catalogo.ordem - b.caso_item_catalogo.ordem,
     )
     setItens(lista)
-    setCarregando(false)
   }, [id])
+
+  const carregar = useCallback(async () => {
+    const supabase = createClient()
+    const { data: c } = await supabase.from('casos').select('*').eq('id', id).maybeSingle()
+    if (!c) { setErro('Caso não encontrado.'); setCarregando(false); return }
+    setCaso(c as Caso)
+    setCnpj((c as Caso).cnpj ?? '')
+    setRazao((c as Caso).razao_social ?? '')
+    setCorretoraId((c as Caso).corretora_id ?? '')
+    setProduto((c as Caso).produto ?? '')
+    // A pasta da análise, quando a esteira já abriu uma: o PDF do Serasa também cai nela.
+    if ((c as Caso).analise_fila_id) {
+      const { data: f } = await supabase.from('analise_fila').select('pasta').eq('id', (c as Caso).analise_fila_id as string).maybeSingle()
+      setPasta((f?.pasta as string | undefined) ?? null)
+    }
+    await carregarDocumentos()
+    setCarregando(false)
+  }, [id, carregarDocumentos])
 
   useEffect(() => { carregar() }, [carregar])
 
   // A mesma consulta do Cadastro do tomador: ativas, em ordem de razão social.
   useEffect(() => {
-    createClient().from('corretoras').select('id, razao_social').eq('status', 'ativo').order('razao_social')
+    const supabase = createClient()
+    supabase.from('corretoras').select('id, razao_social').eq('status', 'ativo').order('razao_social')
       .then(({ data }) => setCorretoras((data ?? []) as { id: string; razao_social: string }[]))
+    // Quem pede o Serasa e quem decide os sócios (a função do banco confere de novo).
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      supabase.from('usuarios').select('nome, email, analista_credito').eq('auth_id', user.id).maybeSingle()
+        .then(({ data }) => setQuem({ nome: data?.nome ?? data?.email ?? user.email ?? null, analista: !!data?.analista_credito }))
+    })
   }, [])
+
+  /* O SERASA NA TRIAGEM (15/09/2026), ao lado da Receita. É o mesmo pedido do
+     cadastro do tomador e do card da análise (`serasa_pedidos`): a esteira do
+     notebook consulta pelo robô, o PDF vira anexo do tomador, cai na pasta da
+     análise e entra no passo 2 com o item do checklist marcado (quem liga ao
+     caso é `/api/esteira/serasa`). Cada consulta é cobrada da FAM: por isso a
+     confirmação, e só com o tomador salvo, porque é o CNPJ dele que a esteira
+     confere antes de gastar. */
+  const tomadorId = caso?.tomador_id ?? null
+  const carregarSerasa = useCallback(async () => {
+    if (!tomadorId) return
+    let q = createClient().from('serasa_pedidos')
+      .select('id, estado, criado_em, feito_em, resultado, pedido_por')
+      .eq('camada', 'empresa').order('criado_em', { ascending: false }).limit(1)
+    q = pasta ? q.or(`tomador_id.eq.${tomadorId},pasta.eq.${JSON.stringify(pasta)}`) : q.eq('tomador_id', tomadorId)
+    const { data } = await q.maybeSingle()
+    const novo = (data as PedidoSerasa | null) ?? null
+    const velho = serasaAntes.current
+    if (velho && novo && velho.id === novo.id && SERASA_ABERTO.includes(velho.estado) && !SERASA_ABERTO.includes(novo.estado)) carregarDocumentos()
+    serasaAntes.current = novo
+    setSerasa(novo)
+  }, [tomadorId, pasta, carregarDocumentos])
+
+  useEffect(() => { carregarSerasa() }, [carregarSerasa])
+  const serasaAberto = !!serasa && SERASA_ABERTO.includes(serasa.estado)
+  useEffect(() => {
+    if (!serasaAberto) return
+    const t = setInterval(carregarSerasa, 5000)
+    return () => clearInterval(t)
+  }, [serasaAberto, carregarSerasa])
+
+  async function pedirSerasa() {
+    const doc = (caso?.cnpj ?? '').replace(/\D/g, '')
+    if (!caso?.tomador_id || doc.length !== 14) return
+    const jaTem = docs.some((d) => d.classe === 'serasa_pj')
+    if (!window.confirm(`Buscar o Serasa de ${caso.razao_social || 'esta empresa'} (CNPJ ${maskCNPJ(doc)})?\n\n${jaTem
+      ? 'O caso já tem um Serasa. Se este CNPJ foi consultado nos últimos 30 dias, o robô reaproveita sem cobrar; senão é uma consulta nova, cobrada.'
+      : 'É uma consulta cobrada da FAM (Relatório Avançado, sem nenhum extra).'}\n\nO robô roda no notebook. O PDF entra no passo 2 em 1 a 2 minutos, e os sócios aparecem aqui para a decisão do analista.`)) return
+    setPedindoSerasa(true); setErro(''); setRecado('')
+    const { error } = await createClient().from('serasa_pedidos').insert({
+      tomador_id: caso.tomador_id,
+      pasta,
+      cnpj: doc,
+      documento: doc,
+      pedido_por: quem.nome,
+    })
+    if (error) setErro(error.code === '23505' ? 'Já há um pedido de Serasa em andamento para esta empresa.' : error.message)
+    await carregarSerasa()
+    setPedindoSerasa(false)
+  }
 
   // Usa a MESMA consulta do botão Receita do Cadastro e da tela de Operações
   // (`lib/cnpj.ts`). Escrever um fetch próprio aqui traria dois defeitos de
@@ -369,6 +447,7 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
   const cadastrado = !!caso.tomador_id && salvo
   const pendentes = itens.filter((i) => !['ok', 'dispensado'].includes(i.situacao))
   const bloqueando = pendentes.filter((i) => i.caso_item_catalogo.exigencia === 'bloqueia')
+  const avisoSerasa = serasa ? situacaoSerasa(serasa, 'nos documentos do passo 2') : null
 
   return (
     <div style={{ padding: '20px 0' }}>
@@ -422,11 +501,12 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 12 }}>
             <div className="form-field">
               <label className="form-label">CNPJ</label>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <input
                   className="fam-input" value={maskCNPJ(cnpj)} disabled={!podeEditar}
                   onChange={(e) => setCnpj(e.target.value.replace(/\D/g, '').slice(0, 14))}
                   placeholder="00.000.000/0000-00" inputMode="numeric"
+                  style={{ flex: '1 1 160px', minWidth: 0 }}
                 />
                 <button
                   className="btn-secondary" onClick={buscarNaReceita}
@@ -435,6 +515,18 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
                 >
                   {buscandoReceita ? '…' : 'Receita'}
                 </button>
+                {!somenteLeitura && !excluido && (
+                  <button
+                    className="btn-secondary" onClick={pedirSerasa}
+                    disabled={!cadastrado || serasaAberto || pedindoSerasa}
+                    title={!cadastrado
+                      ? 'Salve o passo 1 antes: o Serasa consulta o CNPJ do tomador cadastrado'
+                      : 'Consulta o Serasa pelo robô do notebook; o PDF entra nos documentos deste caso'}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    {serasaAberto || pedindoSerasa ? '…' : 'Serasa'}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -468,6 +560,17 @@ export default function TriagemPage({ params }: { params: Promise<{ id: string }
                 placeholder="Garantia Executante, Judicial…" />
             </div>
           </div>
+
+          {avisoSerasa && (
+            <div style={{ border: `1px solid ${avisoSerasa.erro ? cor.alertaBorda : cor.borda}`, background: avisoSerasa.erro ? cor.alertaFundo : cor.papelZebra, borderRadius: 8, padding: '9px 12px', marginTop: 12, color: avisoSerasa.erro ? cor.alerta : cor.textoSub, fontSize: 12.5, lineHeight: 1.5 }}>
+              {avisoSerasa.texto}
+            </div>
+          )}
+          {caso.tomador_id && (
+            <div style={{ marginTop: 12 }}>
+              <SociosSerasa tomadorId={caso.tomador_id} pasta={pasta} analista={quem.analista} classeBotao="btn-secondary" />
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 14 }}>
             {podeEditar && (

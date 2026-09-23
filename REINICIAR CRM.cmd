@@ -35,6 +35,8 @@ echo   limpando o cache de compilacao
 rmdir /s /q .next >nul 2>&1
 
 echo   subindo o CRM
+REM Religado de proposito: o vigia volta a cuidar dele.
+del /q crm-parado.flag >nul 2>&1
 start "" wscript.exe "%~dp0crm-servidor.vbs"
 
 echo.
@@ -43,7 +45,7 @@ setlocal enabledelayedexpansion
 set /a tentativas=0
 :esperar
 set /a tentativas+=1
-curl -s -o nul --max-time 3 http://localhost:3000/login
+curl -sf -o nul --max-time 3 http://localhost:3000/login
 if not errorlevel 1 goto pronto
 if !tentativas! GEQ 60 goto demorou
 timeout /t 2 /nobreak >nul

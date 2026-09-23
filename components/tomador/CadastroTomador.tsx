@@ -20,7 +20,7 @@
 //  tomador, que já mostra tudo o resto (análise, operações, Serasa, grupo).
 // ============================================================================
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Tomador, Corretora, StatusFluxo } from '@/types'
 import { maskCNPJ, maskTelefone, maskCEP, maskMoeda, fmtMoeda, fmtData, titleCase, validarCNPJ } from '@/lib/utils'
@@ -28,6 +28,9 @@ import { usePermissoes } from '@/lib/context/permissoes-context'
 import { consultarCNPJpelaTela } from '@/lib/cnpj'
 import AnexosSection from '@/components/AnexosSection'
 import OrganogramaModal from '@/components/OrganogramaModal'
+import { cor } from '@/lib/ui/painel'
+import SociosSerasa from '@/components/serasa/SociosSerasa'
+import { type PedidoSerasa, SERASA_ABERTO, situacaoSerasa } from '@/lib/serasa/pedido'
 
 const PORTES = ['Small', 'Middle', 'Corporate', 'Large'] as const
 
@@ -59,6 +62,18 @@ interface FormTomador {
   status: string
   ativo: boolean
   data_entrada: string
+  /* A FICHA DA EMPRESA (21/09/2026). Estes oito vieram para cá quando o
+     cadastro do tomador virou um só: antes, quem quisesse corrigir o regime
+     tributário ou o número de filiais tinha que abrir a análise, porque era lá
+     que o dado morava. Agora mora aqui, e a análise guarda a foto do dia. */
+  cnae: string
+  capital_social: string
+  data_abertura: string
+  regime_tributario: string
+  funcionarios: string
+  filiais: string
+  segmento: string
+  setor: string
 }
 
 function doTomador(t: Tomador): FormTomador {
@@ -85,6 +100,14 @@ function doTomador(t: Tomador): FormTomador {
     status: t.status,
     ativo: t.ativo,
     data_entrada: t.data_entrada ?? '',
+    cnae: t.cnae ?? '',
+    capital_social: t.capital_social != null ? maskMoeda(String(Math.round(t.capital_social * 100))) : '',
+    data_abertura: t.data_abertura ?? '',
+    regime_tributario: t.regime_tributario ?? '',
+    funcionarios: t.funcionarios ?? '',
+    filiais: t.filiais ?? '',
+    segmento: t.segmento ?? '',
+    setor: t.setor ?? '',
   }
 }
 
@@ -99,6 +122,12 @@ function Linha({ rotulo, valor, largo }: { rotulo: string; valor: React.ReactNod
     </div>
   )
 }
+
+/* O SERASA PELO ROBÔ (14/09/2026). O botão só grava o pedido em
+   `serasa_pedidos`; quem consulta é a esteira do notebook, onde está o Chrome
+   logado no Serasa, e o PDF volta como anexo deste tomador. Cada consulta é
+   cobrada da FAM, e por isso há confirmação antes e um pedido aberto por vez.
+   O texto do pedido é o mesmo do card da análise: `lib/serasa/pedido.ts`. */
 
 export default function CadastroTomador({ tomador, onSalvo }: {
   tomador: Tomador
@@ -116,12 +145,78 @@ export default function CadastroTomador({ tomador, onSalvo }: {
   const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
 
   const [isProprietario, setIsProprietario] = useState(false)
+  // Quem aprova consulta de sócio no Serasa (a função do banco confere de novo).
+  const [isAnalista, setIsAnalista] = useState(false)
   const [usuarioInfo, setUsuarioInfo] = useState<{ authId: string; nome: string | null; email: string | null } | null>(null)
   const [confirmExcluir, setConfirmExcluir] = useState(false)
   const [excluindo, setExcluindo] = useState(false)
   const [organograma, setOrganograma] = useState(false)
   const [buscandoCnpj, setBuscandoCnpj] = useState(false)
   const [buscandoAnalise, setBuscandoAnalise] = useState(false)
+
+  const [serasa, setSerasa] = useState<PedidoSerasa | null>(null)
+  const [confirmSerasa, setConfirmSerasa] = useState<string | null>(null)
+  const [pedindoSerasa, setPedindoSerasa] = useState(false)
+  // Muda quando o PDF chega, para a lista de anexos recarregar sozinha.
+  const [versaoAnexos, setVersaoAnexos] = useState(0)
+  const serasaAntes = useRef<PedidoSerasa | null>(null)
+
+  const carregarSerasa = useCallback(async () => {
+    const { data } = await createClient().from('serasa_pedidos')
+      .select('id, estado, criado_em, feito_em, resultado, pedido_por')
+      .eq('tomador_id', tomador.id).eq('camada', 'empresa').order('criado_em', { ascending: false }).limit(1).maybeSingle()
+    const novo = (data as PedidoSerasa | null) ?? null
+    const antes = serasaAntes.current
+    if (antes && novo && antes.id === novo.id && SERASA_ABERTO.includes(antes.estado) && !SERASA_ABERTO.includes(novo.estado)) {
+      setVersaoAnexos((v) => v + 1)
+    }
+    serasaAntes.current = novo
+    setSerasa(novo)
+  }, [tomador.id])
+
+  useEffect(() => { carregarSerasa() }, [carregarSerasa])
+  const serasaAberto = !!serasa && SERASA_ABERTO.includes(serasa.estado)
+  useEffect(() => {
+    if (!serasaAberto) return
+    const t = setInterval(carregarSerasa, 5000)
+    return () => clearInterval(t)
+  }, [serasaAberto, carregarSerasa])
+
+  async function prepararSerasa() {
+    setMensagem(null)
+    if ((tomador.cnpj ?? '').replace(/\D/g, '').length !== 14) {
+      setMensagem({ tipo: 'erro', texto: 'Salve um CNPJ válido no cadastro antes de pedir o Serasa.' })
+      return
+    }
+    const { data } = await createClient().from('anexos').select('created_at')
+      .eq('entidade_tipo', 'tomador').eq('entidade_id', tomador.id).ilike('nome_original', 'Serasa Experian%')
+      .gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString())
+      .order('created_at', { ascending: false }).limit(1).maybeSingle()
+    setConfirmSerasa(data
+      ? `Já existe um Serasa deste tomador de ${new Date(data.created_at).toLocaleDateString('pt-BR')} nos anexos. Pedir de novo? Se o robô tiver a consulta dos últimos 30 dias guardada, ele reaproveita sem cobrar.`
+      : 'Consultar o Serasa gera uma consulta cobrada da FAM (Relatório Avançado, sem nenhum extra). O robô roda no notebook, e o PDF aparece nos anexos em 1 a 2 minutos.')
+  }
+
+  async function pedirSerasa() {
+    setPedindoSerasa(true)
+    try {
+      const cnpjSalvo = (tomador.cnpj ?? '').replace(/\D/g, '')
+      const { error } = await createClient().from('serasa_pedidos').insert({
+        tomador_id: tomador.id,
+        cnpj: cnpjSalvo,
+        documento: cnpjSalvo,
+        pedido_por: usuarioInfo?.nome ?? usuarioInfo?.email ?? null,
+      })
+      if (error) {
+        setMensagem({ tipo: 'erro', texto: error.code === '23505' ? 'Já há um pedido de Serasa em andamento para este tomador.' : error.message })
+      }
+      setConfirmSerasa(null)
+      await carregarSerasa()
+    } finally {
+      setPedindoSerasa(false)
+    }
+  }
+  const avisoSerasa = serasa ? situacaoSerasa(serasa) : null
 
   // O cartão CNPJ da Receita completa o que está vazio; o que já foi digitado
   // fica. Quem manda no cadastro é ele, a Receita só adianta.
@@ -142,6 +237,14 @@ export default function CadastroTomador({ tomador, onSalvo }: {
         estado: f.estado || c.estado || '',
         telefone: f.telefone || (c.telefone ? maskTelefone(c.telefone) : ''),
         email: f.email || c.email || '',
+        /* A ficha da empresa também vem da Receita, e ela é a fonte melhor:
+           `capital_social` aqui é o capital REGISTRADO, e não o do balanço
+           que a análise guarda em texto. `data_inicio_atividade` já chega em
+           ISO, que é o que o input `type="date"` espera. */
+        cnae: f.cnae || c.cnae || '',
+        data_abertura: f.data_abertura || c.abertura || '',
+        capital_social: f.capital_social
+          || (c.capital_social != null ? maskMoeda(String(Math.round(c.capital_social * 100))) : ''),
       }))
       setMensagem({ tipo: 'sucesso', texto: `Receita: ${c.razao_social}${c.situacao ? ` · ${c.situacao}` : ''}. Os campos vazios foram completados; confira e salve.` })
     } catch (e: unknown) {
@@ -169,7 +272,7 @@ export default function CadastroTomador({ tomador, onSalvo }: {
       const supabase = createClient()
       const { data, error } = await supabase
         .from('analises')
-        .select('razao_social, data_analise, score_final, rating_cod, nivel_risco, recomendacao, limite_recomendado_txt, limite_recomendado_num, limite_recomendado_tipo, grupo')
+        .select('razao_social, data_analise, score_final, rating_cod, nivel_risco, recomendacao, limite_recomendado_txt, limite_recomendado_num, limite_recomendado_tipo, grupo, segmento, setor, identificacao')
         .eq('cnpj', digitos).eq('vigente', true).maybeSingle()
 
       if (error) { setMensagem({ tipo: 'erro', texto: error.message }); return }
@@ -192,10 +295,26 @@ export default function CadastroTomador({ tomador, onSalvo }: {
         ? maskMoeda(String(Math.round(Number(num) * 100)))
         : ''
 
+      /* A FICHA DA EMPRESA, quando o cadastro ainda não tem (21/09/2026).
+         Só preenche o que está VAZIO: desde que o cadastro virou único, quem
+         manda é ele, e uma análise de seis meses atrás não pode apagar o que
+         ele corrigiu aqui. `capital` e `endereco` da análise ficam de fora de
+         propósito: o capital de lá é o do balanço (não o registrado) e o
+         endereço é uma frase só, enquanto aqui são seis campos. Para esses
+         dois, o botão certo é o Receita. */
+      const ident = (data.identificacao ?? {}) as Record<string, string | null>
+      const daAnalise = (v: string | null | undefined) => (v ?? '').trim()
+
       setForm(f => ({
         ...f,
         razao_social: f.razao_social.trim() || (data.razao_social ?? ''),
         limite_aprovado: limite || f.limite_aprovado,
+        cnae: f.cnae || daAnalise(ident.cnae),
+        regime_tributario: f.regime_tributario || daAnalise(ident.regime),
+        funcionarios: f.funcionarios || daAnalise(ident.funcionarios),
+        filiais: f.filiais || daAnalise(ident.filiais),
+        segmento: f.segmento || daAnalise(data.segmento),
+        setor: f.setor || daAnalise(data.setor),
       }))
 
       const resumo = [
@@ -231,9 +350,10 @@ export default function CadastroTomador({ tomador, onSalvo }: {
       .then(({ data }) => setStatusOpcoes((data as StatusFluxo[]) ?? []))
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
-      supabase.from('usuarios').select('proprietario, nome, email').eq('auth_id', user.id).single()
+      supabase.from('usuarios').select('proprietario, nome, email, analista_credito').eq('auth_id', user.id).single()
         .then(({ data }) => {
           setIsProprietario(data?.proprietario ?? false)
+          setIsAnalista(!!data?.analista_credito)
           setUsuarioInfo({ authId: user.id, nome: data?.nome ?? null, email: data?.email ?? null })
         })
     })
@@ -286,6 +406,15 @@ export default function CadastroTomador({ tomador, onSalvo }: {
       status: form.status,
       ativo: form.ativo,
       data_entrada: form.data_entrada || null,
+      cnae: form.cnae || null,
+      capital_social: form.capital_social
+        ? parseFloat(form.capital_social.replace(/\./g, '').replace(',', '.')) : null,
+      data_abertura: form.data_abertura || null,
+      regime_tributario: form.regime_tributario || null,
+      funcionarios: form.funcionarios || null,
+      filiais: form.filiais || null,
+      segmento: form.segmento || null,
+      setor: form.setor || null,
     }
 
     try {
@@ -372,6 +501,29 @@ export default function CadastroTomador({ tomador, onSalvo }: {
             </div>
           )}
 
+          {confirmSerasa && (
+            <div style={{ border: `1px solid ${cor.borda}`, background: cor.destaque, borderRadius: 8, padding: '12px 14px', marginBottom: 14, color: cor.texto, fontSize: 13 }}>
+              <div style={{ lineHeight: 1.5 }}>{confirmSerasa}</div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="mt-btn" onClick={pedirSerasa} disabled={pedindoSerasa}
+                  style={{ background: cor.acao, borderColor: cor.acao, color: '#fff' }}>
+                  {pedindoSerasa ? 'Pedindo…' : 'Consultar o Serasa'}
+                </button>
+                <button type="button" className="mt-btn" onClick={() => setConfirmSerasa(null)} disabled={pedindoSerasa}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+          {avisoSerasa && !confirmSerasa && (
+            <div style={{ border: `1px solid ${avisoSerasa.erro ? cor.alertaBorda : cor.borda}`, background: avisoSerasa.erro ? cor.alertaFundo : cor.papelZebra, borderRadius: 8, padding: '9px 12px', marginBottom: 14, color: avisoSerasa.erro ? cor.alerta : cor.textoSub, fontSize: 12.5, lineHeight: 1.5 }}>
+              {avisoSerasa.texto}
+            </div>
+          )}
+          <SociosSerasa tomadorId={tomador.id} analista={isAnalista}
+            aoChegarPdf={() => setVersaoAnexos((v) => v + 1)} />
+
+
           {/* ───────────── LEITURA ───────────── */}
           {!editando && (
             <>
@@ -387,6 +539,22 @@ export default function CadastroTomador({ tomador, onSalvo }: {
                 <Linha rotulo="Limite aprovado" valor={tomador.limite_aprovado != null ? fmtMoeda(tomador.limite_aprovado) : null} />
                 <Linha rotulo="Entrada na FAM" valor={tomador.data_entrada ? fmtData(tomador.data_entrada) : null} />
                 <Linha rotulo="Situação" valor={tomador.ativo ? 'Ativo' : 'Inativo'} />
+              </div>
+
+              {/* A FICHA DA EMPRESA, que até 21/09/2026 só existia dentro do
+                  relatório da análise. Fica aqui porque descreve a empresa
+                  HOJE: quando ela muda de regime ou fecha uma filial, quem
+                  está certo é o cadastro, não a análise do semestre passado. */}
+              <div className="mt-sub"><span className="pt" style={{ background: '#2255a4' }} />A empresa</div>
+              <div className="mt-campos">
+                <Linha rotulo="Fundação" valor={tomador.data_abertura ? fmtData(tomador.data_abertura) : null} />
+                <Linha rotulo="Capital social" valor={tomador.capital_social != null ? fmtMoeda(tomador.capital_social) : null} />
+                <Linha rotulo="Funcionários" valor={tomador.funcionarios} />
+                <Linha rotulo="Filiais" valor={tomador.filiais} />
+                <Linha rotulo="Regime tributário" valor={tomador.regime_tributario} />
+                <Linha rotulo="Setor" valor={tomador.setor} />
+                <Linha rotulo="CNAE" valor={tomador.cnae} largo />
+                <Linha rotulo="Segmento" valor={tomador.segmento} largo />
               </div>
 
               <div className="mt-sub"><span className="pt" style={{ background: '#27a96c' }} />Contato</div>
@@ -415,6 +583,13 @@ export default function CadastroTomador({ tomador, onSalvo }: {
                 <button type="button" className="mt-btn" onClick={() => setOrganograma(true)}>
                   Organograma societário
                 </button>
+                {!somenteLeitura && (
+                  <button type="button" className="mt-btn" onClick={prepararSerasa}
+                    disabled={serasaAberto || pedindoSerasa || !tomador.cnpj}
+                    title="Consulta o Serasa pelo robô do notebook e anexa o PDF a este tomador">
+                    {serasaAberto ? 'Serasa em andamento…' : 'Serasa'}
+                  </button>
+                )}
                 {isProprietario && !somenteLeitura && (
                   <button type="button" className="mt-btn" style={{ marginLeft: 'auto', color: '#a3282a', borderColor: '#e3b0b0' }}
                     onClick={() => setConfirmExcluir(true)}>
@@ -457,6 +632,15 @@ export default function CadastroTomador({ tomador, onSalvo }: {
                       disabled={buscandoAnalise || form.cnpj.replace(/\D/g, '').length !== 14}
                       title="Traz Score, Rating, risco e limite da análise de crédito publicada deste CNPJ">
                       {buscandoAnalise ? '…' : 'Análise'}
+                    </button>
+                    {/* O SERASA, ao lado dos dois: consulta o CNPJ SALVO, porque
+                        é ele que a esteira confere antes de gastar a consulta. */}
+                    <button type="button" className="mt-btn" onClick={prepararSerasa}
+                      disabled={serasaAberto || pedindoSerasa || !tomador.cnpj || form.cnpj.replace(/\D/g, '') !== (tomador.cnpj ?? '').replace(/\D/g, '')}
+                      title={form.cnpj.replace(/\D/g, '') !== (tomador.cnpj ?? '').replace(/\D/g, '')
+                        ? 'Salve o CNPJ novo antes de pedir o Serasa'
+                        : 'Consulta o Serasa pelo robô do notebook e anexa o PDF a este tomador'}>
+                      {serasaAberto ? '…' : 'Serasa'}
                     </button>
                   </div>
                   {erroCnpj && <span className="field-error">{erroCnpj}</span>}
@@ -501,6 +685,59 @@ export default function CadastroTomador({ tomador, onSalvo }: {
                   <label className="form-label">Data de Entrada na FAM</label>
                   <input className="fam-input" type="date" value={form.data_entrada}
                     onChange={e => setForm({ ...form, data_entrada: e.target.value })} />
+                </div>
+              </div>
+
+              {/* A FICHA DA EMPRESA. Funcionários e Filiais são texto e não
+                  número de propósito: o acervo guarda "Sem dados (Serasa)" e
+                  frases inteiras como "Nenhuma. As 4 filiais foram encerradas
+                  na AGE de 06/08/2026", e a frase é a informação. */}
+              <div className="mt-sub"><span className="pt" style={{ background: '#2255a4' }} />A empresa</div>
+              <div className="form-grid" style={{ marginBottom: 18 }}>
+                <div className="form-field">
+                  <label className="form-label">Fundação</label>
+                  <input className="fam-input" type="date" value={form.data_abertura}
+                    onChange={e => setForm({ ...form, data_abertura: e.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Capital social (R$)</label>
+                  <input className="fam-input" type="text" placeholder="Ex: 5.000.000,00" value={form.capital_social}
+                    onChange={e => setForm({ ...form, capital_social: maskMoeda(e.target.value) })} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Funcionários</label>
+                  <input className="fam-input" type="text" placeholder="Ex: 77, ou “Sem dados (Serasa)”"
+                    value={form.funcionarios}
+                    onChange={e => setForm({ ...form, funcionarios: e.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Filiais</label>
+                  <input className="fam-input" type="text" placeholder="Ex: 1, ou “Nenhuma”"
+                    value={form.filiais}
+                    onChange={e => setForm({ ...form, filiais: e.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Regime tributário</label>
+                  <input className="fam-input" type="text" placeholder="Lucro Real, Lucro Presumido, Simples…"
+                    value={form.regime_tributario}
+                    onChange={e => setForm({ ...form, regime_tributario: e.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Setor</label>
+                  <input className="fam-input" type="text" placeholder="Energia, Indústria, Serviços…"
+                    value={form.setor}
+                    onChange={e => setForm({ ...form, setor: e.target.value })} />
+                </div>
+                <div className="form-field full">
+                  <label className="form-label">CNAE</label>
+                  <input className="fam-input" type="text" value={form.cnae}
+                    onChange={e => setForm({ ...form, cnae: e.target.value })} />
+                </div>
+                <div className="form-field full">
+                  <label className="form-label">Segmento</label>
+                  <input className="fam-input" type="text" placeholder="O que a empresa faz, em uma frase"
+                    value={form.segmento}
+                    onChange={e => setForm({ ...form, segmento: e.target.value })} />
                 </div>
               </div>
 
@@ -602,7 +839,7 @@ export default function CadastroTomador({ tomador, onSalvo }: {
           <span className="mt-bloco-tit">Anexos do tomador</span>
         </header>
         <div className="mt-bloco-corpo">
-          <AnexosSection entidadeTipo="tomador" entidadeId={tomador.id} />
+          <AnexosSection key={versaoAnexos} entidadeTipo="tomador" entidadeId={tomador.id} />
         </div>
       </section>
 

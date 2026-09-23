@@ -14,6 +14,7 @@
 // ============================================================================
 
 import type { Situacao, Ordem } from './esteira'
+import { FASES, type Fase } from './esteira'
 
 /** A triagem, item por item, como o cadastro.mjs decidiu. */
 export interface ItemCadastro {
@@ -164,6 +165,15 @@ export interface FilaRica {
   substatus: string | null
   substatus_por: string | null
   substatus_em: string | null
+  /** A coluna da Mesa escolhida por uma pessoa (17/09/2026). Vence a fase. */
+  coluna_id?: string | null
+  coluna_por?: string | null
+  coluna_em?: string | null
+  /** A posicao escolhida a mao dentro da coluna (23/09/2026). 1 e o primeiro.
+   *  Nula = ninguem mexeu: entra depois dos priorizados, na ordem automatica. */
+  prioridade?: number | null
+  prioridade_por?: string | null
+  prioridade_em?: string | null
   instrucao: string | null
   modo: string | null
   arquivos_fora: string[]
@@ -205,7 +215,7 @@ export const COLUNAS_FILA = `
   situacao, motivo, etapa, etapa_texto, etapa_em, documentos, documentos_faltando, hash_documentos,
   trava_maquina, trava_em, ordem, ordem_por, ordem_em, ordem_dados, erro, criado_em, criado_por,
   concluido_em, atualizado_em, chave, fase, nome, corretora, produto, docs, cadastro, arquivos,
-  biblioteca, linha, parado_desde, analise_chave, substatus, substatus_por, substatus_em,
+  biblioteca, linha, parado_desde, analise_chave, substatus, substatus_por, substatus_em, coluna_id, coluna_por, coluna_em, prioridade, prioridade_por, prioridade_em,
   instrucao, modo, arquivos_fora, arquivos_fora_em, arquivada, sincronizado_em,
   ultima_ordem_resultado, ultima_ordem_em, automatica, cadastro_agente, cadastro_agente_em, fora_do_disco_em
 `
@@ -217,7 +227,7 @@ export const COLUNAS_MESA = `
   situacao, motivo, etapa, etapa_texto, etapa_em, documentos, documentos_faltando, hash_documentos,
   trava_maquina, trava_em, ordem, ordem_por, ordem_em, ordem_dados, erro, criado_em, criado_por,
   concluido_em, atualizado_em, chave, fase, nome, corretora, produto, docs, cadastro, linha,
-  parado_desde, analise_chave, substatus, substatus_por, substatus_em, instrucao, modo,
+  parado_desde, analise_chave, substatus, substatus_por, substatus_em, coluna_id, coluna_por, coluna_em, prioridade, prioridade_por, prioridade_em, instrucao, modo,
   arquivos_fora, arquivos_fora_em, arquivada, sincronizado_em, ultima_ordem_resultado, ultima_ordem_em,
   automatica, cadastro_agente, fora_do_disco_em
 `
@@ -232,17 +242,21 @@ export const COLUNAS_MESA = `
    A regra de quem aparece mora AQUI, e a Mesa e a contagem da barra usam esta
    mesma função, para o número de cima nunca discordar do quadro.
 
-     pasta no computador                      fica
-     concluída, pasta fora                    sai (foi para a rede; está no Acervo)
-     não concluída, sem caso, pasta fora      sai (card fantasma, nada pendurado nele)
-     não concluída, COM caso, pasta fora      fica, com o aviso: esconder seria sumir
-                                              com o trabalho de alguém sem ninguém ver
+     pasta no computador (raiz ou _concluidas)   fica
+     pasta fora do computador                    sai, qualquer que seja a situação
+
+   14/09/2026, "de uma vez por todas": a Blau Farmacêutica tinha a análise feita
+   e a pasta recortada, mas a linha ficou "pausada" com caso, e a regra antiga
+   segurava na Mesa a não concluída com caso. Para ele a Mesa é o que ainda
+   depende de ajuste NESTE computador: pasta recortada é processo encerrado,
+   seja qual for a situação que a linha guardou. O caso continua no funil e a
+   análise no Acervo; nada some. Colou a pasta de volta, o agente limpa a marca
+   (`de_volta`) e o card volta.
 
    Só a Mesa esconde. O GET da esteira continua mandando a fila inteira, porque a
    automação do agente lê de lá. */
-export function naMesa(f: Pick<FilaRica, 'situacao' | 'caso_id'> & { fora_do_disco_em?: string | null }) {
-  if (!f.fora_do_disco_em) return true
-  return f.situacao !== 'concluida' && !!f.caso_id
+export function naMesa(f: { fora_do_disco_em?: string | null }) {
+  return !f.fora_do_disco_em
 }
 
 /** O retrato da esteira que o agente grava em `analise_estado` (id = 'esteira'). */
@@ -578,4 +592,127 @@ export function nomeDoGrupo(g: GrupoEmpresa): string {
     .reduce((melhor, atual) => (atual.length > melhor.length ? atual : melhor), '')
 
   return maisLongo || daPrincipal || nomeDaFicha(g.principal)
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AS COLUNAS DA MESA  ·  17/09/2026
+
+   Pedido dele: "igual o Trello, eu posso criar novas colunas e, ao entrar no
+   card, dentro do botão 'Mudar o substatus', irá aparecer uma lista com os
+   status das colunas da Mesa". Por exemplo, "Interrompido".
+
+   As colunas moram em `analise_colunas`. As cinco com `fase` são as do
+   sistema, e o card cai nelas sozinho, pela régua do motor. As sem `fase` são
+   dele, e o card só entra quando alguém escolhe no botão do card.
+
+   A ESCOLHA DE GENTE VENCE A RÉGUA: `coluna_id` preenchido manda o card para
+   aquela coluna e ele não sai de lá sozinho, nem quando a análise anda. O
+   mesmo princípio da `pausada`. Coluna arquivada deixa de valer, e o card
+   volta para a coluna automática: arquivar não pode sumir com card nenhum.
+   ══════════════════════════════════════════════════════════════════════════ */
+export interface ColunaMesa {
+  id: string
+  titulo: string
+  fase: Fase | null
+  dica: string | null
+  cor: string
+  ordem: number
+  arquivada: boolean
+}
+
+/** As cinco do código, para a Mesa desenhar mesmo sem a tabela (migration
+ *  atrasada, ou o banco fora do ar por um instante). O id é a própria fase:
+ *  nenhum card aponta para elas por `coluna_id`, então não há o que casar. */
+export const colunasDoCodigo = (): ColunaMesa[] =>
+  FASES.map((f, i) => ({
+    id: `fase:${f.id}`, titulo: f.titulo, fase: f.id, dica: f.dica, cor: f.cor, ordem: (i + 1) * 10, arquivada: false,
+  }))
+
+/** As colunas que a Mesa mostra, na ordem dele. Sem nenhuma do sistema no
+ *  banco, a tela cai no código: ficar sem coluna para o card automático cair
+ *  seria esconder análise. */
+export function colunasVisiveis(doBanco: ColunaMesa[] | null | undefined): ColunaMesa[] {
+  const ativas = (doBanco ?? []).filter((c) => !c.arquivada)
+  if (!ativas.some((c) => c.fase)) return colunasDoCodigo()
+  return [...ativas].sort((a, b) => a.ordem - b.ordem || a.titulo.localeCompare(b.titulo, 'pt-BR'))
+}
+
+/** Em qual coluna o card está. Primeiro a escolha de uma pessoa; se ela não
+ *  existe mais (coluna arquivada), a fase do motor. */
+export function colunaDoCard(
+  f: { coluna_id?: string | null },
+  fase: Fase,
+  colunas: ColunaMesa[],
+): ColunaMesa {
+  const escolhida = f.coluna_id ? colunas.find((c) => c.id === f.coluna_id) : undefined
+  if (escolhida) return escolhida
+  return colunas.find((c) => c.fase === fase) ?? colunas[0]
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   A PRIORIDADE DO CARD  ·  23/09/2026
+
+   Pedido dele: "o Ivan subiu um e-mail depois do Abenaias, mas ele quer
+   urgência no caso: ele arrasta o card, igual o Trello, onde é possível
+   alterar a classificação (1, 2, 3...)".
+
+   O NÚMERO É POSIÇÃO, NÃO GRAVIDADE. 1 é o primeiro da coluna. Não existe
+   "prioridade alta" solta: existe quem está na frente de quem, e é por isso
+   que arrastar um card mexe no número dos outros.
+
+   QUEM NÃO FOI ARRASTADO NÃO TEM NÚMERO, e fica DEPOIS dos que têm, na ordem
+   de sempre (o mais parado primeiro). Card novo não passa na frente do que
+   alguém colocou lá à mão — era exatamente a queixa que abriu o pedido.
+
+   A PRIORIDADE É DA EMPRESA, e o quadro desenha uma empresa por card. Ela é
+   gravada em todas as pastas do grupo (ver a rota /api/esteira/prioridade),
+   então a ordem sobrevive à troca da pasta principal, que muda quando a
+   análise anda.
+
+   Esta é a fonte única: a Mesa ordena por aqui e a rota renumera por aqui.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/** O número do card: o menor entre as pastas da empresa, ou nulo se nenhuma
+ *  foi arrastada. Menor, e não o da principal, porque priorizar uma pasta é
+ *  priorizar a empresa — e a principal de hoje pode não ser a de amanhã. */
+export function prioridadeDoGrupo(g: GrupoEmpresa): number | null {
+  const nums = g.fichas
+    .map((f) => f.prioridade)
+    .filter((p): p is number => typeof p === 'number' && p > 0)
+  return nums.length ? Math.min(...nums) : null
+}
+
+/** A ordem da coluna: primeiro os arrastados, pelo número; depois o resto,
+ *  na ordem em que chegou (a automática, que a Mesa já calculou). O `sort` do
+ *  JS é estável desde o ES2019, e é dele que vem o "o resto não se mexe". */
+export function ordenarNaColuna(grupos: GrupoEmpresa[]): GrupoEmpresa[] {
+  return [...grupos].sort((a, b) => {
+    const pa = prioridadeDoGrupo(a)
+    const pb = prioridadeDoGrupo(b)
+    if (pa !== null && pb !== null) return pa - pb
+    if (pa !== null) return -1
+    if (pb !== null) return 1
+    return 0
+  })
+}
+
+/** O que gravar depois de arrastar: a coluna inteira renumerada de 1 a N, com
+ *  todas as pastas de cada empresa. Renumerar a coluna toda (e não só quem
+ *  mexeu) é o que mantém 1, 2, 3 sem buracos e sem empate — dois cards com o
+ *  mesmo número seriam duas telas discordando sobre quem vem primeiro. */
+export function renumerar(grupos: GrupoEmpresa[]): { ids: string[]; prioridade: number }[] {
+  return grupos.map((g, i) => ({ ids: g.fichas.map((f) => f.id), prioridade: i + 1 }))
+}
+
+/** Tira um card do lugar e põe em outro, dentro da mesma coluna. Devolve a
+ *  coluna na ordem nova, pronta para `renumerar`. */
+export function mover(grupos: GrupoEmpresa[], de: number, para: number): GrupoEmpresa[] {
+  if (de === para || de < 0 || de >= grupos.length) return grupos
+  const destino = Math.max(0, Math.min(grupos.length - 1, para))
+  const lista = [...grupos]
+  const [card] = lista.splice(de, 1)
+  lista.splice(destino, 0, card)
+  return lista
 }

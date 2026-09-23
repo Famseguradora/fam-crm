@@ -594,7 +594,10 @@ export async function perguntarAoServidor(p: PerguntaIA): Promise<ResultadoIA> {
         blocos.push({
           tipo: 'tabela',
           titulo: String(args.titulo ?? 'Tabela'),
-          dados: { colunas: args.colunas ?? [], linhas: args.linhas ?? [] },
+          dados: {
+            colunas: Array.isArray(args.colunas) ? args.colunas : [],
+            linhas: Array.isArray(args.linhas) ? args.linhas : [],
+          },
           origem: args.origem ? String(args.origem) : null,
         })
         conteudo = 'Tabela desenhada na tela. Não repita o conteúdo dela no texto.'
@@ -603,7 +606,11 @@ export async function perguntarAoServidor(p: PerguntaIA): Promise<ResultadoIA> {
           tipo: 'grafico',
           titulo: String(args.titulo ?? 'Gráfico'),
           formato: String(args.formato ?? 'barra'),
-          dados: { eixo: args.eixo ?? '', series: args.series ?? [], dados: args.dados ?? [] },
+          dados: {
+            eixo: args.eixo ?? '',
+            series: Array.isArray(args.series) ? args.series : [],
+            dados: Array.isArray(args.dados) ? args.dados : [],
+          },
           origem: args.origem ? String(args.origem) : null,
         })
         conteudo = 'Gráfico desenhado na tela. Não descreva os valores dele no texto.'

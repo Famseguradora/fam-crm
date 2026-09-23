@@ -18,15 +18,23 @@
    O upload fica recolhido, e não some: ele é saída de emergência, não o caminho
    de todo dia. Era o contrário na primeira versão desta tela, e estava errado. */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { fmtData } from '@/lib/utils'
 import Caixa from './Caixa'
 import PainelEmail from '@/components/comercial/PainelEmail'
-import { SecaoPainel, CartaoNumero, Moldura, GradeCartoes } from '@/components/painel/Painel'
-import { cor, corDaArea, texto, botaoVazado } from '@/lib/ui/painel'
+import NovoPedido from '@/components/comercial/NovoPedido'
+import LigarOutlook from '@/components/comercial/LigarOutlook'
+import PainelGestaoEsteira from '@/components/comercial/PainelGestaoEsteira'
+import FilaDoDia from '@/components/comercial/FilaDoDia'
+import { SecaoPainel, CartaoNumero, Moldura, GradeCartoes, AbasPainel } from '@/components/painel/Painel'
+import { cor, corDaArea, texto, botaoVazado, raio } from '@/lib/ui/painel'
+import { useLembrado } from '@/lib/ui/lembrar'
+
+type Aba = 'fila' | 'email' | 'painel'
+const ehAba = (v: unknown): v is Aba => v === 'fila' || v === 'email' || v === 'painel'
 
 interface Caso {
   id: string
@@ -51,29 +59,37 @@ const ETAPA_BADGE: Record<string, { classe: string; rotulo: string }> = {
   descartado: { classe: 'badge-gray', rotulo: 'Descartado' },
 }
 
-type Recibo = {
-  numero: number
-  assunto: string
-  id: string
-  documentos: number
-  ignorados: number
-  falhas: string[]
-  ja_existia?: boolean
-}
-
 export default function ComercialPage() {
   const router = useRouter()
-  const { somenteLeitura } = usePermissoes()
+  const { somenteLeitura, proprietario } = usePermissoes()
   const [casos, setCasos] = useState<Caso[]>([])
   const [docsPorCaso, setDocsPorCaso] = useState<Record<string, number>>({})
   const [carregando, setCarregando] = useState(true)
-  const [enviando, setEnviando] = useState('')
-  const [erro, setErro] = useState('')
-  const [recibo, setRecibo] = useState<Recibo | null>(null)
-  const [sobre, setSobre] = useState(false)
   const [verUpload, setVerUpload] = useState(false)
   const [cartaoAberto, setCartaoAberto] = useState<string | null>(null)
-  const entrada = useRef<HTMLInputElement>(null)
+
+  /* AS TRÊS ABAS. A Fila do dia abre primeiro, e é de propósito: é a pergunta
+     do começo do expediente ("o que eu tenho para analisar do dia útil
+     anterior?"). A E-mail é o posto de trabalho de olhar o e-mail em si: a
+     caixa crua, os mais antigos parados e o upload de emergência.
+
+     A Painel nasceu em 17/09/2026 como o RELATÓRIO dessas mesmas contas, e em
+     18/09/2026 herdou a ponte inteira ("E-mails de pedido de análise"), a
+     fila do degrau escolhido e o botão da IA, que também saíram da E-mail:
+     primeiro a lista "Tudo o que chegou" e a triagem em lote (período grande
+     virava parede de informação no meio do trabalho do dia), depois a ponte
+     em si (ordem do Marco, vendo-a recolhida ali: "essas informações são
+     mesmo necessárias nessa tela?" — não eram, a Painel já tinha uma
+     equivalente). A informação continua existindo — só mudou de aba.
+
+     A fila não some quando a aba troca: o número dela fica guardado aqui, na
+     página, senão voltar para a E-mail apagaria a contagem da aba.
+
+     A ABA FICA NO NAVEGADOR (18/09/2026): "a forma que eu sair dessa página é
+     a mesma forma que quando eu voltar". Sair do Comercial e voltar tem que
+     abrir na mesma aba de antes, e não sempre na Fila do dia. */
+  const [aba, setAba] = useLembrado<Aba>('fam:comercial:aba', 'fila', ehAba)
+  const [naFila, setNaFila] = useState<number | null>(null)
 
   const carregar = useCallback(async () => {
     const supabase = createClient()
@@ -97,7 +113,24 @@ export default function ComercialPage() {
     setCarregando(false)
   }, [])
 
-  useEffect(() => { carregar() }, [carregar])
+  // A primeira leitura sai no próximo tique, fora do corpo do efeito: é o
+  // mesmo cuidado que o PainelEmail já tomava, e que o lint do React 19 cobra.
+  useEffect(() => {
+    const primeira = setTimeout(carregar, 0)
+    return () => clearTimeout(primeira)
+  }, [carregar])
+
+  /* ESTA TELA É DE QUEM TEM A CAIXA (23/09/2026). Ela mostra a caixa de
+     e-mail da FAM, lida pelo Carteiro na máquina do Comercial. Quem não tem
+     aquela máquina não tem o que fazer aqui e vai para a Entrada de pedidos,
+     que é a porta dele: subir o e-mail salvo e abrir pelo CNPJ.
+
+     Não é segredo guardado na tela: o que protege o conteúdo da caixa é a RLS.
+     Isto é para ninguém abrir um posto de trabalho que não é o seu e achar que
+     o CRM está vazio. */
+  useEffect(() => {
+    if (!proprietario) router.replace('/comercial/entrada')
+  }, [proprietario, router])
 
   /* ── OS NÚMEROS DA ESTEIRA ────────────────────────────────────────────────
      O padrão visual de 09/09/2026 (docs/DESIGN-PAINEL.md): um número grande por
@@ -167,33 +200,13 @@ export default function ComercialPage() {
     )
   }
 
-  async function subir(arquivos: FileList | File[]) {
-    setErro('')
-    setRecibo(null)
-    for (const arquivo of Array.from(arquivos)) {
-      setEnviando(arquivo.name)
-      const corpo = new FormData()
-      corpo.append('email', arquivo)
-      try {
-        const r = await fetch('/api/casos', { method: 'POST', body: corpo })
-        const json = await r.json()
-        if (!r.ok) { setErro(json.erro ?? 'Não consegui abrir o caso.'); break }
-        setRecibo({
-          id: json.caso?.id ?? '',
-          numero: json.caso?.numero ?? 0,
-          assunto: json.caso?.assunto ?? arquivo.name,
-          documentos: json.documentos ?? 0,
-          ignorados: json.ignorados ?? 0,
-          falhas: json.falhas ?? [],
-          ja_existia: !!json.ja_existia,
-        })
-      } catch {
-        setErro('A conexão caiu no meio do envio. Tente de novo.')
-        break
-      }
-    }
-    setEnviando('')
-    await carregar()
+  // A troca de tela já foi pedida no efeito acima: não montar a Caixa no meio.
+  if (!proprietario) {
+    return (
+      <div style={{ padding: '20px 0', color: cor.textoFraco, fontSize: 14 }}>
+        Levando você para a Entrada de pedidos…
+      </div>
+    )
   }
 
   return (
@@ -206,6 +219,29 @@ export default function ComercialPage() {
         </p>
       </div>
 
+      {/* ── as três abas ─────────────────────────────────────────────────── */}
+      <div style={{ borderRadius: `${raio.cartao}px ${raio.cartao}px 0 0`, overflow: 'hidden', marginBottom: 14 }}>
+        <AbasPainel
+          abas={[
+            {
+              id: 'fila' as const,
+              nome: naFila === null ? 'Fila do dia' : `Fila do dia (${naFila})`,
+              dica: 'O que chegou dos seus remetentes até o último dia útil e ainda não virou caso',
+            },
+            { id: 'email' as const, nome: 'E-mail', dica: 'A caixa de e-mail, os mais antigos parados e a entrada manual' },
+            { id: 'painel' as const, nome: 'Painel', dica: 'A evolução da esteira, a ponte por período, "Tudo o que chegou" e a triagem em lote' },
+          ]}
+          atual={aba}
+          aoTrocar={setAba}
+        />
+      </div>
+
+      {aba === 'fila' ? (
+        <FilaDoDia aoMudar={carregar} aoContar={setNaFila} aoVerCaixa={() => setAba('email')} />
+      ) : aba === 'painel' ? (
+        <PainelGestaoEsteira aoMudar={carregar} />
+      ) : (
+      <>
       {/* ── os números, antes do trabalho ────────────────────────────────────
           Quatro cartões e nada mais. A tentação era encher de indicador; o
           padrão pede o contrário: um número grande por cartão, e cartão que não
@@ -272,7 +308,7 @@ export default function ComercialPage() {
 
           A caixa é o único caminho que existe hoje para um e-mail virar caso
           (o botão "Trazer para a esteira" mora lá dentro). */}
-      <PainelEmail aoMudar={carregar} caixa={<Caixa aoAbrirCaso={carregar} />} />
+      <PainelEmail aoMudar={carregar} caixa={<Caixa aoAbrirCaso={carregar} />} aoAbrirGestao={() => setAba('painel')} />
 
       {/* ── a saída de emergência ── */}
       {!somenteLeitura && (
@@ -294,70 +330,24 @@ export default function ComercialPage() {
             </span>
           </button>
 
+          {/* A MESMA PEÇA DA ENTRADA DE PEDIDOS (23/09/2026). Este bloco era
+              uma segunda área de soltura, escrita à parte — e quando o arrastar
+              direto do Outlook ganhou tratamento novo (pedir o arquivo também
+              por `items`, aceitar o e-mail sem extensão no nome, explicar
+              quando o Outlook não entrega nada), esta tela ficaria de fora. Duas
+              áreas de soltura com comportamentos diferentes, no mesmo CRM, é o
+              tipo de divergência que só aparece no dia do aperto. */}
           {verUpload && (
             <div style={{ marginTop: 12 }}>
-              <div
-                onDragOver={(e) => { e.preventDefault(); setSobre(true) }}
-                onDragLeave={() => setSobre(false)}
-                onDrop={(e) => { e.preventDefault(); setSobre(false); if (e.dataTransfer.files.length) subir(e.dataTransfer.files) }}
-                onClick={() => entrada.current?.click()}
-                style={{
-                  border: `2px dashed ${sobre ? '#1e4080' : 'var(--border)'}`,
-                  background: sobre ? '#e8f0fa' : 'var(--card)',
-                  borderRadius: 12, padding: '22px 20px', textAlign: 'center',
-                  cursor: enviando ? 'progress' : 'pointer',
-                  transition: 'border-color .15s, background .15s',
-                }}
-              >
-                <input
-                  ref={entrada} type="file" accept=".msg,.eml" multiple hidden
-                  onChange={(e) => { if (e.target.files?.length) subir(e.target.files); e.target.value = '' }}
-                />
-                <div style={{ fontSize: 14.5, fontWeight: 700, color: '#1a3560' }}>
-                  {enviando ? `Lendo ${enviando}…` : 'Arraste o e-mail aqui, ou clique para escolher'}
-                </div>
-                <div style={{ fontSize: 12.5, color: 'var(--soft)', marginTop: 6 }}>
-                  Arraste direto do Outlook (.msg) ou o arquivo salvo (.eml). Pode soltar vários.
-                  O mesmo e-mail não vira dois casos.
-                </div>
-              </div>
+              {/* O botão de ligar o Outlook também aqui: ele trabalha nesta
+                  tela, e não na da equipe. */}
+              <LigarOutlook aoMudar={carregar} />
+              <NovoPedido aoAbrir={carregar} />
             </div>
           )}
         </div>
       )}
 
-      {erro && <div className="alert-error" style={{ margin: '14px 0' }}>{erro}</div>}
-
-      {recibo && (
-        <div className="alert-success" style={{ margin: '14px 0' }}>
-          <div>
-            {recibo.ja_existia
-              ? <>Este e-mail já era o caso <strong>#{recibo.numero}</strong>: {recibo.assunto}</>
-              : <>Caso <strong>#{recibo.numero}</strong> aberto: {recibo.assunto}</>}
-            {recibo.id && (
-              <button
-                type="button"
-                onClick={() => router.push(`/comercial/${recibo.id}`)}
-                style={{ marginLeft: 10, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', textDecoration: 'underline', color: 'inherit' }}
-              >
-                abrir
-              </button>
-            )}
-          </div>
-          {!recibo.ja_existia && (
-            <div style={{ fontWeight: 400, fontSize: 13, marginTop: 4 }}>
-              {recibo.documentos} documento{recibo.documentos === 1 ? '' : 's'} guardado
-              {recibo.documentos === 1 ? '' : 's'}
-              {recibo.ignorados > 0 && ` · ${recibo.ignorados} anexo${recibo.ignorados === 1 ? '' : 's'} ignorado${recibo.ignorados === 1 ? '' : 's'} (assinatura, imagem do corpo ou arquivo vazio)`}
-            </div>
-          )}
-          {recibo.falhas.length > 0 && (
-            <div style={{ fontWeight: 400, fontSize: 13, marginTop: 6, color: '#a02020' }}>
-              Não subiram: {recibo.falhas.join(' · ')}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── a fila ── */}
       <div className="card-panel" style={{ marginTop: 16 }}>
@@ -415,6 +405,8 @@ export default function ComercialPage() {
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   )
 }

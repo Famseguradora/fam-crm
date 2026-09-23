@@ -368,6 +368,57 @@ export function ehArquivoDeEmail(nome: string) {
   return /\.(msg|eml)$/i.test(nome)
 }
 
+/* O ARQUIVO SE APRESENTA PELO CONTEÚDO, NÃO PELO NOME  ·  23/09/2026
+
+   O nome é uma pista boa, e só. Quando o e-mail vem ARRASTADO do Outlook, o
+   navegador monta o arquivo a partir de um item virtual (o e-mail mora no
+   Exchange, não no disco), e o nome que ele inventa depende do assunto, da
+   versão do Windows e do humor do dia: pode vir "Assunto.msg", pode vir sem
+   extensão, pode vir cortado. Recusar por causa do nome é recusar um e-mail
+   que está inteiro ali dentro.
+
+   As duas assinaturas:
+     .msg  é um arquivo composto do Windows (OLE/CFB), que começa com
+           D0CF11E0A1B11AE1. Mas .doc e .xls antigos também começam assim, e
+           por isso não basta: o .msg guarda as propriedades em streams com o
+           nome `__substg1.0_`, escrito em UTF-16. É esse par que identifica.
+     .eml  é texto puro que começa com cabeçalhos de e-mail. Basta achar um
+           `From:`, `Subject:`, `Received:`, `Message-ID:` ou `MIME-Version:`
+           no começo, antes do corpo.
+
+   Isto NÃO substitui a leitura: é o porteiro. Quem lê de verdade é `lerEmail`,
+   logo abaixo, e ele erra alto se o arquivo estiver corrompido. */
+export function pareceEmail(buf: Buffer): boolean {
+  if (buf.length < 16) return false
+
+  if (buf.subarray(0, 8).toString('hex') === 'd0cf11e0a1b11ae1') {
+    /* `__substg1.0_` em UTF-16LE. Procura no arquivo inteiro e não só no
+       começo: a tabela de diretórios do CFB pode estar no fim, e um .msg
+       grande (anexo pesado) empurra tudo para lá. */
+    return buf.includes(Buffer.from('__substg1.0_', 'utf16le'))
+  }
+
+  /* O .eml: as primeiras linhas são cabeçalhos. 8 KB é muito mais do que
+     qualquer bloco de cabeçalho precisa, e evita varrer um arquivo de 50 MB
+     para responder "não". */
+  const comeco = buf.subarray(0, 8192).toString('latin1')
+  const primeiroBloco = comeco.split(/\r?\n\r?\n/)[0] ?? ''
+  return /^(from|to|subject|date|received|message-id|mime-version|return-path|x-[a-z-]+):/im.test(primeiroBloco)
+}
+
+/** O nome diz que é e-mail, OU o conteúdo prova que é. */
+export const ehEmail = (nome: string, buf: Buffer) => ehArquivoDeEmail(nome) || pareceEmail(buf)
+
+/** O nome com que este e-mail deve ser guardado. Arrastado do Outlook, ele
+ *  chega sem extensão com frequência, e arquivo sem extensão no Storage é
+ *  arquivo que ninguém consegue abrir depois. */
+export function nomeDeEmail(nome: string, buf: Buffer): string {
+  if (ehArquivoDeEmail(nome)) return nome
+  const ext = buf.subarray(0, 8).toString('hex') === 'd0cf11e0a1b11ae1' ? '.msg' : '.eml'
+  const limpo = String(nome || 'e-mail').replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ').trim() || 'e-mail'
+  return limpo + ext
+}
+
 export function lerEmail(buf: Buffer): EmailLido {
   const e = buf.subarray(0, 8).toString('hex') === 'd0cf11e0a1b11ae1' ? lerMsg(buf) : lerEml(buf)
 

@@ -26,6 +26,8 @@ import { ORDEM, ETAPAS, andamentoDaEtapa, SITUACAO, ordemVale, type Ordem } from
 import { dataCurta, desde } from '@/lib/analise/mesa'
 import { maskCNPJ } from '@/lib/utils'
 import { type PropsAba } from './comum'
+import SociosSerasa from '@/components/serasa/SociosSerasa'
+import SerasaDaAnalise from '@/components/serasa/SerasaDaAnalise'
 
 const nomeEtapaOuTexto = (etapa: string | null | undefined, texto: string | null) =>
   texto || ETAPAS.find(([id]) => id === etapa)?.[1] || 'O Claude está lendo os documentos.'
@@ -338,6 +340,10 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
           )}
         </div>
       )}
+
+      {/* ── 0. o Serasa da empresa, e os sócios perguntando (14 e 15/09/2026) ── */}
+      <SerasaDaAnalise f={f} quem={quem} aoChegarPdf={recarregar} />
+      <SociosSerasa pasta={f.semEsteira ? null : f.pasta} tomadorId={f.tomador_id} analista={quem.analista} classeBotao="an-bt" aoChegarPdf={recarregar} />
 
       {/* ── 1. precisa da sua autorização ── */}
       {pedidos.length > 0 && (

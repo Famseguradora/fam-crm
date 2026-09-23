@@ -33,6 +33,7 @@
 //  serviço contratado e sem fatura de token. Ver `_sistema/ponte.mjs`.
 // ============================================================================
 import { NextRequest, NextResponse } from 'next/server'
+import { apenasMudadas } from '@/lib/sync/hash'
 import { createClient } from '@supabase/supabase-js'
 import { SITUACOES, nomeDaEtapa, travaMorta } from '@/lib/analise/esteira'
 import { aplicarCadastroDoAgente } from '@/lib/cadastro/agente-cadastro'
@@ -360,7 +361,7 @@ export async function POST(req: NextRequest) {
           agente: 'esteira', acao: 'passo', tarefa: 'pasta fora do computador', alvo: f.pasta,
           detalhe: f.situacao === 'concluida'
             ? `A pasta "${f.pasta}" saiu do computador (raiz e _concluidas). A análise está concluída: o card sai da Mesa e continua no Acervo.`
-            : `A pasta "${f.pasta}" saiu do computador sem a análise ter terminado (${f.situacao}).`,
+            : `A pasta "${f.pasta}" saiu do computador com a linha em "${f.situacao}": o card sai da Mesa, e o caso, se houver, continua no funil.`,
           cnpj: digitos(f.cnpj).length === 14 ? digitos(f.cnpj) : null,
         })))
       }
@@ -595,9 +596,22 @@ export async function POST(req: NextRequest) {
       })
     }
     if (!linhas.length) return NextResponse.json({ ok: true, gravados: 0 })
-    const { error } = await sb.from('analise_recados').upsert(linhas, { onConflict: 'id' })
+
+    /* SÓ O QUE MUDOU (17/09/2026). O motor manda o mural inteiro a cada 10
+       segundos; antes disto, o CRM reescrevia os ~200 recados todos, sempre.
+       Eram 490 mil UPDATEs em 197 linhas, e cada um virava evento de Realtime.
+       Ver lib/sync/hash.ts para a conta completa. */
+    const { data: jaTem } = await sb
+      .from('analise_recados').select('id, hash_sync').in('id', linhas.map((l) => l.id))
+    const mudaram = apenasMudadas(linhas, jaTem ?? [], [
+      'em', 'agente', 'titulo', 'texto', 'pasta', 'chave', 'cnpj',
+      'assinatura', 'nivel', 'acoes', 'dados', 'lido_em', 'arquivado_em',
+    ])
+    if (!mudaram.length) return NextResponse.json({ ok: true, gravados: 0, iguais: linhas.length })
+
+    const { error } = await sb.from('analise_recados').upsert(mudaram, { onConflict: 'id' })
     if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
-    return NextResponse.json({ ok: true, gravados: linhas.length })
+    return NextResponse.json({ ok: true, gravados: mudaram.length, iguais: linhas.length - mudaram.length })
   }
 
   if (acao === 'recados-ok') {
@@ -644,8 +658,16 @@ export async function POST(req: NextRequest) {
       }
     }).filter((c) => c.id)
 
-    const { error: e1 } = await sb.from('ia_conversas').upsert(linhas, { onConflict: 'id' })
-    if (e1) return NextResponse.json({ erro: e1.message }, { status: 500 })
+    /* SÓ O QUE MUDOU: 48 conversas, 123.736 reescritas antes desta linha. */
+    const { data: conversasNoBanco } = await sb
+      .from('ia_conversas').select('id, hash_sync').in('id', linhas.map((l) => l.id))
+    const conversasMudadas = apenasMudadas(linhas, conversasNoBanco ?? [], [
+      'titulo', 'titulo_dele', 'escopo', 'origem', 'criada', 'ultima', 'trocas',
+    ])
+    if (conversasMudadas.length) {
+      const { error: e1 } = await sb.from('ia_conversas').upsert(conversasMudadas, { onConflict: 'id' })
+      if (e1) return NextResponse.json({ erro: e1.message }, { status: 500 })
+    }
 
     const conhecidas = new Set(linhas.map((c) => c.id))
     const falas = mensagens.slice(0, 4000)
@@ -661,12 +683,31 @@ export async function POST(req: NextRequest) {
       }))
       .filter((m) => m.id && m.texto)
 
-    // Em lotes: 4 mil falas num upsert só é um corpo grande demais para a rota.
+    /* SÓ O QUE MUDOU: eram 495.782 UPDATEs em 179 falas. Uma fala já dita não
+       muda (o jsonl do motor só cresce), então na prática o que sobra aqui é a
+       fala nova — que é exatamente o que a tela precisa receber ao vivo.
+
+       A leitura dos hashes vai em lotes de 500 também: `in(...)` com 4 mil ids
+       estoura o tamanho da URL do PostgREST. */
+    const guardadas: { id: string; hash_sync: string | null }[] = []
     for (let i = 0; i < falas.length; i += 500) {
-      const { error } = await sb.from('ia_mensagens').upsert(falas.slice(i, i + 500), { onConflict: 'id' })
+      const { data } = await sb
+        .from('ia_mensagens').select('id, hash_sync').in('id', falas.slice(i, i + 500).map((f) => f.id))
+      if (data) guardadas.push(...(data as { id: string; hash_sync: string | null }[]))
+    }
+    const falasMudadas = apenasMudadas(falas, guardadas, ['conversa_id', 'quem', 'texto', 'em', 'segundos', 'origem'])
+
+    // Em lotes: 4 mil falas num upsert só é um corpo grande demais para a rota.
+    for (let i = 0; i < falasMudadas.length; i += 500) {
+      const { error } = await sb.from('ia_mensagens').upsert(falasMudadas.slice(i, i + 500), { onConflict: 'id' })
       if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
     }
-    return NextResponse.json({ ok: true, conversas: linhas.length, mensagens: falas.length })
+    return NextResponse.json({
+      ok: true,
+      conversas: conversasMudadas.length,
+      mensagens: falasMudadas.length,
+      iguais: (linhas.length - conversasMudadas.length) + (falas.length - falasMudadas.length),
+    })
   }
 
   // ── alçadas: o catálogo, os pedidos e o diário do alcadas.mjs ─────────────

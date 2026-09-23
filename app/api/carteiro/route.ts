@@ -76,10 +76,21 @@ async function acharOuCriarConta(sb: SupabaseClient, conta: string, maquina: str
 
   const { data: existe } = await sb.from('email_contas').select('*').eq('conta', endereco).maybeSingle()
   if (existe) {
-    await sb
-      .from('email_contas')
-      .update({ ultimo_contato: new Date().toISOString(), maquina: maquina || existe.maquina })
-      .eq('id', existe.id)
+    /* O "ESTOU VIVO" NÃO PRECISA SER DE 5 EM 5 SEGUNDOS (17/09/2026). O
+       Carteiro bate aqui a cada 5 s para perguntar o que fazer, e cada batida
+       reescrevia `ultimo_contato`: 54 mil UPDATEs numa tabela de DUAS linhas.
+       A tela chama a caixa de parada com 15 minutos sem contato, então um
+       minuto de granularidade é de sobra — e a máquina continua respondendo no
+       mesmo ritmo, porque o que mudou foi a gravação, não a batida. */
+    const agoraISO = new Date().toISOString()
+    const velho = !existe.ultimo_contato || Date.now() - new Date(existe.ultimo_contato).getTime() > 60_000
+    const maquinaMudou = !!maquina && maquina !== existe.maquina
+    if (velho || maquinaMudou) {
+      await sb
+        .from('email_contas')
+        .update({ ultimo_contato: agoraISO, maquina: maquina || existe.maquina })
+        .eq('id', existe.id)
+    }
     return { conta: existe }
   }
 
@@ -140,7 +151,12 @@ export async function GET(req: NextRequest) {
      Só o que é DESTA caixa: cada máquina só alcança o Outlook dela. */
   const { data: aTrazer } = await sb
     .from('emails_caixa')
-    .select('id, entry_id, assunto')
+    /* O `message_id` VAI JUNTO, e nao e enfeite (17/09/2026): o EntryID do
+       Outlook morre quando a mensagem muda de pasta, e o Message-ID nao. Com
+       os dois na mao, a maquina reencontra o e-mail arrastado para uma
+       subpasta em vez de responder "nao achei" com ele a vista na caixa. A
+       `pasta` diz por qual caixa comecar a procurar. */
+    .select('id, entry_id, message_id, pasta, assunto')
     .eq('estado', 'a_trazer')
     .eq('conta_id', conta.id)
     .not('entry_id', 'is', null)
@@ -153,7 +169,7 @@ export async function GET(req: NextRequest) {
      clique não custar outra viagem. */
   const { data: precisaCorpo } = await sb
     .from('emails_caixa')
-    .select('id, entry_id')
+    .select('id, entry_id, message_id, pasta')
     .not('corpo_pedido_em', 'is', null)
     .is('corpo_em', null)
     .eq('conta_id', conta.id)
@@ -393,9 +409,86 @@ export async function POST(req: NextRequest) {
       await sb.from('emails_caixa').update({ visto_em: agora }).in('id', inalterados.slice(i, i + 100))
     }
 
+    /* ── QUEM SAIU DA CAIXA DE ENTRADA (17/09/2026) ────────────────────────
+       Ordem dele: "eu retiro alguns e-mails para outras caixas... tem que ser
+       somente o que está na caixa de entrada".
+
+       O Carteiro sempre leu só a Caixa de Entrada. O que faltava era a volta:
+       mover a mensagem no Outlook não dizia nada ao CRM, e a caixa daqui ia
+       ficando diferente da caixa de verdade.
+
+       SÓ VALE NA VARREDURA COMPLETA, e a diferença é toda: a olhada rápida
+       traz 25 e-mails de um dia, e tomá-la por completa marcaria a caixa
+       inteira como "saiu" a cada 30 segundos. Por isso o Carteiro precisa
+       dizer `completa: true` e de onde começou a janela (`janela_desde`); sem
+       os dois, nada é marcado. Se a mensagem voltar para a caixa, a varredura
+       seguinte zera o campo — por isso `saiu_em: null` sobe junto com quem
+       apareceu no lote.
+
+       NÃO APAGA NADA: o caso aberto, os documentos e a trilha continuam. */
+    let sairam = 0
+    let voltaram = 0
+    // Quantos sumiram quando o teto barrou a rodada. A tela e o log precisam
+    // saber a diferença entre "ninguém saiu" e "saiu gente demais para ser normal".
+    let suspeita = 0
+    const janelaDesde = dataOuNulo(String(corpo.janela_desde ?? ''))
+    if (corpo.completa === true && janelaDesde) {
+      const vistosAgora = new Set<string>()
+      for (const x of limpos) {
+        if (x.entry_id) vistosAgora.add('e:' + x.entry_id)
+        if (x.message_id) vistosAgora.add('m:' + x.message_id)
+      }
+
+      const { data: naCaixa } = await sb
+        .from('emails_caixa')
+        .select('id, entry_id, message_id, saiu_em')
+        .eq('conta_id', conta.id)
+        .gte('recebido_em', janelaDesde)
+        .limit(2000)
+
+      const sumiram: string[] = []
+      const reapareceram: string[] = []
+      /* A TRAVA DE SANIDADE (17/09/2026). No mesmo dia em que isto nasceu, foi
+         descoberto que a varredura de 7 dias voltava VAZIA por causa de um
+         filtro de data ambíguo no Outlook (ver scripts/outlook.ps1). Com uma
+         lista errada, "quem não veio saiu" apagaria a caixa inteira da tela de
+         uma vez, calado.
+
+         Duas defesas, e as duas são baratas:
+           · lote vazio nunca marca nada (o `if (!limpos.length)` acima já
+             devolve antes de chegar aqui);
+           · mais de 100 sumindo numa rodada é sintoma, não rotina: o servidor
+             recusa, devolve `saida_suspeita` e o Carteiro registra no log.
+         Uma limpeza grande de verdade (a primeira, depois de meses movendo
+         e-mail) passa em rodadas sucessivas de 100, ou com `forcar_saida`. */
+      const TETO_POR_RODADA = 100
+      for (const r of (naCaixa ?? []) as { id: string; entry_id: string | null; message_id: string | null; saiu_em: string | null }[]) {
+        const veio =
+          (r.entry_id && vistosAgora.has('e:' + r.entry_id)) ||
+          (r.message_id && vistosAgora.has('m:' + r.message_id))
+        if (veio && r.saiu_em) reapareceram.push(r.id)
+        if (!veio && !r.saiu_em) sumiram.push(r.id)
+      }
+
+      const demais = sumiram.length > TETO_POR_RODADA && corpo.forcar_saida !== true
+      const marcar = demais ? sumiram.slice(0, TETO_POR_RODADA) : sumiram
+      for (let i = 0; i < marcar.length; i += 100) {
+        const { data } = await sb
+          .from('emails_caixa').update({ saiu_em: agora }).in('id', marcar.slice(i, i + 100)).select('id')
+        sairam += data?.length ?? 0
+      }
+      if (demais) suspeita = sumiram.length
+      for (let i = 0; i < reapareceram.length; i += 100) {
+        const { data } = await sb
+          .from('emails_caixa').update({ saiu_em: null }).in('id', reapareceram.slice(i, i + 100)).select('id')
+        voltaram += data?.length ?? 0
+      }
+    }
+
     await sb.from('email_contas').update({ ultima_varredura: agora, ultimo_erro: null }).eq('id', conta.id)
     return NextResponse.json({
       ok: true, novos: inseridos, atualizados, iguais: inalterados.length, total: limpos.length,
+      sairam, voltaram, saida_suspeita: suspeita,
     })
   }
 
@@ -412,6 +505,108 @@ export async function POST(req: NextRequest) {
         corpo_em: new Date().toISOString(),
       })
     const { data, error } = id ? await q.eq('id', id).select('id') : await q.eq('entry_id', entryId).select('id')
+    if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
+    if (!data?.length) return NextResponse.json({ erro: 'E-mail não está na caixa.' }, { status: 404 })
+    return NextResponse.json({ ok: true })
+  }
+
+  /* ── inventario: a caixa INTEIRA, para o que saiu sair da tela ─────────────
+     ═══════════════════════════════════════════════════════════════════════
+     Pergunta dele em 17/09/2026: "eu nao entendo, porque ainda aparece e-mails
+     que eu já tirei da caixa de entrada?" Medido na hora: 84 e-mails já fora
+     da Caixa de Entrada continuavam na tela, e NENHUM era dos últimos 7 dias.
+
+     Essa era a explicação inteira. A saída pela varredura (`sincronizar`) só
+     conclui "saiu" sobre o que está DENTRO da janela da régua, que é de 7
+     dias. E-mail de 3 de setembro, tirado da caixa em 10 de setembro, não era
+     reavaliado por ninguém nunca mais: ficava na tela para sempre.
+
+     O inventário responde sobre a caixa toda, sem janela. E é barato: só os
+     dois identificadores de cada mensagem, 619 itens em 1,3 s pela tabela
+     MAPI.
+
+     NADA É APAGADO, E NENHUM KPI SE PERDE. Ordem dele no mesmo minuto: "não
+     quero perder os KPIs". `saiu_em` é uma marca de onde a mensagem está
+     hoje, não uma exclusão: a linha continua inteira no banco, com estado,
+     caso, classificação e datas. O relatório gerencial e os números do painel
+     leem `painel_pedidos` sem olhar `saiu_em` — quem olha são as LISTAS, que
+     é justamente a poluição que ele quer fora.
+
+     As travas, porque aqui se apaga e-mail da tela em lote:
+       · inventário vazio ou cortado no teto não marca nada (lista incompleta
+         marcaria a caixa inteira como saída, calada);
+       · linha sem `message_id` nunca é marcada: o EntryID que a tabela MAPI
+         devolve tem outro formato, então quem não tem Message-ID não tem como
+         ser encontrado na lista, e ausência de prova não é prova de ausência;
+       · teto de 100 por rodada, com o resto indo nas rodadas seguintes. */
+  if (acao === 'inventario') {
+    const achada = await acharOuCriarConta(sb, String(corpo.conta ?? ''), String(corpo.maquina ?? ''))
+    if (achada.erro) return NextResponse.json({ erro: achada.erro }, { status: 422 })
+    const conta = achada.conta!
+    if (!conta.ligado) {
+      return NextResponse.json({ erro: `A caixa ${conta.conta} está desligada.`, desligada: true }, { status: 409 })
+    }
+    const marcadoEm = new Date().toISOString()
+    const itens = Array.isArray(corpo.itens) ? (corpo.itens as { eid?: string; mid?: string }[]) : []
+    if (!itens.length) return NextResponse.json({ erro: 'Inventário vazio: não marquei nada.' }, { status: 422 })
+    if (corpo.cortado === true) return NextResponse.json({ erro: 'Inventário cortado no teto: não marquei nada.' }, { status: 422 })
+
+    const naCaixaAgora = new Set<string>()
+    for (const x of itens) if (x.mid) naCaixaAgora.add(String(x.mid).replace(/^<|>$/g, ''))
+    if (!naCaixaAgora.size) {
+      return NextResponse.json({ erro: 'Inventário sem Message-ID: não marquei nada.' }, { status: 422 })
+    }
+
+    const { data: guardados, error: erroLer } = await sb
+      .from('emails_caixa')
+      .select('id, message_id, saiu_em')
+      .eq('conta_id', conta.id)
+      .not('message_id', 'is', null)
+      .limit(5000)
+    if (erroLer) return NextResponse.json({ erro: erroLer.message }, { status: 500 })
+
+    const sumiram: string[] = []
+    const voltaram: string[] = []
+    for (const r of (guardados ?? []) as { id: string; message_id: string; saiu_em: string | null }[]) {
+      const esta = naCaixaAgora.has(r.message_id.replace(/^<|>$/g, ''))
+      if (!esta && !r.saiu_em) sumiram.push(r.id)
+      if (esta && r.saiu_em) voltaram.push(r.id)
+    }
+
+    const TETO = 100
+    const marcar = sumiram.slice(0, TETO)
+    let sairam = 0
+    let devolvidos = 0
+    for (let i = 0; i < marcar.length; i += 100) {
+      const { data } = await sb
+        .from('emails_caixa').update({ saiu_em: marcadoEm }).in('id', marcar.slice(i, i + 100)).select('id')
+      sairam += data?.length ?? 0
+    }
+    for (let i = 0; i < voltaram.length; i += 100) {
+      const { data } = await sb
+        .from('emails_caixa').update({ saiu_em: null }).in('id', voltaram.slice(i, i + 100)).select('id')
+      devolvidos += data?.length ?? 0
+    }
+    return NextResponse.json({
+      ok: true, na_caixa: naCaixaAgora.size, conferidos: guardados?.length ?? 0,
+      sairam, voltaram: devolvidos, faltam: Math.max(0, sumiram.length - marcar.length),
+    })
+  }
+
+  /* ── endereco: o e-mail mudou de pasta, e o CRM aprende o lugar novo ───────
+     A maquina achou a mensagem pelo Message-ID depois do EntryID falhar. Sem
+     gravar aqui, toda leitura seguinte pagaria a varredura de novo (20 s na
+     maquina dele) e o CRM continuaria guardando um endereco morto.
+
+     So mexe em `entry_id` e `pasta`: estado, caso e classificacao continuam
+     onde estavam. Mudar de pasta nao e decisao sobre o pedido. */
+  if (acao === 'endereco') {
+    const id = String(corpo.id ?? '')
+    const entryId = String(corpo.entry_id ?? '')
+    if (!id || !entryId) return NextResponse.json({ erro: 'Falta o e-mail ou o endereço novo.' }, { status: 422 })
+    const mudanca: Record<string, string> = { entry_id: entryId.slice(0, 500) }
+    if (corpo.pasta) mudanca.pasta = String(corpo.pasta).slice(0, 500)
+    const { data, error } = await sb.from('emails_caixa').update(mudanca).eq('id', id).select('id')
     if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
     if (!data?.length) return NextResponse.json({ erro: 'E-mail não está na caixa.' }, { status: 404 })
     return NextResponse.json({ ok: true })
@@ -435,5 +630,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  return NextResponse.json({ erro: 'Ação desconhecida (sincronizar, corpo, erro).' }, { status: 422 })
+  return NextResponse.json({ erro: 'Ação desconhecida (sincronizar, inventario, corpo, endereco, erro).' }, { status: 422 })
 }

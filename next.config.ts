@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // A equipe abre o CRM tanto por localhost quanto por 127.0.0.1. Em modo
+  // desenvolvimento, o Next bloqueia os assets do cliente quando o hostname
+  // da aba difere do hostname usado para iniciar o servidor; a tela então
+  // renderiza, mas fica sem hidratação e parece estática.
+  allowedDevOrigins: ['127.0.0.1'],
+
   // A tela do FAM Financeiro é um HTML único que a rota lê do disco em tempo de
   // execução. Como o caminho é montado com process.cwd(), o rastreador do build
   // não enxerga a dependência e o arquivo não subiria para a Vercel · sem esta

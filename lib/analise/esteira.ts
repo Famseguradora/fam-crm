@@ -139,6 +139,16 @@ export function faseDe(situacao: string, cadastro: string | null | undefined): F
   if (situacao === 'concluida') return 'pronta'
   if (situacao === 'em_andamento') return 'analisando'
   if (cadastro === 'pendente') return 'entrada'
+  /* A LINHA QUE ACABOU DE NASCER (23/09/2026). O card criado pelo e-mail (ou
+     pelo CNPJ) entra sem `cadastro`: quem preenche esse campo é o agente do
+     notebook, depois de montar a pasta e ler os documentos — o que pode levar
+     minutos, ou horas se o notebook estiver desligado.
+
+     Sem esta linha a conta caía no `return 'liberado'` do fim, e o card recém-
+     chegado aparecia em "Liberado · Cadastro em ordem, pode analisar", que é o
+     contrário da verdade: ninguém tinha olhado nada ainda. Pendente e sem
+     leitura é Entrada, que é onde ele deve esperar. */
+  if (!cadastro && situacao === 'pendente') return 'entrada'
   if (['aguardando_resposta', 'bloqueada_documentos', 'aguardando_documentos', 'erro', 'pausada'].includes(situacao)
     || cadastro === 'bloqueado' || cadastro === 'em_conferencia') return 'conferencia'
   return 'liberado'

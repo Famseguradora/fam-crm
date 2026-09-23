@@ -18,7 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { abrirCasoPorEmail, MAX_BYTES_EMAIL } from '@/lib/casos/abrir-por-email'
-import { ehArquivoDeEmail } from '@/lib/email/ler-email'
+import { ehEmail } from '@/lib/email/ler-email'
 
 export const runtime = 'nodejs'
 
@@ -47,12 +47,9 @@ export async function POST(req: NextRequest) {
   if (!(arquivo instanceof File)) {
     return NextResponse.json({ erro: 'Nenhum e-mail foi enviado.' }, { status: 400 })
   }
-  if (!ehArquivoDeEmail(arquivo.name)) {
-    return NextResponse.json(
-      { erro: `"${arquivo.name}" não é um e-mail. Arraste o e-mail do Outlook (.msg) ou o arquivo .eml.` },
-      { status: 400 },
-    )
-  }
+  /* O TAMANHO SE CONFERE ANTES DE LER O CORPO. O conteúdo é quem diz se é
+     e-mail (23/09/2026), e para olhar o conteúdo é preciso carregá-lo na
+     memória — não vale carregar 400 MB para então recusar. */
   if (arquivo.size > MAX_BYTES_EMAIL) {
     return NextResponse.json(
       { erro: `E-mail de ${(arquivo.size / 1024 / 1024).toFixed(1)} MB. O limite é 50 MB.` },
@@ -60,10 +57,22 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  const bruto = Buffer.from(await arquivo.arrayBuffer())
+
+  /* O NOME É PISTA, O CONTEÚDO É PROVA. O e-mail arrastado direto do Outlook
+     chega com o nome que o Windows inventou na hora, às vezes sem extensão
+     nenhuma; recusar por causa disso era recusar um e-mail inteiro. */
+  if (!ehEmail(arquivo.name, bruto)) {
+    return NextResponse.json(
+      { erro: `"${arquivo.name}" não é um e-mail. Arraste o e-mail do Outlook (.msg) ou o arquivo .eml.` },
+      { status: 400 },
+    )
+  }
+
   const { data: quem } = await supabase.from('usuarios').select('nome').eq('auth_id', user.id).maybeSingle()
 
   const recibo = await abrirCasoPorEmail(supabase, {
-    bruto: Buffer.from(await arquivo.arrayBuffer()),
+    bruto,
     nomeArquivo: arquivo.name,
     autor: { auth_id: user.id, nome: quem?.nome ?? user.email ?? null },
   })
