@@ -10,10 +10,19 @@ interface PermissoesCtx {
   somenteLeitura: boolean
   proprietario: boolean
   podePublicarAvisos: boolean
-  // Análise de crédito: um analista só (o Marco). Todo mundo VÊ a análise —
-  // ele quer a equipe acompanhando o trabalho —, mas só o analista decide
-  // conflito e aplica ao cadastro. Não é `perfil`: os 7 admins não editam.
-  // A trava real é a RLS `fam_e_analista()`; isto aqui só some com o botão.
+  // ANÁLISE DE CRÉDITO, três andares. Nenhum deles é `perfil`.
+  //   veAnalise ..... entra em /analises. `usuarios.acesso_analise`, marcado
+  //                   na tela /usuarios. RLS `fam_ve_analise()`.
+  //   ajudaAnalise .. arrasta card na coluna, escreve a nota do tomador,
+  //                   encaminha. Ver mais perfil que não é `leitura`, que foi
+  //                   o pedido literal dele em 23/09/2026: "os que são somente
+  //                   leitura não podem arrastar cards, só visualizar".
+  //                   RLS `fam_ajuda_analise()`.
+  //   editaAnalise .. decide conflito e aplica ao cadastro. Um analista só (o
+  //                   Marco). RLS `fam_e_analista()`.
+  // A trava real é sempre a RLS; isto aqui só some com o botão.
+  veAnalise: boolean
+  ajudaAnalise: boolean
   editaAnalise: boolean
 }
 
@@ -22,6 +31,8 @@ const PermissoesContext = createContext<PermissoesCtx>({
   somenteLeitura: false,
   proprietario: false,
   podePublicarAvisos: false,
+  veAnalise: false,
+  ajudaAnalise: false,
   editaAnalise: false,
 })
 
@@ -30,12 +41,16 @@ export function PermissoesProvider({
   perfil,
   proprietario,
   podePublicarAvisos,
+  veAnalise = false,
+  ajudaAnalise = false,
   editaAnalise = false,
 }: {
   children: React.ReactNode
   perfil: string
   proprietario: boolean
   podePublicarAvisos: boolean
+  veAnalise?: boolean
+  ajudaAnalise?: boolean
   editaAnalise?: boolean
 }) {
   const p: Perfil = perfil === 'admin' || perfil === 'leitura' ? perfil : 'usuario'
@@ -45,6 +60,8 @@ export function PermissoesProvider({
       somenteLeitura: p === 'leitura',
       proprietario,
       podePublicarAvisos,
+      veAnalise,
+      ajudaAnalise,
       editaAnalise,
     }}>
       {children}

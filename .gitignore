@@ -58,6 +58,10 @@ next-env.d.ts
 .sandbox-test/
 .tmp-email/
 .tmp-carteiro/
+.tmp-prioridade/
+.tmp-porteiro/
+.tmp-arrasto/
+.tmp-volta/
 
 # ── Caixa real da FAM: NUNCA versionar ──────────────────────────────────────
 # Estes arquivos têm o fluxo de caixa de verdade (remuneração de cada diretor,
@@ -96,6 +100,9 @@ scripts/esteira.json
 # O log do servidor da maquina (o que substituiu a janela preta). E historico
 # local, cresce sozinho e nao e fonte.
 crm-servidor.log
+# O vigia do servidor (15/09/2026): o que ele fez, e a marca de "parado de proposito".
+crm-vigia.log
+crm-parado.flag
 
 # Os logs dos agentes da maquina (10/09/2026). Alem de historico local, eles
 # trazem ASSUNTO DE E-MAIL com razao social e valor de operacao ("ENC: RIALMA
@@ -150,3 +157,22 @@ scripts/teste-*.cjs
 # por revisao de codigo, e num repositorio publico basta um `git add` para o
 # dado sair de casa. Regerada a cada `node scripts/ensaio-*.mjs`.
 /ensaios/
+
+# Gerados pelo LIGAR OUTLOOK.cmd: tem segredo do aplicativo do Entra ID.
+COLAR-NA-VERCEL.txt
+.env.local.bak-*
+
+ligar-outlook.log
+
+# Saida do servidor local, que o `crm-servidor.vbs` e o preview escrevem sem
+# parar. Sao logs de execucao desta maquina: nao ajudam ninguem no repositorio
+# e mudam a cada segundo, poluindo todo `git status` (23/09/2026).
+.crm-dev.out.log
+.crm-dev.err.log
+.preview-torre.out.log
+.preview-torre.err.log
+
+# Cache de build dos prototipos em /propostas. Eram 162 arquivos no `git status`
+# — mais do que o codigo novo da arvore inteira — e escondiam o que importava.
+propostas/**/.next/
+propostas/**/node_modules/

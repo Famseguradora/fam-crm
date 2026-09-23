@@ -90,6 +90,14 @@ export async function abrirNaFila(
       razao_social: caso.razao_social,
       pasta,
       situacao: 'pendente',
+      /* NASCE NA COLUNA ENTRADA, e não espera o notebook para isso
+         (23/09/2026). `fase` é do agente: ele a reescreve a cada sincronização,
+         com o que a pasta mostra. Mas entre o clique e a primeira sincronização
+         passam minutos — e se o notebook estiver desligado, não passa nunca.
+         Quem subiu o e-mail tem que ver o próprio card no quadro na hora, e na
+         coluna certa. Ele vai cair em `entrada` de novo quando o agente falar:
+         o cadastro nasce pendente. */
+      fase: 'entrada',
       motivo: opcoes.automatica
         ? `Veio do e-mail do caso #${caso.numero}. Esperando o notebook montar a pasta; a triagem começa sozinha.`
         : `Veio da Triagem do caso #${caso.numero}. Esperando o notebook montar a pasta.`,
@@ -104,7 +112,12 @@ export async function abrirNaFila(
   if (error || !data) {
     return {
       ok: false,
-      erro: error?.message ?? 'Você não tem permissão para mandar casos para a análise.',
+      /* A MENSAGEM TEM QUE DIZER ONDE SE RESOLVE. Desde 23/09/2026 escrever em
+         `analise_fila` exige `fam_ajuda_analise()`, ou seja, a marca "Análise"
+         em Usuários — e usuário novo nasce com ela DESLIGADA. Sem esta frase, um
+         colega recém-cadastrado bate num "não tem permissão" para um fluxo que é
+         do Comercial, e não tem como adivinhar que o interruptor fica noutra tela. */
+      erro: error?.message ?? 'Você não tem acesso à Análise de crédito, e é ele que libera mandar casos para a análise. Peça ao Marco para ligar a marca "Análise" no seu usuário.',
       status: error ? 500 : 403,
     }
   }

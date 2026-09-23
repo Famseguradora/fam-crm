@@ -39,11 +39,19 @@ import {
   type PedidoIA, type Conversa, type MensagemIA,
 } from '@/lib/ia/gestao'
 import { desde, dataCurta, corta } from '@/lib/analise/mesa'
+import { useJanela, PEGAS } from '@/lib/ui/janela'
 
 const CAMPOS = 'id, pergunta, resposta, erro, estado, motor, maquina, criado_por_nome, criado_em, respondido_em, conversa_id'
 
 export default function IaGestao() {
-  const { somenteLeitura } = usePermissoes()
+  /* DENTRO DA ANÁLISE, "só leitura" passou a ser "não ajuda" (23/09/2026).
+     A conta é a mesma de antes para as 8 pessoas da FAM — todas ajudam —, e o
+     que muda é quem foi marcado só para VER: perfil `leitura` com acesso
+     enxerga a Mesa inteira e não arrasta card, que foi o pedido literal dele.
+     Um `const` só, para as dezenas de usos abaixo não mudarem de forma.
+     A trava de verdade é a RLS `fam_ajuda_analise()`. */
+  const { ajudaAnalise } = usePermissoes()
+  const somenteLeitura = !ajudaAnalise
   const [aberto, setAberto] = useState(false)
   const [conversas, setConversas] = useState<Conversa[]>([])
   const [mensagens, setMensagens] = useState<MensagemIA[]>([])
@@ -59,6 +67,18 @@ export default function IaGestao() {
   const [pelaApi, setPelaApi] = useState(false)
   const [emResposta, setEmResposta] = useState<string | null>(null)
   const fim = useRef<HTMLDivElement>(null)
+  /* A janela estica e anda (11/09/2026), com a mesma mecânica da IA Gestor. A
+     primeira abertura cai onde o painel sempre abriu: canto direito, 84 acima do
+     rodapé para não cobrir o botão da IA Gestor. */
+  const janela = useJanela({
+    chave: 'fam:ia-gestao:janela',
+    minW: 420,
+    padrao: (vw, vh) => {
+      const w = Math.min(900, vw - 44)
+      const h = Math.min(720, Math.round(vh * 0.76), vh - 100)
+      return { w, h, x: vw - w - 22, y: vh - h - 84 }
+    },
+  })
 
   useEffect(() => {
     if (!aberto) return
@@ -263,22 +283,39 @@ export default function IaGestao() {
         <div style={{
           /* O painel continua flutuando: a dúvida nasce olhando a lista, e ele
              não pode empurrar o conteúdo da Mesa para baixo. Subiu para 84 para
-             não encostar no botão da IA Gestor, que mora no mesmo canto. */
-          position: 'fixed', right: 22, bottom: 84, zIndex: 50,
-          width: 'min(900px, calc(100vw - 44px))', maxHeight: 'min(76vh, 720px)',
+             não encostar no botão da IA Gestor, que mora no mesmo canto.
+             ABRIA CORTADO (11/09/2026): com zIndex 50 ele ficava por BAIXO da
+             faixa fixa do topo (cotações, notícias e menu, zIndex 100 no
+             DashboardShell), e em tela mais baixa o cabeçalho do painel, com o
+             ✕ e o "+ Novo assunto", sumia atrás dela. Agora fica acima do topo
+             e abaixo da IA Gestor (900/950) e dos modais (1000+), e a altura
+             nunca passa do alto da janela: 84 embaixo + 16 de folga. */
+          position: 'fixed', left: janela.caixa.x, top: janela.caixa.y,
+          width: janela.caixa.w, height: janela.caixa.h, zIndex: 800,
           display: 'flex', flexDirection: 'column',
           background: '#fff', border: '1px solid var(--border)', borderRadius: 12,
           boxShadow: '0 18px 50px rgba(10,22,40,.22)', overflow: 'hidden',
         }}>
-          <div style={{
-            padding: '11px 14px', borderBottom: '1px solid var(--border)', background: '#f5f9fd',
-            display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-          }}>
+          {/* AS PEGAS: invisíveis, nas bordas e nos cantos, para esticar a janela. */}
+          {!janela.cheia && PEGAS.map((p) => (
+            <div key={p.d} onPointerDown={janela.pegar(p.d)}
+              style={{ position: 'absolute', zIndex: 5, cursor: p.cursor, ...p.estilo }} />
+          ))}
+          {/* o cabeçalho, e é por ele que a janela anda; botão dentro dele continua botão */}
+          <div
+            onPointerDown={(e) => { if ((e.target as HTMLElement).closest('button')) return; janela.pegar('mover')(e) }}
+            style={{
+              padding: '11px 14px', borderBottom: '1px solid var(--border)', background: '#f5f9fd',
+              display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+              cursor: janela.cheia ? 'default' : 'move', flexShrink: 0,
+            }}>
             <b style={{ fontSize: 13.5, color: '#1a3560' }}>IA de Gestão</b>
             <span style={{ fontSize: 11.5, color: 'var(--soft)' }}>olha as suas análises todas, não uma</span>
             <button type="button" className="an-bt mini" style={{ marginLeft: 'auto' }} onClick={() => setVerLista(v => !v)}
               title="Mostrar ou esconder a lista de assuntos">{verLista ? '‹ assuntos' : 'assuntos ›'}</button>
             {!somenteLeitura && <button type="button" className="an-bt mini" onClick={novaConversa} title="Começar um assunto novo, com memória própria">+ Novo assunto</button>}
+            <button type="button" onClick={janela.alternarCheia} title={janela.cheia ? 'Voltar ao tamanho' : 'Ocupar a tela'}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6080a0', fontSize: 15 }}>{janela.cheia ? '⤡' : '⤢'}</button>
             <button type="button" onClick={() => setAberto(false)} aria-label="Fechar"
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6080a0', fontSize: 16 }}>✕</button>
           </div>

@@ -37,7 +37,7 @@ import { COLUNAS_FILA, nomeDaFicha, iniciaisDe, corDoNome, type FilaRica } from 
 import { IcoVoltar } from '@/components/tomador/icones'
 import BarraAnalises, { useContagensBarra } from './BarraAnalises'
 import EstiloAnalises from './Estilo'
-import RelatorioCompleto from './RelatorioCompleto'
+import RelatorioNoFluxo from './RelatorioNoFluxo'
 import VisaoGeral from './card/VisaoGeral'
 import Arquivos from './card/Arquivos'
 import AbaAnalise from './card/AbaAnalise'
@@ -45,7 +45,7 @@ import AbaIA from './card/AbaIA'
 import Encaminhar from './card/Encaminhar'
 import Atividades from './card/Atividades'
 import { SISTEMA_LOCAL, type Quem } from './card/comum'
-import { PortaDoRelatorio } from './PortaDoRelatorio'
+import { PortaDoRelatorio, SemSistemaLocal } from './PortaDoRelatorio'
 
 type Aba = 'geral' | 'arquivos' | 'analise' | 'relatorio' | 'ia' | 'encaminhar' | 'atividades'
 
@@ -110,6 +110,91 @@ function SemPasta({ aba, chave, docs, aoIrParaAba }: {
         <button type="button" className="an-bt azul" onClick={() => aoIrParaAba(TEXTO.leva)}>{TEXTO.rotulo}</button>
         {chave && <PortaDoRelatorio chave={chave} />}
       </div>
+      {/* A porta some fora da máquina dele; a frase diz por quê. Sem ela o
+          colega só via um botão a menos. (23/09/2026) */}
+      <SemSistemaLocal chave={chave} />
+    </div>
+  )
+}
+
+/* REFAZER UMA ANÁLISE QUE SÓ ESTÁ NO ACERVO  ·  14/09/2026
+   "Tinha um botão de refazer análise dentro de cada análise", na Obrascon. O
+   Refazer da aba Análise só existia para pasta com linha na esteira, e as
+   análises de antes de 08/09 nunca tiveram. Aqui ele volta, e dá a mesma ordem:
+   a rota cria a linha que faltava e o notebook traz a pasta de _concluidas. */
+function RefazerDoAcervo({ f, quem, aoIrParaAba }: { f: FilaRica; quem: Quem; aoIrParaAba: (a: string) => void }) {
+  const router = useRouter()
+  const [instrucao, setInstrucao] = useState('')
+  const [modo, setModo] = useState('')
+  const [mandando, setMandando] = useState<'' | 'completa' | 'parcial'>('')
+  const [erro, setErro] = useState('')
+  const [outraFila, setOutraFila] = useState<string | null>(null)
+  const nome = nomeDaFicha(f)
+
+  const pedir = async (escopo: 'completa' | 'parcial') => {
+    if (!f.analise_id || mandando) return
+    if (!window.confirm(`Refazer a análise de ${nome}?\n\nO notebook traz a pasta "${f.pasta}" de volta de _concluidas para a fila, junta o que estiver nela e roda de novo. A análise atual continua valendo até a nova ser publicada.`)) return
+    setMandando(escopo); setErro(''); setOutraFila(null)
+    try {
+      const r = await fetch('/api/esteira/refazer-acervo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ analise_id: f.analise_id, escopo, instrucao, modo }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (r.ok && j.fila_id) { router.push(`/analises/mesa/${j.fila_id}?aba=analise`); return }
+      setErro(j.erro ?? 'Não consegui.')
+      if (j.fila_id) setOutraFila(j.fila_id)
+    } catch {
+      setErro('A conexão caiu. Tente de novo.')
+    }
+    setMandando('')
+  }
+
+  return (
+    <div className="an-bloco" style={{ maxWidth: '80ch' }}>
+      <h4>Refazer a análise</h4>
+      <p className="an-explica">
+        Chegou documento novo? Cole na pasta <b>{f.pasta}</b>, dentro de <b>_concluidas</b> no notebook, e peça aqui.
+        O notebook traz a pasta de volta para a fila, junta o que chegou e roda a análise de novo.
+        Você acompanha pelo relógio no card, e a análise atual continua valendo até a nova ser publicada.
+      </p>
+      {quem.podeEscrever ? (
+        <>
+          <div className="an-campo">
+            <label htmlFor="rf-modo">Como rodar</label>
+            <select id="rf-modo" value={modo} onChange={e => setModo(e.target.value)}>
+              <option value="">Completa, no modelo forte (o de sempre)</option>
+              <option value="rapida">Rápida, no modelo veloz</option>
+            </select>
+          </div>
+          <div className="an-campo">
+            <label htmlFor="rf-instrucao">O que mudou e o que observar</label>
+            <textarea id="rf-instrucao" value={instrucao} onChange={e => setInstrucao(e.target.value)} maxLength={2000}
+              placeholder="Opcional. Ex.: chegaram as contas anuais 2025 da controladora espanhola; use o consolidado do grupo." />
+          </div>
+          {erro && <div className="an-aviso erro"><span>⛔</span><span>{erro}</span></div>}
+          <div className="an-bt-linha">
+            <button type="button" className="an-bt grande ouro" disabled={!f.analise_id || !!mandando} onClick={() => pedir('completa')}>
+              {mandando === 'completa' ? 'Mandando…' : 'Refazer a análise'}
+            </button>
+            {outraFila && <button type="button" className="an-bt" onClick={() => router.push(`/analises/mesa/${outraFila}?aba=analise`)}>Abrir o card dessa pasta</button>}
+            <span className="an-bt-nota">Do zero. Quem executa é o notebook do analista.</span>
+          </div>
+          <div className="an-bt-linha" style={{ marginTop: 6 }}>
+            <button type="button" className="an-bt mini" disabled={!f.analise_id || !!mandando} onClick={() => pedir('parcial')}>
+              {mandando === 'parcial' ? 'Mandando…' : 'Refazer só as partes relacionadas'}
+            </button>
+            <span className="an-bt-nota">Reaproveita a leitura dos documentos. Score, limite, rating e conclusão são sempre recalculados.</span>
+          </div>
+        </>
+      ) : (
+        <div className="an-dica">Você tem permissão só de leitura: quem refaz é um analista.</div>
+      )}
+      <div className="an-bt-linha" style={{ marginTop: 10 }}>
+        <button type="button" className="an-bt" onClick={() => aoIrParaAba('relatorio')}>Abrir o Relatório</button>
+        {f.chave_local && <PortaDoRelatorio chave={f.chave_local} />}
+      </div>
+      <SemSistemaLocal chave={f.chave_local} />
     </div>
   )
 }
@@ -135,7 +220,8 @@ function fichaVirandoFila(fi: FichaAnalise): FilaRica {
     cnpj_confiavel: !!fi.cnpj,
     razao_social: fi.razao_social,
     chave_local: fi.chave_local,
-    pasta: fi.nome_curto || fi.razao_social,
+    // A pasta de verdade, quando a análise gravou: é ela que o Refazer mostra.
+    pasta: fi.pasta || fi.nome_curto || fi.razao_social,
     situacao: 'concluida',
     motivo: null,
     etapa: null, etapa_texto: null, etapa_em: null,
@@ -230,7 +316,14 @@ function RelatorioAPublicar({ f, quem, aoMandar }: {
 
 export default function CardAnalise({ id }: { id: string }) {
   const router = useRouter()
-  const { somenteLeitura, editaAnalise } = usePermissoes()
+  /* DENTRO DA ANÁLISE, "só leitura" passou a ser "não ajuda" (23/09/2026).
+     A conta é a mesma de antes para as 8 pessoas da FAM — todas ajudam —, e o
+     que muda é quem foi marcado só para VER: perfil `leitura` com acesso
+     enxerga a Mesa inteira e não arrasta card, que foi o pedido literal dele.
+     Um `const` só, para as dezenas de usos abaixo não mudarem de forma.
+     A trava de verdade é a RLS `fam_ajuda_analise()`. */
+  const { ajudaAnalise, editaAnalise } = usePermissoes()
+  const somenteLeitura = !ajudaAnalise
   const contagens = useContagensBarra()
   const local = useSistemaLocal()
 
@@ -250,6 +343,15 @@ export default function CardAnalise({ id }: { id: string }) {
   const [quem, setQuem] = useState<Quem>({ nome: null, authId: null, podeEscrever: !somenteLeitura, analista: editaAnalise })
   const [abertos, setAbertos] = useState(0)
 
+  // `?aba=analise`: quem pediu o Refazer do Acervo chega direto no relógio.
+  useEffect(() => {
+    const pedida = new URLSearchParams(window.location.search).get('aba')
+    if (pedida !== 'analise') return
+    abaEscolhida.current = true
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAba('analise')
+  }, [])
+
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -259,6 +361,34 @@ export default function CardAnalise({ id }: { id: string }) {
       })
     })
   }, [somenteLeitura, editaAnalise])
+
+  /* QUEM ABRIU ESTE CARD FICA REGISTRADO  ·  23/09/2026
+     Ordem dele ao abrir a Análise para a equipe: "tem que registrar o que cada
+     um fez. Trabalho em fluxo, no histórico de cada card tem que ter a
+     informação do que cada um acessou."
+
+     Quem grava é o BANCO, numa função `security definer`: o nome e o
+     `auth.uid()` saem da sessão, nunca do que esta tela mandar. Por isso o
+     navegador pode chamar direto e ainda assim ninguém forjar acesso alheio.
+
+     UMA LINHA POR JANELA DE 30 MINUTOS, e não por abertura. Abrir o card,
+     voltar para a Mesa e entrar de novo produziria oito linhas iguais que
+     afogariam o encaminhamento e a nota no meio da linha do tempo.
+
+     Falhar aqui NÃO pode atrapalhar quem está lendo: o registro é para o
+     histórico, e um card que não abre porque a auditoria caiu seria o remédio
+     pior que a doença. Por isso só avisa no console.
+
+     `f?.id` e não `f`: o objeto muda a cada recarga da ficha, o id não. */
+  useEffect(() => {
+    const fila = f?.id
+    if (!fila) return
+    createClient()
+      .rpc('registrar_visita_analise', { p_fila: fila })
+      .then(({ error }) => {
+        if (error) console.warn('[analise] não consegui registrar a visita:', error.message)
+      })
+  }, [f?.id])
 
   /* O CARD ABRE POR DOIS CAMINHOS  ·  09/09/2026
      Ordem dele: "acessando tanto pela opção Mesa quanto pela opção do Acervo,
@@ -411,6 +541,10 @@ export default function CardAnalise({ id }: { id: string }) {
             {f.tomador_id && (
               <button type="button" className="an-bt mini" onClick={() => router.push(`/tomadores/${f.tomador_id}`)} title="O cadastro deste tomador no CRM, com as operações">Cadastro no CRM</button>
             )}
+            {/* Vindo do Acervo o card abre no Relatório: o Refazer precisa estar à vista. */}
+            {f.semEsteira && quem.podeEscrever && (
+              <button type="button" className="an-bt mini" onClick={() => { abaEscolhida.current = true; setAba('analise') }} title="Traz a pasta de volta de _concluidas e roda a análise de novo">Refazer a análise</button>
+            )}
           </div>
         </div>
 
@@ -430,10 +564,11 @@ export default function CardAnalise({ id }: { id: string }) {
             ? <SemPasta aba="arquivos" chave={f.chave_local} docs={ficha?.documentos.length ?? 0} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
             : <Arquivos {...props} aoMandar={o => mandar(o)} />)}
           {aba === 'analise' && (f.semEsteira
-            ? <SemPasta aba="analise" chave={f.chave_local} docs={ficha?.documentos.length ?? 0} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
+            ? <RefazerDoAcervo f={f} quem={quem} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
             : <AbaAnalise {...props} aoMandar={mandar} />)}
           {aba === 'relatorio' && (ficha
-            ? <RelatorioCompleto analiseId={ficha.id} semCabecalho aoCarregar={fi => { if (fi) setFicha(fi) }} />
+            ? <RelatorioNoFluxo ficha={ficha} chave={f.chave_local || ficha.chave_local} sistemaLocal={local}
+                aoCarregar={fi => { if (fi) setFicha(fi) }} />
             : <RelatorioAPublicar f={f} quem={quem} aoMandar={mandar} />)}
           {aba === 'ia' && <AbaIA {...props} />}
           {aba === 'encaminhar' && (f.semEsteira

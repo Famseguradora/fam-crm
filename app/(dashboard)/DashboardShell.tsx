@@ -27,10 +27,18 @@ interface Props {
      não se decide por ser admin: quem não está na lista do Financeiro não vê
      nem o item. Quem decide são o Marco e o Aldeir, na própria tela. */
   veFinanceiro?: boolean
+  /* Vem de `usuarios.acesso_analise`, NÃO de `perfil`. Igual ao Financeiro:
+     quem não está marcado não vê nem o item no menu. Até 23/09/2026 a análise
+     era de todo mundo com login, e isso passou a entregar balanço e limite a
+     dois e-mails de fora da FAM. Quem marca é o Marco, na tela /usuarios. */
+  veAnalise?: boolean
+  /* Ver mais perfil que não é `leitura`: arrasta card na coluna e escreve a
+     nota do tomador. Pedido literal dele: "os que são somente leitura não
+     podem arrastar cards, só visualizar". RLS `fam_ajuda_analise()`. */
+  ajudaAnalise?: boolean
   /* Vem de `usuarios.analista_credito`, NÃO de `perfil`. A análise de crédito
-     tem um analista só. Todos VEEM a tela — ele quer a equipe acompanhando —,
-     e o que este sinal governa é só se os botões de decidir aparecem. A trava
-     de verdade é a RLS `fam_e_analista()`. */
+     tem um analista só, e o que este sinal governa é se os botões de DECIDIR
+     aparecem. A trava de verdade é a RLS `fam_e_analista()`. */
   editaAnalise?: boolean
   children: React.ReactNode
 }
@@ -42,6 +50,11 @@ interface Tab {
   disabled?: boolean
   /** Subitens que aparecem ao passar o mouse na aba. */
   sub?: { label: string; href: string }[]
+  /* O CAMINHO QUE ACENDE A ABA, quando ele é mais largo que o href. O item
+     Comercial da equipe leva a /comercial/entrada, mas abrir um caso vai para
+     /comercial/<id> — e sem isto a aba apagava justo dentro do próprio fluxo
+     do Comercial (23/09/2026, achado da revisão). */
+  ativoPor?: string
 }
 
 const TABS: Tab[] = [
@@ -127,7 +140,7 @@ const CONFIG_ITEMS: {
   { label: 'Sistema',      href: '/configuracoes/sistema', icon: '⚙️', proprietarioOnly: true },
 ]
 
-export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, podePublicarAvisos, emailUsuario, userId, dataInicio, veFinanceiro = false, editaAnalise = false, children }: Props) {
+export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietario, podePublicarAvisos, emailUsuario, userId, dataInicio, veFinanceiro = false, veAnalise = false, ajudaAnalise = false, editaAnalise = false, children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -179,7 +192,29 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
     window.location.reload()
   }
 
-  const tabsVisiveis = TABS.filter((t) => !t.adminOnly || veTelasGerenciais)
+  /* O COMERCIAL TEM DUAS PORTAS, e cada um entra pela sua (23/09/2026).
+
+     A /comercial é o posto de trabalho do e-mail: a Caixa da FAM lida pelo
+     Carteiro na máquina do Comercial, a Fila do dia, a gestão da esteira.
+     Isso só existe para quem tem aquela caixa configurada — hoje, ele.
+
+     Para o resto da equipe o item do menu leva à Entrada de pedidos
+     (/comercial/entrada): subir o e-mail salvo e abrir pelo CNPJ, sem caixa
+     de e-mail nenhuma. Mesmo item, mesmo lugar no menu, porta certa para cada
+     um. A trava não é só o menu: a própria /comercial manda para cá quem não
+     é o dono da caixa. */
+  const paraMim = (t: Tab): Tab =>
+    t.href === '/comercial' && !proprietario
+      ? { ...t, href: '/comercial/entrada', ativoPor: '/comercial' }
+      : t
+
+  /* A ANÁLISE SEGUE A MESMA REGRA DO FINANCEIRO: quem não tem a marca não vê o
+     item. Menu que leva a uma tela que o `layout.tsx` de /analises vai recusar
+     é pior que menu nenhum. */
+  const podeVerTab = (t: Tab) =>
+    (!t.adminOnly || veTelasGerenciais) && (t.href !== '/analises' || veAnalise)
+
+  const tabsVisiveis = TABS.filter(podeVerTab).map(paraMim)
 
   const sidebarW = sidebarOpen ? 220 : 52
 
@@ -462,8 +497,9 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
         flexShrink: 0,
       }}>
         {tabsVisiveis.map((tab) => {
+          const acende = tab.ativoPor ?? tab.href
           const isActive = !tab.disabled && (
-            tab.href === '/' ? pathname === '/' : pathname.startsWith(tab.href)
+            acende === '/' ? pathname === '/' : pathname.startsWith(acende)
           )
           const temSub = !!tab.sub?.length
           return (
@@ -746,7 +782,7 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
             e o CFO passa o dia nele · 60px de moldura clara em volta custam uma
             faixa de lançamentos que ele deixaria de ver. */}
         <div style={{ flex: 1, padding: TELA_CHEIA.includes(pathname) ? 0 : (isMobile ? '16px 12px' : '28px 32px'), minWidth: 0 }}>
-          <PermissoesProvider perfil={perfilUsuario} proprietario={proprietario} podePublicarAvisos={podePublicarAvisos} editaAnalise={editaAnalise}>
+          <PermissoesProvider perfil={perfilUsuario} proprietario={proprietario} podePublicarAvisos={podePublicarAvisos} veAnalise={veAnalise} ajudaAnalise={ajudaAnalise} editaAnalise={editaAnalise}>
             <DateRangeProvider initialDate={dataInicio}>
               {children}
             </DateRangeProvider>
@@ -786,14 +822,15 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
                 admin/cadastro (Produtos, Sistema, Usuários…) seguem só no desktop. */}
             <div style={{ paddingTop: 8 }}>
               {[
-                ...TABS.filter((t) => MOBILE_NAV_HREFS.includes(t.href) && (!t.adminOnly || veTelasGerenciais)),
+                ...TABS.filter((t) => MOBILE_NAV_HREFS.includes(t.href) && podeVerTab(t)).map(paraMim),
                 /* Financeiro no celular pela MESMA regra do desktop: a lista de
                    `financeiro_acesso`, não o perfil. Quem não está nela não vê o
                    item em lugar nenhum · duas telas com dois critérios seria a
                    porta dos fundos que este projeto inteiro existe para não ter. */
                 ...(veFinanceiro ? [{ label: '💰 Financeiro', href: '/financeiro' }] : []),
               ].map((tab) => {
-                const isActive = tab.href === '/' ? pathname === '/' : pathname.startsWith(tab.href)
+                const acende = ('ativoPor' in tab && tab.ativoPor) || tab.href
+                const isActive = acende === '/' ? pathname === '/' : pathname.startsWith(acende)
                 return (
                   <button
                     key={tab.href}

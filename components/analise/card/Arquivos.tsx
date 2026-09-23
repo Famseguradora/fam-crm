@@ -16,9 +16,17 @@
 //
 //  A LISTA VEM DO DISCO pelo agente (`analise_fila.arquivos`). Pasta que já
 //  saiu do disco mostra o retrato guardado, e diz que é retrato.
+//
+//  E DESDE 23/09/2026 HÁ UM SEGUNDO BLOCO, "Abrir o documento". Ao abrir a
+//  Análise para a equipe, apareceu o furo: a lista de arquivos é do DISCO do
+//  Marco, e os botões de abrir apontavam para `127.0.0.1:7311` — na máquina de
+//  qualquer colega, botão morto. O que dá para abrir de qualquer lugar é o que
+//  entrou pelo CRM, pela triagem, e mora no Storage. É menos do que a lista de
+//  cima, e o bloco DIZ que é menos: lista pela metade que se apresenta como
+//  inteira é pior do que lista nenhuma numa mesa de crédito.
 // ============================================================================
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { dataCurta } from '@/lib/analise/mesa'
 import type { ArquivoFila, BibliotecaFila } from '@/lib/analise/mesa'
@@ -37,6 +45,30 @@ export default function Arquivos({ f, quem, recarregar, aoMandar }: PropsAba & {
   const arquivada = a?.onde === 'concluidas'
   const soLeitura = !quem.podeEscrever || retrato || arquivada
   const lendo = f.ordem === 'ler_pasta'
+
+  /* OS DOCUMENTOS QUE ABREM DE QUALQUER MÁQUINA. Endereço assinado vale 5
+     minutos, então é buscado na abertura da aba e renovado pelo botão — guardar
+     no estado por mais tempo daria link morto na mão de quem clicasse depois. */
+  const [doc, setDoc] = useState<{ nome: string; url: string; bytes: number | null }[] | null>(null)
+  const [docErro, setDocErro] = useState('')
+  const [docCarregando, setDocCarregando] = useState(false)
+
+  const buscarDocumentos = useCallback(async () => {
+    setDocCarregando(true)
+    setDocErro('')
+    try {
+      const r = await fetch(`/api/analise/documentos?id=${encodeURIComponent(f.id)}`)
+      const j = await r.json()
+      if (!r.ok) { setDocErro(j.erro ?? 'Não consegui buscar os documentos.'); setDoc([]) }
+      else setDoc(j.documentos ?? [])
+    } catch {
+      setDocErro('A conexão caiu ao buscar os documentos.')
+      setDoc([])
+    }
+    setDocCarregando(false)
+  }, [f.id])
+
+  useEffect(() => { buscarDocumentos() }, [buscarDocumentos])
 
   const gravarFora = async (novaFora: string[]) => {
     setSalvando(true)
@@ -68,6 +100,41 @@ export default function Arquivos({ f, quem, recarregar, aoMandar }: PropsAba & {
 
   return (
     <div>
+      {/* ── 0. o que abre de qualquer máquina ── */}
+      <div className="an-bloco">
+        <h4>Abrir o documento
+          <span className="dir">
+            {docCarregando ? <span className="an-pensando"><i className="an-girando" />buscando…</span> : (
+              <button type="button" className="an-bt mini" onClick={buscarDocumentos}
+                title="Os endereços valem 5 minutos. Se um link parar de abrir, peça de novo aqui.">↻ renovar os links</button>
+            )}
+          </span>
+        </h4>
+        {docErro && <div className="an-aviso aviso"><span>⚠</span><span>{docErro}</span></div>}
+        {doc === null ? null : doc.length === 0 ? (
+          <div className="an-vazio">
+            Nenhum documento desta empresa está guardado no CRM. Os documentos das análises
+            feitas antes da triagem do Comercial existem só na pasta do computador do Marco,
+            e por isso não abrem daqui. A lista completa do que a análise leu está abaixo.
+          </div>
+        ) : (
+          <>
+            <div className="an-dica">
+              São os documentos que entraram pelo CRM, pela triagem. A lista completa do que a
+              análise leu está mais abaixo, e o que não estiver aqui está só na pasta do Marco.
+            </div>
+            <ul style={{ listStyle: 'none', margin: '8px 0 0', padding: 0, display: 'grid', gap: 5 }}>
+              {doc.map((d, i) => (
+                <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 13.5 }}>
+                  <a href={d.url} target="_blank" rel="noopener" style={{ color: '#1e4080', fontWeight: 600 }}>{d.nome}</a>
+                  {d.bytes ? <span style={{ fontSize: 11.5, color: '#6080a0' }}>{Math.max(1, Math.round(d.bytes / 1024))} KB</span> : null}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+
       {/* ── 1. os demonstrativos financeiros do ano corrente ── */}
       {B?.demonstrativos && (
         <div className="an-bloco">
@@ -170,7 +237,7 @@ export default function Arquivos({ f, quem, recarregar, aoMandar }: PropsAba & {
         <h4>Arquivos da pasta<span className="dir">{a ? `${a.total} arquivo${a.total === 1 ? '' : 's'}` : ''}</span></h4>
         {!a || !a.total ? (
           <div className="an-vazio">
-            {a ? 'A pasta existe e está vazia. Solte os documentos dentro dela e clique em Varrer de Novo na Mesa.'
+            {a ? 'A pasta existe e está vazia. Solte os documentos dentro dela e clique em Reler a pasta na aba Análise.'
               : 'A lista de arquivos ainda não chegou do notebook. O agente da esteira (node scripts/esteira.mjs) manda a cada sincronização; sem ele rodando, esta aba fica vazia.'}
           </div>
         ) : (

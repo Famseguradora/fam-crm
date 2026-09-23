@@ -15,14 +15,15 @@
 //  relatório no CRM", que é a leitura nativa.
 // ============================================================================
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { fmtMoeda, fmtData } from '@/lib/utils'
 import { fmtScore } from '@/components/analise/Relatorio'
 import Notas from './Notas'
 import { SISTEMA_LOCAL, decisaoLimpa, type PropsAba } from './comum'
-import { dataCurta } from '@/lib/analise/mesa'
+import { dataCurta, colunasVisiveis, colunaDoCard, type ColunaMesa } from '@/lib/analise/mesa'
+import { faseDe, type Fase } from '@/lib/analise/esteira'
 
 const SITUACAO_ITEM: Record<string, { rotulo: string; cls: string }> = {
   ok: { rotulo: 'recebido', cls: 'ok' },
@@ -37,6 +38,25 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
   const [subAberto, setSubAberto] = useState(false)
   const [subTexto, setSubTexto] = useState(f.substatus ?? '')
   const [salvando, setSalvando] = useState(false)
+  /* AS COLUNAS DA MESA, dentro do botão do substatus (17/09/2026). Pedido
+     dele: "dentro desse botão irá aparecer uma lista com os status das colunas
+     da Mesa". Escolher uma coluna manda o card para ela no quadro; "deixar o
+     sistema decidir" devolve o card à coluna da fase. */
+  const [colunas, setColunas] = useState<ColunaMesa[]>([])
+  const [colunaEscolhida, setColunaEscolhida] = useState<string | null>(f.coluna_id ?? null)
+  const [erroSub, setErroSub] = useState('')
+
+  useEffect(() => {
+    if (!subAberto) return
+    let vivo = true
+    createClient().from('analise_colunas').select('id, titulo, fase, dica, cor, ordem, arquivada').order('ordem')
+      .then(({ data, error }) => { if (vivo) setColunas(colunasVisiveis(error ? null : (data as ColunaMesa[]))) })
+    return () => { vivo = false }
+  }, [subAberto])
+
+  const faseAgora = ((f.fase as Fase) || faseDe(f.situacao, f.cadastro?.status)) as Fase
+  const colunaAutomatica = colunas.find(c => c.fase === faseAgora)
+  const colunaAtual = colunas.length ? colunaDoCard(f, faseAgora, colunas) : null
 
   const chaveAnalise = ficha?.chave_local ?? f.analise_chave ?? null
   const dec = decisaoLimpa(ficha?.recomendacao)
@@ -55,14 +75,21 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
   })()
 
   const salvarSubstatus = async () => {
-    setSalvando(true)
+    setSalvando(true); setErroSub('')
     const supabase = createClient()
     const t = subTexto.trim().slice(0, 120)
+    const agora = new Date().toISOString()
+    /* A coluna do código (id `fase:...`) só aparece quando o banco não
+       respondeu; ela não é gravável, então vale como "o sistema decide". */
+    const coluna = colunaEscolhida && !colunaEscolhida.startsWith('fase:') ? colunaEscolhida : null
+    const mudou = coluna !== (f.coluna_id ?? null)
     const { error } = await supabase.from('analise_fila').update({
-      substatus: t || null, substatus_por: quem.nome, substatus_em: new Date().toISOString(),
+      substatus: t || null, substatus_por: quem.nome, substatus_em: agora,
+      ...(mudou ? { coluna_id: coluna, coluna_por: coluna ? quem.nome : null, coluna_em: coluna ? agora : null } : {}),
     }).eq('id', f.id)
     setSalvando(false)
-    if (!error) { setSubAberto(false); await recarregar() }
+    if (error) { setErroSub(error.message); return }
+    setSubAberto(false); await recarregar()
   }
 
   return (
@@ -100,7 +127,7 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
 
         <div className="an-bloco">
           <h4>O que eu sei deste tomador</h4>
-          <Notas chave={f.chave || f.pasta} filaId={f.id} tomadorId={f.tomador_id} cnpj={f.cnpj}
+          <Notas chave={f.chave || f.pasta} filaId={f.semEsteira ? null : f.id} tomadorId={f.tomador_id} cnpj={f.cnpj}
             podeEscrever={quem.podeEscrever} nomeUsuario={quem.nome} />
         </div>
       </div>
@@ -129,10 +156,15 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
               <button type="button" className="an-bt" onClick={() => router.push(`/analises/${ficha.id}`)}
                 title="O relatório fracionado, seção por seção, lendo o banco">Relatório no CRM</button>
             )}
+            {f.caso_id && (
+              <button type="button" className="an-bt" onClick={() => router.push(`/comercial/${f.caso_id}`)}
+                title="A estação anterior da esteira: o CNPJ, o cadastro do tomador e os documentos que o Comercial recebeu por e-mail.">Triagem e cadastro</button>
+            )}
             {quem.podeEscrever && (
-              <button type="button" className={`an-bt${f.substatus ? ' contorno' : ''}`} onClick={() => setSubAberto(true)}
-                title="Seu recado por cima do status do sistema: aguardando documentos, aguardando reunião, o que for">
-                {f.substatus ? 'Mudar o substatus' : 'Substatus'}
+              <button type="button" className={`an-bt${f.substatus || f.coluna_id ? ' contorno' : ''}`}
+                onClick={() => { setColunaEscolhida(f.coluna_id ?? null); setSubTexto(f.substatus ?? ''); setSubAberto(true) }}
+                title="Escolha a coluna da Mesa onde este card fica (Interrompido, ou outra que você criou) e deixe um recado">
+                {f.substatus || f.coluna_id ? 'Mudar o substatus' : 'Substatus'}
               </button>
             )}
             {f.substatus && (
@@ -141,8 +173,29 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
                 <span><b>{f.substatus}</b><br /><small style={{ color: '#8a6410' }}>{f.substatus_por ?? 'Marco'}{f.substatus_em ? ` · ${dataCurta(f.substatus_em)}` : ''}</small></span>
               </div>
             )}
-            {!ficha && !local && (
-              <div className="an-dica">Os botões do template aparecem na máquina do analista, quando o Sistema de Análise está de pé.</div>
+            {/* O QUE SÓ RODA NA MÁQUINA DELE TEM QUE DIZER ISSO  ·  23/09/2026
+                Ordem dele ao abrir a Análise para a equipe: "o que só roda no
+                computador do Marco Dragone, informe isso quando alguém tentar
+                acessar a função."
+
+                Antes daqui os botões do template simplesmente SUMIAM fora da
+                máquina dele, e só havia aviso quando não existia análise — ou
+                seja, justamente no caso em que faltava menos coisa. Com uma
+                análise publicada, que é o caso comum, o colega via três botões
+                a menos e nenhuma palavra sobre o porquê. Sumir não é avisar. */}
+            {!local && (
+              <div className="an-dica">
+                {chaveAnalise ? (
+                  <><b>Abrir no template, Como eu entreguei e o Relatório gerencial</b> não aparecem aqui:
+                  eles abrem o motor da análise, que roda só no computador do Marco (<code>127.0.0.1:7311</code>)
+                  e não responde de outra máquina. O relatório inteiro está no botão <b>Abrir o relatório</b>,
+                  lido do banco do CRM, e vale de qualquer lugar.</>
+                ) : (
+                  <>Os botões do template aparecem só no computador do Marco, onde o Sistema de
+                  Análise está de pé. Desta máquina, o que existe desta empresa é o que já foi
+                  publicado no banco.</>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -179,9 +232,15 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
               <a className="an-bt" href={`${SISTEMA_LOCAL}/#tomador/${encodeURIComponent(f.chave)}`} target="_blank" rel="noopener"
                 title="Abre este tomador no Sistema de Análise, onde o botão abre a pasta no Windows">Abrir a pasta do tomador</a>
             )}
+            {!local && f.chave && (
+              <span className="an-dica" style={{ margin: 0 }}
+                title="127.0.0.1:7311 é o endereço do motor, e endereço local só existe na própria máquina">
+                Abrir a pasta no Windows é só no computador do Marco.
+              </span>
+            )}
           </div>
           <div className="an-dica">
-            Chegou documento? Solte o arquivo na pasta do tomador no OneDrive e clique em <b>Varrer de Novo</b> na Mesa, ou em <b>Reler a pasta</b> na aba Análise. Ele entra aqui e o Refazer parte dele.
+            Chegou documento? Solte o arquivo na pasta do tomador no OneDrive e clique em <b>Reler a pasta</b> na aba Análise. Ele entra aqui e o Refazer parte dele.
           </div>
         </div>
       </div>
@@ -190,12 +249,42 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
         <div className="an-modal" onClick={e => { if (e.target === e.currentTarget) setSubAberto(false) }}>
           <div className="an-modal-caixa" role="dialog" aria-label="Substatus da análise">
             <h3>Substatus de {f.nome || f.razao_social || f.pasta}</h3>
-            <p className="an-explica">Seu recado por cima do status do sistema. Ele acompanha o status, não manda nele. Texto em branco retira a marcação.</p>
+            <p className="an-explica">
+              Escolha a coluna da Mesa onde este card fica. A sua escolha vence o sistema: o card não sai
+              dela sozinho, nem quando a análise andar. Para criar uma coluna nova, use o <b>+ Nova coluna</b> no fim da Mesa.
+            </p>
+
             <div className="an-campo">
-              <input type="text" value={subTexto} onChange={e => setSubTexto(e.target.value)} maxLength={120}
-                placeholder="Ex.: aguardando o balancete de junho, reunião com o corretor dia 12" autoFocus
+              <label>Coluna na Mesa</label>
+              {!colunas.length ? (
+                <div className="an-dica">Lendo as colunas…</div>
+              ) : (
+                <div className="an-colunas-escolha" role="radiogroup" aria-label="Coluna na Mesa">
+                  <label className={`an-col-op${!colunaEscolhida ? ' on' : ''}`}>
+                    <input type="radio" name="coluna" checked={!colunaEscolhida} onChange={() => setColunaEscolhida(null)} />
+                    <span className="pt" style={{ background: colunaAutomatica?.cor ?? '#8a95a3' }} />
+                    <span><b>Deixar o sistema decidir</b>
+                      <small>hoje cai em {colunaAutomatica?.titulo ?? 'Entrada'}, pela fase da análise</small></span>
+                  </label>
+                  {colunas.map(c => (
+                    <label key={c.id} className={`an-col-op${colunaEscolhida === c.id ? ' on' : ''}`}>
+                      <input type="radio" name="coluna" checked={colunaEscolhida === c.id} onChange={() => setColunaEscolhida(c.id)} />
+                      <span className="pt" style={{ background: c.cor }} />
+                      <span><b>{c.titulo}</b>
+                        <small>{c.fase ? 'coluna do sistema' : 'coluna sua'}{colunaAtual?.id === c.id ? ' · está aqui agora' : ''}</small></span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="an-campo">
+              <label htmlFor="sub-recado">Recado (opcional)</label>
+              <input id="sub-recado" type="text" value={subTexto} onChange={e => setSubTexto(e.target.value)} maxLength={120}
+                placeholder="Ex.: interrompido a pedido do corretor, aguardando o balancete de junho"
                 onKeyDown={e => { if (e.key === 'Enter') salvarSubstatus() }} />
             </div>
+            {erroSub && <div className="an-aviso erro" style={{ margin: '4px 0 0' }}>{erroSub}</div>}
             <div className="an-modal-bts">
               <button type="button" className="an-bt" onClick={() => setSubAberto(false)}>Cancelar</button>
               <button type="button" className="an-bt azul" onClick={salvarSubstatus} disabled={salvando}>Guardar</button>

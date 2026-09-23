@@ -11,6 +11,12 @@
 //
 //  É HISTÓRIA, um evento datado que já aconteceu e não muda. O que é
 //  conhecimento vivo (a nota, o substatus) mora na Visão geral.
+//
+//  E DESDE 23/09/2026 ENTRA TAMBÉM QUEM SÓ OLHOU. Ordem dele ao abrir a
+//  Análise para a equipe: "trabalho em fluxo, no histórico de cada card tem que
+//  ter a informação do que cada um acessou". Abrir um card não muda nada na
+//  empresa, mas muda quem sabe o quê — e numa mesa de crédito isso é história.
+//  Vem de `analise_acessos`, uma linha por pessoa por janela de 30 minutos.
 // ============================================================================
 
 import { useEffect, useMemo, useState } from 'react'
@@ -26,6 +32,9 @@ const COR: Record<string, string> = {
   email: '#4a90d0', triagem: '#8ba3c0', decisao: '#e8b84b', pergunta: '#d0743f', resposta: '#27a96c',
   analise: '#1e4080', edicao: '#e8b84b', encaminhado: '#d0743f', devolvido: '#27a96c',
   nota: '#a07b1e', ia: '#3070c8', ordem: '#1e4080', agente: '#3fae82', aviso: '#3070c8',
+  /* Cinza de propósito: quem abriu o card é o evento MENOS importante da lista,
+     e a cor tem que dizer isso antes de a pessoa ler a linha. */
+  acesso: '#9aa8ba',
 }
 
 export default function Atividades({ f }: PropsAba) {
@@ -35,12 +44,16 @@ export default function Atividades({ f }: PropsAba) {
     let vivo = true
     const supabase = createClient()
     const ler = async () => {
-      const [enc, notas, ia, ev, ag] = await Promise.all([
+      const [enc, notas, ia, ev, ag, ac] = await Promise.all([
         supabase.from('analise_encaminhamentos').select('*').eq('fila_id', f.id),
         supabase.from('analise_notas').select('id, titulo, html, autor_nome, em').eq('chave', f.chave || f.pasta),
         supabase.from('ia_pedidos').select('id, pergunta, criado_por_nome, criado_em').eq('fila_id', f.id),
         f.cnpj ? supabase.from('analise_eventos').select('id, tipo, detalhe, criado_em, criado_por').eq('cnpj', f.cnpj).limit(30) : Promise.resolve({ data: [] }),
         f.cnpj ? supabase.from('agente_eventos').select('id, agente, acao, tarefa, detalhe, criado_em').eq('cnpj', f.cnpj).order('criado_em', { ascending: false }).limit(40) : Promise.resolve({ data: [] }),
+        /* Os 60 acessos mais recentes. Teto porque um card muito visitado
+           encheria a linha de história com gente olhando, e o que a aba existe
+           para contar é o que ACONTECEU com a empresa. */
+        supabase.from('analise_acessos').select('id, quem_nome, primeiro_em, ultimo_em, vezes').eq('fila_id', f.id).order('ultimo_em', { ascending: false }).limit(60),
       ])
       if (!vivo) return
       const l: LinhaItem[] = []
@@ -60,6 +73,17 @@ export default function Atividades({ f }: PropsAba) {
       for (const e of (ag.data ?? []) as { id: string; agente: string; acao: string; tarefa: string; detalhe: string | null; criado_em: string }[]) {
         if (e.acao === 'passo') continue // o passo a passo é ruído numa linha de história
         l.push({ em: e.criado_em, tipo: 'agente', txt: `${e.agente}: ${e.tarefa}${e.detalhe ? ` · ${e.detalhe}` : ''}`, quem: e.acao === 'comecou' ? 'começou' : 'terminou' })
+      }
+      /* "Abriu o card" e não "leu a análise": esta linha prova que a pessoa
+         esteve na tela, e nada além disso. Dizer mais do que se mediu numa
+         trilha de auditoria é pior que não medir. */
+      for (const a of (ac.data ?? []) as { id: number; quem_nome: string; primeiro_em: string; ultimo_em: string; vezes: number }[]) {
+        l.push({
+          em: a.primeiro_em,
+          tipo: 'acesso',
+          txt: a.vezes > 1 ? `Abriu o card (${a.vezes} vezes até ${dataCurta(a.ultimo_em)})` : 'Abriu o card',
+          quem: a.quem_nome,
+        })
       }
       if (f.ultima_ordem_em && f.ultima_ordem_resultado) l.push({ em: f.ultima_ordem_em, tipo: 'ordem', txt: f.ultima_ordem_resultado, quem: 'o notebook' })
       setExtras(l)

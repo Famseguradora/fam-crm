@@ -21,7 +21,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
            Supabase de verdade e, sem sessão real, responderiam 403. Menu que
            leva a uma tela recusada é pior que menu que não existe. */
         veFinanceiro={false}
-        /* No sandbox ele é ele mesmo: entra como o analista. */
+        /* No sandbox ele é ele mesmo: entra como o analista, e enxerga. */
+        veAnalise={true}
+        ajudaAnalise={true}
         editaAnalise={true}
       >
         {children}
@@ -58,9 +60,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // vê nem o item no menu.
   const financeiro = await quemFinanceiro()
 
-  // A análise de crédito tem um analista só, e não é "quem é admin". Todo mundo
-  // continua VENDO (é de propósito: ele quer a equipe acompanhando o trabalho
-  // acontecer); editar é só de quem tem `analista_credito`.
+  // A análise de crédito tem TRÊS andares, e nenhum deles é "quem é admin":
+  // VER vem de `usuarios.acesso_analise` (marcado na tela /usuarios), AJUDAR é
+  // ver mais perfil que não é `leitura`, e EDITAR é só de quem tem
+  // `analista_credito`. Até 23/09/2026 ver era de todo mundo com login, e isso
+  // passou a entregar a análise para dois e-mails de fora da FAM.
   const analise = await quemAnalise()
 
   return (
@@ -73,6 +77,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       userId={user.id}
       dataInicio={config?.valor ?? null}
       veFinanceiro={financeiro.ve}
+      veAnalise={analise.ve}
+      ajudaAnalise={analise.ajuda}
       editaAnalise={analise.edita}
     >
       {children}

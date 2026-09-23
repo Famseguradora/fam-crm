@@ -91,8 +91,14 @@ export default function ConferenciaPage() {
   /* Um analista só. Quem não é continua entrando e lendo tudo — é de
      propósito, ele quer a equipe acompanhando — mas sem nenhum botão de
      decidir. A trava de verdade é a RLS `fam_e_analista()`: sem ela isto
-     seria só um `if` de desenho, e o dado já teria ido para o navegador. */
-  const { editaAnalise } = usePermissoes()
+     seria só um `if` de desenho, e o dado já teria ido para o navegador.
+
+     E "lendo tudo" passou a ter dono em 23/09/2026: `analise_conflitos` agora
+     só é lida por quem tem a marca "Análise" em Usuários. Sem `veAnalise` a
+     consulta abaixo volta VAZIA e sem erro, e a tela diria "0 conflitos" — que
+     é pior do que dizer "não é para você": faria a pessoa concluir que está
+     tudo conferido quando pode haver dezenas de divergências abertas. */
+  const { editaAnalise, veAnalise } = usePermissoes()
 
   // ── carregar ──────────────────────────────────────────────
   const carregar = useCallback(async () => {
@@ -107,7 +113,7 @@ export default function ConferenciaPage() {
     setCarregando(false)
   }, [supabase])
 
-  useEffect(() => { carregar() }, [carregar])
+  useEffect(() => { if (veAnalise) carregar() }, [carregar, veAnalise])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setQuem(user?.email ?? 'desconhecido'))
@@ -222,6 +228,22 @@ export default function ConferenciaPage() {
   const totalAberto = conflitos.filter(c => c.situacao === 'aberto').length
 
   // ─────────────────────────────────────────────────────────
+  /* A lista vazia mentiria. Esta é a mesma frase de `/analises/layout.tsx`, de
+     propósito: quem topar com as duas telas lê a mesma explicação. */
+  if (!veAnalise) {
+    return (
+      <div style={{ maxWidth: 560, margin: '48px auto', padding: '26px 28px', background: '#fff', border: '1px solid #e3e7ee', borderRadius: 10 }}>
+        <h1 style={{ margin: '0 0 10px', fontSize: 20, fontWeight: 700, color: '#1e4080' }}>
+          A Conferência da Análise não está liberada para você
+        </h1>
+        <p style={{ margin: 0, fontSize: 15, lineHeight: 1.55, color: '#1f2733' }}>
+          Ela compara o que a análise de crédito apurou com o cadastro do tomador, e por isso
+          segue o mesmo acesso da Análise. Quem libera é o Marco, em <strong>Usuários</strong>.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div style={{ padding: '20px 0' }}>
       {/* cabeçalho */}

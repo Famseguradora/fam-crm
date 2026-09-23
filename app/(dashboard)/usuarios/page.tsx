@@ -39,6 +39,7 @@ export default function UsuariosPage() {
   const [busca, setBusca] = useState('')
   const [souProprietario, setSouProprietario] = useState(false)
   const [togglingAvisoId, setTogglingAvisoId] = useState<string | null>(null)
+  const [togglingAnaliseId, setTogglingAnaliseId] = useState<string | null>(null)
 
   // Supabase só é criado dentro de funções (evita SSR durante build)
   const carregarUsuarios = useCallback(async () => {
@@ -67,6 +68,33 @@ export default function UsuariosPage() {
       setUsuarios(prev => prev.map(x => x.id === u.id ? { ...x, pode_publicar_avisos: novo } : x))
     }
     setTogglingAvisoId(null)
+  }
+
+  /* LIGA E DESLIGA O ACESSO À ANÁLISE DE CRÉDITO. Ordem dele em 23/09/2026:
+     "dentro de usuários, deixa para eu selecionar e escolher quem tem acesso".
+     Antes disso liberar alguém era um UPDATE no Supabase, e por isso na prática
+     nunca era revisto: a regra de 30/08 ("todo mundo que tem login lê") seguiu
+     valendo até o dia em que dois logins eram de fora da FAM.
+
+     A TRAVA É A RLS (`fam_ve_analise()`); este botão só grava a marca. E o
+     analista não pode ser desmarcado: a constraint `usuarios_analista_ve_analise`
+     recusaria no banco, então o botão avisa antes em vez de deixar dar erro. */
+  async function toggleAnalise(u: Usuario) {
+    if (!souProprietario) return
+    if (u.analista_credito && u.acesso_analise) {
+      setMensagem({ tipo: 'erro', texto: `${u.nome} é o analista de crédito: tirar o acesso dele deixaria o banco incoerente (escreveria a análise sem poder lê-la). Tire antes a marca de analista.` })
+      return
+    }
+    setTogglingAnaliseId(u.id)
+    const supabase = createClient()
+    const novo = !u.acesso_analise
+    const { error } = await supabase.from('usuarios').update({ acesso_analise: novo }).eq('id', u.id)
+    if (error) {
+      setMensagem({ tipo: 'erro', texto: `Não consegui mudar o acesso à Análise: ${error.message}` })
+    } else {
+      setUsuarios(prev => prev.map(x => x.id === u.id ? { ...x, acesso_analise: novo } : x))
+    }
+    setTogglingAnaliseId(null)
   }
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -467,6 +495,7 @@ export default function UsuariosPage() {
               <th>Status</th>
               <th>Comitê</th>
               {souProprietario && <th>Avisos</th>}
+              {souProprietario && <th title="Entra na tela de Análise de crédito e lê a Mesa, o Acervo e os relatórios">Análise</th>}
               <th>Cadastrado em</th>
               <th>Ações</th>
             </tr>
@@ -474,13 +503,13 @@ export default function UsuariosPage() {
           <tbody>
             {carregando ? (
               <tr>
-                <td colSpan={souProprietario ? 10 : 9} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                <td colSpan={souProprietario ? 11 : 9} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                   Carregando usuários...
                 </td>
               </tr>
             ) : usuariosFiltrados.length === 0 ? (
               <tr>
-                <td colSpan={souProprietario ? 10 : 9} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
+                <td colSpan={souProprietario ? 11 : 9} style={{ textAlign: 'center', padding: 40, color: '#6080a0' }}>
                   {busca ? 'Nenhum usuário encontrado para esta busca.' : 'Nenhum usuário cadastrado ainda.'}
                 </td>
               </tr>
@@ -536,6 +565,32 @@ export default function UsuariosPage() {
                       >
                         <span>{u.pode_publicar_avisos ? '🔔' : '○'}</span>
                         {togglingAvisoId === u.id ? '...' : u.pode_publicar_avisos ? 'Pode' : 'Não'}
+                      </button>
+                    </td>
+                  )}
+                  {souProprietario && (
+                    <td>
+                      <button
+                        onClick={() => toggleAnalise(u)}
+                        disabled={togglingAnaliseId === u.id}
+                        title={u.acesso_analise
+                          ? `Vê a Análise de crédito${u.perfil === 'leitura' ? ' (só visualiza: perfil leitura não arrasta card nem escreve nota)' : ' e pode arrastar card e escrever nota'} — clique para tirar`
+                          : 'Não vê a Análise de crédito — clique para liberar'}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 6,
+                          padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                          fontSize: 12, fontWeight: 600, fontFamily: "'Calibri','Segoe UI',sans-serif",
+                          background: u.acesso_analise ? '#eaf3ff' : '#eef2f7',
+                          color: u.acesso_analise ? '#1e4080' : '#6080a0',
+                          opacity: togglingAnaliseId === u.id ? 0.6 : 1,
+                        }}
+                      >
+                        <span>{u.acesso_analise ? '🔬' : '○'}</span>
+                        {togglingAnaliseId === u.id
+                          ? '...'
+                          : !u.acesso_analise ? 'Não'
+                          : u.perfil === 'leitura' ? 'Só vê'
+                          : u.analista_credito ? 'Analista' : 'Ajuda'}
                       </button>
                     </td>
                   )}

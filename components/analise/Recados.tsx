@@ -25,7 +25,14 @@ import { agenteDoMural, recadoLido, recadoArquivado, dataCurta, desde, corta, ty
 
 export default function Recados({ nomeUsuario }: { nomeUsuario: string | null }) {
   const router = useRouter()
-  const { somenteLeitura } = usePermissoes()
+  /* DENTRO DA ANÁLISE, "só leitura" passou a ser "não ajuda" (23/09/2026).
+     A conta é a mesma de antes para as 8 pessoas da FAM — todas ajudam —, e o
+     que muda é quem foi marcado só para VER: perfil `leitura` com acesso
+     enxerga a Mesa inteira e não arrasta card, que foi o pedido literal dele.
+     Um `const` só, para as dezenas de usos abaixo não mudarem de forma.
+     A trava de verdade é a RLS `fam_ajuda_analise()`. */
+  const { ajudaAnalise } = usePermissoes()
+  const somenteLeitura = !ajudaAnalise
   const [recados, setRecados] = useState<Recado[]>([])
   const [aberto, setAberto] = useState<string | null>(null)
   const [todos, setTodos] = useState(false)

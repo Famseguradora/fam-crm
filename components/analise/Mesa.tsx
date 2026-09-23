@@ -24,7 +24,9 @@
 //    as fichas ............ `analise_fila`, que o agente do notebook escreve
 //    os números da máquina  `analise_estado` (rodando, vagas, varredura)
 //    o acervo ............. `analises` (vigentes, revisadas)
-//    o Varrer de Novo ..... grava uma ordem em `analise_comandos`; o agente varre
+//    o Varrer de Novo ..... grava uma ordem em `analise_comandos`; o agente confere
+//                           a raiz e o _concluidas do notebook, e o card cuja
+//                           pasta foi recortada para a rede sai da Mesa (17/09/2026)
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -32,14 +34,18 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { maskCNPJ } from '@/lib/utils'
-import { FASES, SLA_PADRAO, faseDe, corDaFase, nomeDaFase, SITUACAO, ORDEM, ETAPAS, type Fase } from '@/lib/analise/esteira'
+import { FASES, SLA_PADRAO, faseDe, SITUACAO, ORDEM, ETAPAS, type Fase } from '@/lib/analise/esteira'
 import {
   COLUNAS_MESA, nomeDaFicha, diasParado, iniciaisDe, corDoNome, desde, corta,
   agruparPorEmpresa, nomeDoGrupo, naMesa, type GrupoEmpresa,
+  colunasVisiveis, colunaDoCard, type ColunaMesa,
+  ordenarNaColuna, prioridadeDoGrupo, renumerar, mover,
   type FilaRica, type EstadoEsteira, type Encaminhamento,
 } from '@/lib/analise/mesa'
 import { nomeArea } from '@/lib/card/secoes'
 import { semMarcador } from '@/lib/analise/ficha'
+import EditorColuna from '@/components/analise/EditorColuna'
+import NovoPedido from '@/components/comercial/NovoPedido'
 
 type Layout = 'kanban' | 'tabela' | 'galeria'
 
@@ -55,13 +61,21 @@ const esperaOrdem = (f: FilaRica) => f.situacao !== 'em_andamento' && f.situacao
 
 export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) {
   const router = useRouter()
-  const { somenteLeitura } = usePermissoes()
+  /* DENTRO DA ANÁLISE, "só leitura" passou a ser "não ajuda" (23/09/2026).
+     A conta é a mesma de antes para as 8 pessoas da FAM — todas ajudam —, e o
+     que muda é quem foi marcado só para VER: perfil `leitura` com acesso
+     enxerga a Mesa inteira e não arrasta card, que foi o pedido literal dele.
+     Um `const` só, para as dezenas de usos abaixo não mudarem de forma.
+     A trava de verdade é a RLS `fam_ajuda_analise()`. */
+  const { ajudaAnalise } = usePermissoes()
+  const somenteLeitura = !ajudaAnalise
   const [fila, setFila] = useState<FilaRica[]>([])
   const [estado, setEstado] = useState<EstadoEsteira | null>(null)
   const [estadoEm, setEstadoEm] = useState<string | null>(null)
   const [acervo, setAcervo] = useState<{ total: number; revisadas: number } | null>(null)
   const [encaminhados, setEncaminhados] = useState<Record<string, Encaminhamento>>({})
   const [comandoVivo, setComandoVivo] = useState<{ comando: string; criado_em: string; aceito_em: string | null } | null>(null)
+  const [ultimoVarrer, setUltimoVarrer] = useState<{ feito_em: string; resultado: string | null } | null>(null)
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
   const [busca, setBusca] = useState('')
@@ -76,6 +90,18 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
      existe enquanto há análise rodando: parado, não acorda o React à toa. */
   const [tique, setTique] = useState(() => Date.now())
   const [parando, setParando] = useState<string | null>(null)
+  /* AS COLUNAS DO QUADRO vêm do banco desde 17/09/2026 (`analise_colunas`):
+     ele cria as dele, como "Interrompido". `null` = ainda não chegou, e aí a
+     tela desenha as cinco do código para o quadro nunca abrir vazio. */
+  const [colunasBanco, setColunasBanco] = useState<ColunaMesa[] | null>(null)
+  const [editandoColuna, setEditandoColuna] = useState<ColunaMesa | 'nova' | null>(null)
+  /* A ORDEM DA COLUNA, arrastando (23/09/2026). `arrastando` é a chave do card
+     na mão; `alvo` é o card por cima de quem ele está. Os dois são só desenho:
+     o que vale é a lista que a rota grava ao soltar. */
+  const [arrastando, setArrastando] = useState<{ chave: string; coluna: string } | null>(null)
+  const [alvo, setAlvo] = useState<string | null>(null)
+  const [reordenando, setReordenando] = useState(false)
+  const [novoCard, setNovoCard] = useState(false)
 
   useEffect(() => {
     try {
@@ -91,13 +117,15 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
 
   const carregar = useCallback(async (vivo = { atual: true }) => {
     const supabase = createClient()
-    const [f, e, a, r, enc, cmd] = await Promise.all([
+    const [f, e, a, r, enc, cmd, feito, cols] = await Promise.all([
       supabase.from('analise_fila').select(COLUNAS_MESA).order('atualizado_em', { ascending: false }).limit(300),
       supabase.from('analise_estado').select('dados, atualizado_em').eq('id', 'esteira').maybeSingle(),
       supabase.from('analises').select('id', { count: 'exact', head: true }).eq('vigente', true),
       supabase.from('analises').select('id', { count: 'exact', head: true }).eq('vigente', true).eq('revisada', true),
       supabase.from('analise_encaminhamentos').select('*').eq('estado', 'aberto').order('criado_em', { ascending: false }).limit(200),
       supabase.from('analise_comandos').select('comando, criado_em, aceito_em').eq('comando', 'varrer').is('feito_em', null).order('criado_em', { ascending: false }).limit(1).maybeSingle(),
+      supabase.from('analise_comandos').select('feito_em, resultado').eq('comando', 'varrer').not('feito_em', 'is', null).order('feito_em', { ascending: false }).limit(1).maybeSingle(),
+      supabase.from('analise_colunas').select('id, titulo, fase, dica, cor, ordem, arquivada').order('ordem'),
     ])
     if (!vivo.atual) return
     if (f.error) setErro(f.error.message)
@@ -113,6 +141,9 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     }
     setEncaminhados(porFila)
     setComandoVivo(cmd.data ?? null)
+    setUltimoVarrer(feito.data ?? null)
+    // Sem a tabela (migration atrasada) a Mesa segue com as cinco do código.
+    if (!cols.error) setColunasBanco((cols.data ?? []) as ColunaMesa[])
     setAgora(Date.now())
     setCarregando(false)
   }, [])
@@ -129,6 +160,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analise_fila' }, () => carregar(vivo))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analise_estado' }, () => carregar(vivo))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analise_comandos' }, () => carregar(vivo))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analise_colunas' }, () => carregar(vivo))
       .subscribe()
     const t = setInterval(() => carregar(vivo), 20000)
     return () => { vivo.atual = false; clearInterval(t); supabase.removeChannel(canal) }
@@ -165,6 +197,17 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
   }, [fila, busca])
 
   const faseDa = (f: FilaRica): Fase => (f.fase as Fase) || faseDe(f.situacao, f.cadastro?.status)
+
+  const colunas = useMemo(() => colunasVisiveis(colunasBanco), [colunasBanco])
+  /** A coluna onde o card mora: a escolhida por alguém, senão a da fase. */
+  const colunaDa = (f: FilaRica) => colunaDoCard(f, faseDa(f), colunas)
+  /** O prazo só vale em coluna do sistema. Numa coluna dele, como
+   *  "Interrompido", o card está parado DE PROPÓSITO, e acender o vermelho
+   *  seria cobrar o que ele mesmo mandou esperar. */
+  const prazoDa = (f: FilaRica) => {
+    const c = colunaDa(f)
+    return c.fase ? SLA_PADRAO[c.fase] || 0 : 0
+  }
 
   /* UMA EMPRESA, UM CARD (09/09/2026). A ficha da Mesa é uma PASTA, e a análise
      renomeia a pasta enquanto trabalha: a Renova aparecia três vezes no quadro
@@ -248,6 +291,71 @@ Nada do que já foi salvo se perde.`)) return
     carregar()
   }
 
+  /* ══ A ORDEM DA COLUNA ════════════════════════════════════════════════
+     23/09/2026: "o Ivan subiu um e-mail depois do Abenaias, mas ele quer
+     urgência no caso: ele arrasta o card, igual o Trello".
+
+     A TELA MANDA A COLUNA INTEIRA, já renumerada. Não é "sobe um": com quatro
+     pessoas mexendo no mesmo quadro, "sobe um" aplicado sobre uma lista que
+     mudou embaixo produz uma ordem que ninguém pediu.
+
+     O número muda na tela ANTES da resposta do banco (`setFila` aqui embaixo).
+     Arrastar um card e vê-lo voltar para o lugar por meio segundo é a coisa
+     que mais faz alguém achar que não funcionou — e aí arrasta de novo. */
+  const reordenar = async (nova: GrupoEmpresa[]) => {
+    if (somenteLeitura || reordenando) return
+    const ordem = renumerar(nova)
+    const porId = new Map<string, number>()
+    for (const p of ordem) for (const id of p.ids) porId.set(id, p.prioridade)
+    setFila(antes => antes.map(f => (porId.has(f.id) ? { ...f, prioridade: porId.get(f.id)! } : f)))
+    setReordenando(true); setErro('')
+    try {
+      const r = await fetch('/api/esteira/prioridade', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ordem }),
+      })
+      const j = await r.json()
+      if (!r.ok) setErro(j.erro ?? 'Não consegui gravar a ordem da coluna.')
+    } catch {
+      setErro('A conexão caiu: a ordem não foi gravada.')
+    }
+    setReordenando(false)
+    carregar()
+  }
+
+  /* DEVOLVER A COLUNA AO AUTOMÁTICO. O mesmo princípio do "Deixar o sistema
+     decidir" das colunas: quem priorizou à mão precisa poder desfazer, senão a
+     fila fica congelada numa decisão de três semanas atrás. */
+  const limparOrdem = async (das: GrupoEmpresa[]) => {
+    if (somenteLeitura || reordenando) return
+    const ids = das.flatMap(g => g.fichas.map(f => f.id))
+    if (!ids.length) return
+    setReordenando(true); setErro('')
+    try {
+      const r = await fetch('/api/esteira/prioridade', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: ids.slice(0, 20) }),
+      })
+      /* A rota apaga até 20 pastas por chamada; uma coluna pode ter mais.
+         Manda em lotes, e o primeiro erro para tudo: melhor metade desfeita
+         com aviso do que um "pronto" que não é verdade. */
+      let j = await r.json()
+      if (!r.ok) { setErro(j.erro ?? 'Não consegui limpar a ordem.'); setReordenando(false); carregar(); return }
+      for (let i = 20; i < ids.length; i += 20) {
+        const r2 = await fetch('/api/esteira/prioridade', {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: ids.slice(i, i + 20) }),
+        })
+        j = await r2.json()
+        if (!r2.ok) { setErro(j.erro ?? 'Não consegui limpar a ordem inteira.'); break }
+      }
+    } catch {
+      setErro('A conexão caiu: a ordem não foi limpa.')
+    }
+    setReordenando(false)
+    carregar()
+  }
+
   // ── as peças do cartão ──────────────────────────────────────────────────
   // Funções de desenho, e não componentes: fecham sobre o estado da Mesa e o
   // React não precisa reconciliá-las como tipos novos a cada render.
@@ -260,8 +368,6 @@ Nada do que já foi salvo se perde.`)) return
     const chips: React.ReactNode[] = []
     const novo = agora - new Date(f.criado_em).getTime() < 24 * 3600 * 1000 && f.situacao === 'pendente' && !f.cadastro
     if (novo) chips.push(<span key="n" className="an-chip varr">chegou de novo</span>)
-    // Só chega aqui a não concluída com caso (ver `naMesa`): alguém tem que decidir.
-    if (f.fora_do_disco_em) chips.push(<span key="d" className="an-chip erro" title="A pasta não está mais na raiz nem em _concluidas. Se foi para a rede sem a análise terminar, o caso ainda está aberto.">Pasta fora do computador</span>)
     if (f.situacao === 'erro') chips.push(<span key="e" className="an-chip erro">Erro na análise</span>)
     else if (f.situacao === 'pausada') chips.push(<span key="p" className="an-chip erro">Pausada por você</span>)
     else if (f.situacao === 'aguardando_resposta') chips.push(<span key="q" className="an-chip duvida">Precisa de você</span>)
@@ -292,8 +398,7 @@ Nada do que já foi salvo se perde.`)) return
 
   const pe = (f: FilaRica) => {
     const dias = diasParado(f, agora)
-    const fase = faseDa(f)
-    const limite = SLA_PADRAO[fase] || 0
+    const limite = prazoDa(f)
     const estourou = dias !== null && limite > 0 && dias > limite
     const enc = encaminhados[f.id] ?? (f.chave ? encaminhados[f.chave] : undefined)
     return (
@@ -320,7 +425,7 @@ Nada do que já foi salvo se perde.`)) return
 
   const ficha = (g: GrupoEmpresa) => {
     const f = g.principal
-    const fase = faseDa(f)
+    const coluna = colunaDa(f)
     const ultimo = f.linha?.[0] ?? null
     const s = SITUACAO[f.situacao]
     const nome = nomeDoGrupo(g)
@@ -330,7 +435,7 @@ Nada do que já foi salvo se perde.`)) return
     const comCnpj = g.fichas.find(x => x.cnpj)
     const outras = g.fichas.slice(1)
     return (
-      <button key={g.chave} type="button" className="an-ficha" style={{ ['--cor' as string]: corDaFase(fase) }}
+      <button key={g.chave} type="button" className="an-ficha" style={{ ['--cor' as string]: coluna.cor }}
         onClick={() => abrir(f)}
         title={outras.length
           ? `${nome} · ${s?.rotulo ?? f.situacao}\n\n${g.fichas.length} pastas desta empresa:\n${g.fichas.map(x => '· ' + x.pasta).join('\n')}`
@@ -376,21 +481,105 @@ Nada do que já foi salvo se perde.`)) return
   const kanban = () => {
     return (
       <div className="an-kb">
-        {FASES.map(fase => {
+        {colunas.map(col => {
           // A coluna conta EMPRESAS, e não pastas: é o número que ele lê para
           // saber quanto trabalho tem, e três pastas da Renova são um trabalho.
-          const das = grupos.filter(g => faseDa(g.principal) === fase.id)
+          /* A ORDEM DA COLUNA: primeiro quem foi arrastado, pelo número; depois
+             o resto, na ordem automática (o mais parado primeiro). A regra
+             mora em lib/analise/mesa.ts, junto com a que a rota usa para
+             renumerar: a tela e o banco não podem discordar sobre quem é o 1. */
+          const das = ordenarNaColuna(grupos.filter(g => colunaDa(g.principal).id === col.id))
+          const temMao = das.some(g => prioridadeDoGrupo(g) !== null)
+          const podeArrastar = !somenteLeitura && das.length > 1
           return (
-            <section key={fase.id} className="an-col" aria-label={fase.titulo}>
-              <div className="an-col-cab" title={fase.dica}>
-                <span className="pt" style={{ background: fase.cor }} />
-                <b>{fase.titulo}</b>
+            <section key={col.id} className="an-col" aria-label={col.titulo}>
+              <div className="an-col-cab" title={col.dica ?? 'Coluna sua: o card entra pelo botão "Mudar o substatus" do card'}>
+                <span className="pt" style={{ background: col.cor }} />
+                <b>{col.titulo}</b>
                 <i>{das.length}</i>
+                {temMao && !somenteLeitura && (
+                  <button type="button" className="an-col-mexer" onClick={() => limparOrdem(das)} disabled={reordenando}
+                    title="Devolver esta coluna à ordem automática (o mais parado primeiro)"
+                    aria-label={`Devolver a coluna ${col.titulo} à ordem automática`}>↺</button>
+                )}
+                {!somenteLeitura && (
+                  <button type="button" className="an-col-mexer" onClick={() => setEditandoColuna(col)}
+                    title="Renomear, mudar a cor, mudar de lugar ou arquivar" aria-label={`Arrumar a coluna ${col.titulo}`}>⋯</button>
+                )}
               </div>
-              {das.length ? das.map(g => ficha(g)) : <div className="an-col-vazia">{fase.dica}</div>}
+              {das.length ? das.map((g, i) => {
+                const naMao = arrastando?.chave === g.chave
+                const souAlvo = !!arrastando && arrastando.coluna === col.id && alvo === g.chave && !naMao
+                const mexer = (de: number, para: number) => reordenar(mover(das, de, para))
+                return (
+                  <div
+                    key={g.chave}
+                    className={`an-fi-box${naMao ? ' arrastando' : ''}${souAlvo ? ' alvo' : ''}`}
+                    draggable={podeArrastar}
+                    onDragStart={e => {
+                      if (!podeArrastar) return
+                      setArrastando({ chave: g.chave, coluna: col.id })
+                      e.dataTransfer.effectAllowed = 'move'
+                      // Firefox só começa o arrasto se houver dado no pacote.
+                      try { e.dataTransfer.setData('text/plain', g.chave) } catch { /* ignora */ }
+                    }}
+                    onDragEnd={() => { setArrastando(null); setAlvo(null) }}
+                    onDragOver={e => {
+                      /* SÓ DENTRO DA MESMA COLUNA. Mudar de coluna continua
+                         sendo o botão "Mudar o substatus" do card: lá a
+                         escolha fica gravada com quem fez e quando, e a régua
+                         do motor para de mandar naquele card. Arrastar de
+                         lado, sem querer, não pode ter esse efeito. */
+                      if (!arrastando || arrastando.coluna !== col.id) return
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      if (alvo !== g.chave) setAlvo(g.chave)
+                    }}
+                    onDrop={e => {
+                      if (!arrastando || arrastando.coluna !== col.id) return
+                      e.preventDefault()
+                      const de = das.findIndex(x => x.chave === arrastando.chave)
+                      const para = das.findIndex(x => x.chave === g.chave)
+                      setArrastando(null); setAlvo(null)
+                      if (de < 0 || para < 0 || de === para) return
+                      reordenar(mover(das, de, para))
+                    }}
+                  >
+                    {/* O NÚMERO É A POSIÇÃO NA COLUNA. Dourado quando alguém
+                        escolheu; cinza quando é a ordem automática. */}
+                    <span
+                      className={`an-fi-num${prioridadeDoGrupo(g) !== null ? ' mao' : ''}`}
+                      title={prioridadeDoGrupo(g) !== null
+                        ? `${i + 1}º da coluna, por escolha de ${g.principal.prioridade_por ?? 'alguém'}`
+                        : `${i + 1}º da coluna, pela ordem automática (o mais parado primeiro)`}
+                    >{i + 1}</span>
+                    {ficha(g)}
+                    {podeArrastar && (
+                      <div className="an-fi-setas">
+                        <button type="button" className="an-fi-seta" disabled={i === 0 || reordenando}
+                          onClick={() => mexer(i, i - 1)}
+                          title="Subir na fila" aria-label={`Subir ${nomeDoGrupo(g)} na fila`}>▲</button>
+                        <button type="button" className="an-fi-seta" disabled={i === das.length - 1 || reordenando}
+                          onClick={() => mexer(i, i + 1)}
+                          title="Descer na fila" aria-label={`Descer ${nomeDoGrupo(g)} na fila`}>▼</button>
+                      </div>
+                    )}
+                  </div>
+                )
+              }) : (
+                <div className="an-col-vazia">
+                  {col.dica ?? 'Vazia. Escolha esta coluna no botão "Mudar o substatus", dentro do card.'}
+                </div>
+              )}
             </section>
           )
         })}
+        {/* A COLUNA NOVA, no fim do quadro, como no Trello. */}
+        {!somenteLeitura && (
+          <button type="button" className="an-col an-col-nova" onClick={() => setEditandoColuna('nova')}>
+            + Nova coluna
+          </button>
+        )}
       </div>
     )
   }
@@ -403,9 +592,9 @@ Nada do que já foi salvo se perde.`)) return
           {/* A galeria segue a mesma regra do quadro: uma empresa, um card. */}
           {grupos.map(g => {
             const f = g.principal
-            const fase = faseDa(f)
+            const coluna = colunaDa(f)
             const dias = diasParado(f, agora)
-            const limite = SLA_PADRAO[fase] || 0
+            const limite = prazoDa(f)
             const estourou = dias !== null && limite > 0 && dias > limite
             const feitos = f.docs?.feitos ?? 0, total = f.docs?.total ?? 0
             const pct = total ? Math.round((feitos / total) * 100) : 0
@@ -423,7 +612,7 @@ Nada do que já foi salvo se perde.`)) return
                   </div>
                 </div>
                 <div className="an-gl-fase">
-                  <span className="an-chip fase" style={{ ['--cor' as string]: corDaFase(fase) }}>{nomeDaFase(fase)}</span>
+                  <span className="an-chip fase" style={{ ['--cor' as string]: coluna.cor }}>{coluna.titulo}</span>
                   {f.situacao === 'em_andamento' && <span className="an-chip" style={{ background: '#fdf6e3', color: '#8a6410' }}>{f.etapa_texto || 'rodando'}</span>}
                 </div>
                 <div className="an-med">
@@ -463,16 +652,16 @@ Nada do que já foi salvo se perde.`)) return
             <tbody>
               {fichas.length === 0 && <tr><td colSpan={8} className="an-vazio" style={{ textAlign: 'center' }}>Nada bate com este recorte.</td></tr>}
               {fichas.map(f => {
-                const fase = faseDa(f)
+                const coluna = colunaDa(f)
                 const dias = diasParado(f, agora)
-                const estourou = dias !== null && (SLA_PADRAO[fase] || 0) > 0 && dias > SLA_PADRAO[fase]
+                const estourou = dias !== null && prazoDa(f) > 0 && dias > prazoDa(f)
                 const s = SITUACAO[f.situacao]
                 const enc = encaminhados[f.id] ?? (f.chave ? encaminhados[f.chave] : undefined)
                 return (
                   <tr key={f.id} onClick={() => abrir(f)}>
                     <td><div className="nome">{selo(f)}<b>{nomeDaFicha(f)}</b></div></td>
                     <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{f.cnpj && (f.cnpj_confiavel || f.analise_id) ? maskCNPJ(f.cnpj) : '—'}</td>
-                    <td><span className="an-chip fase" style={{ ['--cor' as string]: corDaFase(fase) }}>{nomeDaFase(fase)}</span></td>
+                    <td><span className="an-chip fase" style={{ ['--cor' as string]: coluna.cor }}>{coluna.titulo}</span></td>
                     <td>{corta(f.corretora || '—', 24)}</td>
                     <td className="num">{f.docs ? `${f.docs.feitos}/${f.docs.total}` : f.documentos}</td>
                     <td className={`num${estourou ? ' atrasado' : ''}`}>{dias === null ? '—' : `${dias}d`}</td>
@@ -490,13 +679,13 @@ Nada do que já foi salvo se perde.`)) return
   }
 
   // ── a tela ──────────────────────────────────────────────────────────────
-  const quandoVarr = estado?.varredura?.quando_txt
-    || (estado?.varredura?.quando ? `última varredura ${desde(estado.varredura.quando)}` : 'Nunca varrido')
+  /* O Varrer de Novo confere o que saiu do notebook (ver o cabeçalho). Ao lado
+     do botão fica o que a última conferência respondeu, e quando. */
   const textoVarr = comandoVivo
-    ? (comandoVivo.aceito_em ? 'Varrendo agora…' : 'Varredura pedida, esperando o notebook…')
-    : novidades
-      ? `${novidades} novidade${novidades === 1 ? '' : 's'} na Entrada · ${quandoVarr}`
-      : `${quandoVarr} · nada novo${estado?.varredura?.pastas ? ` em ${estado.varredura.pastas} pasta${estado.varredura.pastas === 1 ? '' : 's'}` : ''}`
+    ? (comandoVivo.aceito_em ? 'Conferindo as pastas do notebook…' : 'Conferência pedida, esperando o notebook…')
+    : ultimoVarrer
+      ? `${ultimoVarrer.resultado || 'Conferido.'} · ${desde(ultimoVarrer.feito_em)}`
+      : 'Recortou pasta para a rede? Clique para tirar o card da Mesa'
 
   /* O RELÓGIO E O ARCO. `segundosDesde` é o instante em que o banco foi
      escrito; o tique de um segundo soma o que passou desde então, para o
@@ -661,15 +850,31 @@ Nada do que já foi salvo se perde.`)) return
         <input className="an-busca" type="search" value={busca} onChange={e => setBusca(e.target.value)}
           placeholder="Buscar tomador, CNPJ, corretora ou produto" aria-label="Buscar na mesa" />
         <div className="an-varr">
+          {/* + NOVO CARD (23/09/2026). "dentro da tela Análise tem os cards do
+              Kanban, onde também é possível inserir um card por ali". A porta é
+              a MESMA da Entrada do Comercial (`NovoPedido`), e por isso o card
+              nasce igual: caso, checklist e linha na esteira. */}
+          {!somenteLeitura && (
+            <button type="button" className="an-bt" onClick={() => setNovoCard(v => !v)}
+              title="Abrir um card novo pelo CNPJ, sem e-mail. Ele nasce na coluna Entrada.">
+              {novoCard ? 'Fechar' : '+ Novo card'}
+            </button>
+          )}
           <span title={textoVarr}>{textoVarr}</span>
           {!somenteLeitura && (
-            <button type="button" className={`an-bt${novidades ? ' ouro' : ''}`} disabled={varrendo || !!comandoVivo} onClick={varrer}
-              title="Manda o notebook varrer a pasta Análises FAM de novo: e-mail novo, pasta nova, documento que chegou">
+            <button type="button" className="an-bt" disabled={varrendo || !!comandoVivo} onClick={varrer}
+              title="Confere a pasta Análises FAM do notebook (raiz e _concluidas). O tomador cuja pasta não está mais lá sai da Mesa. Nada é apagado: análise, tomador e caso continuam no CRM.">
               Varrer de Novo
             </button>
           )}
         </div>
       </div>
+
+      {novoCard && !somenteLeitura && (
+        <div className="card-panel" style={{ marginBottom: 12 }}>
+          <NovoPedido portas="só cnpj" aoAbrir={carregar} aoFechar={() => setNovoCard(false)} />
+        </div>
+      )}
 
       {erro && <div className="alert-error" style={{ marginBottom: 12 }}>{erro}</div>}
 
@@ -685,6 +890,15 @@ Nada do que já foi salvo se perde.`)) return
           </p>
         </div>
       ) : layout === 'kanban' ? kanban() : layout === 'galeria' ? galeria() : tabela()}
+
+      {editandoColuna && (
+        <EditorColuna
+          coluna={editandoColuna === 'nova' ? null : editandoColuna}
+          colunas={colunas}
+          aoFechar={() => setEditandoColuna(null)}
+          aoSalvar={() => { setEditandoColuna(null); carregar() }}
+        />
+      )}
     </div>
   )
 }

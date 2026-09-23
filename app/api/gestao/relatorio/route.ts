@@ -26,6 +26,7 @@ import {
   mesDaData, mesDoInstante, mesValido, montarRelatorioMensal,
   type AnaliseMes, type FilaMes, type LinhaEmail, type MudancaStatus, type OperacaoMes,
 } from '@/lib/gestao/relatorio-mensal'
+import { quemAnalise } from '@/lib/analise/acesso'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -57,6 +58,25 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ erro: 'Sessão expirada. Entre de novo.' }, { status: 401 })
   const { data: quem } = await supabase.from('usuarios').select('auth_id').eq('auth_id', user.id).maybeSingle()
   if (!quem) return NextResponse.json({ erro: 'Seu login não tem cadastro de usuário no CRM.' }, { status: 403 })
+
+  /* A PORTA DA ANÁLISE TAMBÉM VALE AQUI  ·  23/09/2026
+     Daqui para baixo tudo é lido com SERVICE ROLE, que passa por cima da RLS —
+     inclusive da trava nova das tabelas `analise*`. Sem esta linha, o relatório
+     gerencial seria a porta dos fundos da tela que acabou de ser trancada:
+     `analises` e `analise_fila` entram no cálculo, e o que sai é a mediana do
+     limite recomendado, a distribuição por nível de risco e por setor, o
+     ranking de corretoras, LMG e taxa ponderada da FAM inteira.
+
+     É agregado, sem CNPJ nem razão social por linha, e mesmo assim é matéria da
+     Análise. Os quatro logins de perfil `leitura` são INVESTIDORES: número
+     agregado da carteira é justamente o que eles não devem tirar sozinhos. */
+  const naAnalise = await quemAnalise()
+  if (!naAnalise.ve) {
+    return NextResponse.json(
+      { erro: 'O relatório gerencial da Análise não está liberado para você. Quem libera é o Marco, em Usuários.' },
+      { status: 403 },
+    )
+  }
 
   const agora = new Date()
   const atual = mesDoInstante(agora.toISOString())!

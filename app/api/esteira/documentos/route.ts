@@ -12,14 +12,20 @@
 //
 //  A ASSINATURA VALE 15 MINUTOS. Tempo de baixar, e não mais: um endereço
 //  assinado é uma porta aberta para o arquivo, e porta aberta tem que fechar.
+//
+//  A LISTA EM SI SAIU DAQUI em 23/09/2026, para `lib/analise/documentos.ts`.
+//  Motivo: a equipe passou a abrir os mesmos documentos por
+//  `/api/analise/documentos`, com a sessão dela, e duas listas montadas em dois
+//  lugares acabariam divergindo — o agente baixando um conjunto para o motor e
+//  a equipe lendo outro na tela, achando que são os mesmos.
 // ============================================================================
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { documentosDaAnalise, VALE_AGENTE } from '@/lib/analise/documentos'
 
 export const runtime = 'nodejs'
 
-const BUCKET = 'fam-anexos'
-const VALE_SEGUNDOS = 15 * 60
+const VALE_SEGUNDOS = VALE_AGENTE
 
 export async function GET(req: NextRequest) {
   const segredo = process.env.CARTEIRO_TOKEN || process.env.ANALISE_EVENTO_TOKEN || ''
@@ -43,66 +49,7 @@ export async function GET(req: NextRequest) {
     .maybeSingle()
   if (!fila) return NextResponse.json({ erro: 'Análise não está na fila.' }, { status: 404 })
 
-  /* OS DOCUMENTOS PODEM ESTAR EM DOIS LUGARES, e é preciso olhar os dois.
-     Enquanto a triagem não conclui, eles estão pendurados no CASO. Ao concluir,
-     a rota `concluir` os passa para o TOMADOR, para o CRM não ter duas pilhas
-     de documento da mesma empresa. Uma análise nascida da triagem já passou por
-     essa mudança, então procurar só pelo caso devolveria zero arquivo. */
-  const alvos: { tipo: string; id: string }[] = []
-  if (fila.tomador_id) alvos.push({ tipo: 'tomador', id: fila.tomador_id })
-  if (fila.caso_id) alvos.push({ tipo: 'caso', id: fila.caso_id })
-
-  const vistos = new Set<string>()
-  const documentos: { nome: string; url: string; bytes: number | null }[] = []
-  const falhas: string[] = []
-
-  for (const alvo of alvos) {
-    const { data: anexos } = await sb
-      .from('anexos')
-      .select('id, nome_original, storage_path, tamanho_bytes')
-      .eq('entidade_tipo', alvo.tipo)
-      .eq('entidade_id', alvo.id)
-    for (const a of anexos ?? []) {
-      // O mesmo arquivo pode aparecer pelas duas pontas; baixar duas vezes
-      // criaria documento repetido na pasta, e o hash do conjunto mudaria à toa.
-      if (!a.storage_path || vistos.has(a.storage_path)) continue
-      vistos.add(a.storage_path)
-      const { data: assinado, error } = await sb.storage
-        .from(BUCKET).createSignedUrl(a.storage_path, VALE_SEGUNDOS)
-      if (error || !assinado?.signedUrl) {
-        falhas.push(`${a.nome_original} (${error?.message ?? 'sem endereço'})`)
-        continue
-      }
-      documentos.push({
-        nome: a.nome_original,
-        url: assinado.signedUrl,
-        bytes: a.tamanho_bytes ?? null,
-      })
-    }
-  }
-
-  /* O PRÓPRIO E-MAIL VAI PARA A PASTA (10/09/2026). Ordem do Marco: a triagem
-     "vai LER O E-MAIL". O .msg ficava só no Storage (`casos.email_storage_path`,
-     sem linha em `anexos`), e a pasta recebia os anexos soltos, sem o corpo:
-     corretora, produto e as condições que o comercial escreveu nunca chegavam.
-     Com o .msg na pasta, o `ler-emails.mjs` do motor escreve o corpo como
-     documento e abre os e-mails que vierem embutidos. Anexo repetido não pesa:
-     a extração marca a cópia idêntica como duplicata. */
-  if (fila.caso_id) {
-    const { data: caso } = await sb
-      .from('casos').select('numero, email_storage_path').eq('id', fila.caso_id).maybeSingle()
-    const caminho = caso?.email_storage_path
-    if (caminho && !vistos.has(caminho)) {
-      vistos.add(caminho)
-      const { data: assinado } = await sb.storage.from(BUCKET).createSignedUrl(caminho, VALE_SEGUNDOS)
-      if (assinado?.signedUrl) {
-        const ext = caminho.toLowerCase().endsWith('.eml') ? '.eml' : '.msg'
-        documentos.push({ nome: `E-mail original do caso ${caso.numero}${ext}`, url: assinado.signedUrl, bytes: null })
-      } else {
-        falhas.push('o próprio e-mail (sem endereço assinado)')
-      }
-    }
-  }
+  const { documentos, falhas } = await documentosDaAnalise(sb, fila, VALE_SEGUNDOS)
 
   return NextResponse.json({
     ok: true,

@@ -25,6 +25,15 @@ export interface Usuario {
   status: StatusUsuario
   primeiro_acesso: boolean
   pode_publicar_avisos: boolean
+  // ANÁLISE DE CRÉDITO, dois direitos diferentes e independentes do `perfil`:
+  //   acesso_analise ... entra em /analises e lê a Mesa, o Acervo e os
+  //                      relatórios. Marcado nesta mesma tela, pelo
+  //                      proprietário. Quem não tem não vê nem o item no menu.
+  //   analista_credito . EDITA a análise: decide conflito, aplica ao cadastro.
+  //                      Um analista só (o Marco). O banco recusa analista sem
+  //                      acesso (constraint `usuarios_analista_ve_analise`).
+  acesso_analise: boolean
+  analista_credito: boolean
   // Comitê: membro votante do "Julgamento" das operações. Quando true e há
   // telefone cadastrado, o diretor recebe o convite de votação no WhatsApp.
   comite: boolean
@@ -125,10 +134,33 @@ export interface Tomador {
   status: string
   ativo: boolean
   data_entrada: string | null
+  /* A FICHA DA EMPRESA. Até 21/09/2026 estes campos só existiam dentro da
+     análise (`analises.identificacao`, `analises.segmento`, `analises.setor`),
+     e o cadastro do CRM ficava sem eles — era um dos três cadastros que o
+     Marco mandou unificar. Agora o dono é `tomadores`, e a cópia que ficou na
+     análise é histórico: a empresa como ela era no dia daquela análise.
+     Ver supabase-migration-cadastro-unico-tomador.sql. */
+  cnae: string | null
+  capital_social: number | null
+  data_abertura: string | null
+  situacao_receita: string | null
+  /** Texto livre, e não número: o acervo guarda "Sem dados (Serasa)". */
+  funcionarios: string | null
+  /** Texto livre pelo mesmo motivo: "Nenhuma. As 4 filiais foram encerradas…". */
+  filiais: string | null
+  regime_tributario: string | null
+  segmento: string | null
+  setor: string | null
+  /** De onde veio o cadastro: 'receita', 'analise', ou nulo (digitado). */
+  cadastro_fonte: string | null
   /** A área que está com a central do card agora (comercial → … → emissao).
    *  Não confundir com `status`: um é onde o TRABALHO está, o outro é a
    *  situação cadastral do tomador. Ver `lib/card/secoes.ts`. */
   central_area: string | null
+  /** A holding deste tomador, quando ele é SPE (ou outra empresa) do mesmo
+   *  grupo econômico. Vínculo de UM nível só — ver supabase-migration-vinculo-holding.sql. */
+  holding_id: string | null
+  holding?: { id: string; razao_social: string; cnpj: string | null } | null
   created_at: string
   updated_at: string
 }
