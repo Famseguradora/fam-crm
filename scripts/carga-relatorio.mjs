@@ -138,12 +138,30 @@ export function montarModelo() {
   return { nome, html }
 }
 
+/** A conversa com a IA gravada no dossie (`conversa.jsonl`), como o motor a
+ *  entrega em `GET /api/ia/<id>`: as ultimas 60 linhas. Sem arquivo, vazia. */
+function lerConversa(id) {
+  try {
+    const bruto = fs.readFileSync(path.join(SISTEMA, 'registro', 'dossie', id, 'conversa.jsonl'), 'utf8')
+    const linhas = bruto.split(/\r?\n/).filter(Boolean).map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean).slice(-60)
+    return linhas.some((m) => m.tipo !== 'decisao' && m.texto) ? linhas : []
+  } catch { return [] }
+}
+
 /** A peca de uma analise: o que o servidor injeta na marca do template. */
 export async function montarPeca(id, nomeTemplate) {
   const copia = lerJson(path.join(COPIAS, id + '.json'))
   if (!copia) return null
   const dados = await dadosDaAnalise(copia)
   if (!dados) return null
+  /* A CONVERSA COM A IA (23/09/2026). O template so desenha a secao "Conversa
+     com o auditor de IA" quando pergunta ao servidor (`GET /api/ia/<id>`), e no
+     modo avulso ele nunca pergunta. Para as analises que tem conversa, a peca
+     leva um `fetch` de mentira ANTES do auditor, que responde essa rota com a
+     conversa gravada no dossie e recusa todo o resto; nesse caso o documento
+     abre no modo normal (nao avulso), ja em somente leitura. Sem conversa, fica
+     o avulso, que nunca chama nada. */
+  const conversa = lerConversa(id)
   const contexto = {
     id,
     versao_template: nomeTemplate,
@@ -156,11 +174,14 @@ export async function montarPeca(id, nomeTemplate) {
     aviso_versao: AVISO,
     carimbo: '',
     embutido: false,
-    // O modo que o template ja tem para viver sem servidor: nenhuma chamada sai daqui.
-    avulso: true,
+    avulso: conversa.length === 0,
   }
   const memoria = copia.gerada?.memoria || null
-  return `<script id="fam-contexto" type="application/json">${seguro(contexto)}</script>\n`
+  const falsoFetch = conversa.length
+    ? `<script>(function(){var C=${seguro(conversa)};window.fetch=function(u,o){try{if(/\\/api\\/ia\\/[^\\/?]+$/.test(String(u))&&(!o||!o.method||o.method==='GET')){return Promise.resolve(new Response(JSON.stringify({ok:true,conversa:C,em_curso:false}),{headers:{'Content-Type':'application/json'}}));}}catch(e){}return Promise.reject(new Error('somente leitura'));};})();</script>\n`
+    : ''
+  return falsoFetch
+    + `<script id="fam-contexto" type="application/json">${seguro(contexto)}</script>\n`
     + `<script id="fam-analise" type="application/json">${seguro(dados)}</script>\n`
     + `<script id="fam-memoria" type="application/json">${seguro(memoria)}</script>\n`
 }
@@ -182,7 +203,28 @@ export async function publicarRelatorios({ gravar = false, so = '' } = {}) {
 
   const linhas = [{ id: 'modelo', html: modelo, hash: hashDe(modelo), atualizado_em: new Date().toISOString() }]
   const semCopia = []
+  let exportadas = 0
   for (const chave of chaves) {
+    /* O HTML QUE ELE BAIXA VALE PRIMEIRO (23/09/2026). Cada vez que ele clica
+       em "Baixar HTML", o servidor guarda a MESMA copia em `registro/html`: o
+       arquivo com o robo de bordo e a conversa com a IA dentro, do jeito que
+       vai para o comite. Ele pediu "igual aquele que baixo em HTML", entao vai
+       o arquivo inteiro, sem remontar nada. Quem nunca baixou o HTML cai na
+       montagem ao vivo (modelo + peca), que nao traz a conversa. */
+    const exportado = path.join(SISTEMA, 'registro', 'html', chave + '.html')
+    if (fs.existsSync(exportado)) {
+      try {
+        const doc = fs.readFileSync(exportado, 'utf8')
+        // Baixado ANTES da conversa (3 arquivos de 03/08): sem ela dentro, o
+        // documento ao vivo, que a leva, e mais fiel do que o arquivo velho.
+        const faltaConversa = lerConversa(chave).length > 0 && !/Conversa com o auditor de IA/.test(doc)
+        if (/^\s*<!doctype html/i.test(doc) && !faltaConversa) {
+          linhas.push({ id: chave, html: doc, hash: hashDe(doc), atualizado_em: new Date().toISOString() })
+          exportadas++
+          continue
+        }
+      } catch { /* arquivo so na nuvem ou preso: cai na montagem ao vivo */ }
+    }
     const peca = await montarPeca(chave, nome)
     if (!peca) { semCopia.push(chave); continue }
     linhas.push({ id: chave, html: peca, hash: hashDe(peca), atualizado_em: new Date().toISOString() })
@@ -190,17 +232,35 @@ export async function publicarRelatorios({ gravar = false, so = '' } = {}) {
 
   const kb = (n) => Math.round(n / 1024)
   console.log(`\nrelatorio de leitura: modelo ${nome} (${kb(modelo.length)} KB) + ${linhas.length - 1} analise(s)`
+    + ` (${exportadas} com o HTML baixado, ${linhas.length - 1 - exportadas} montadas ao vivo)`
     + ` · ${kb(linhas.reduce((s, l) => s + l.html.length, 0))} KB no total`)
   if (semCopia.length) console.log(`sem copia no disco (${semCopia.length}): ${semCopia.slice(0, 5).join(', ')}${semCopia.length > 5 ? '…' : ''}`)
   if (!gravar) { console.log('ensaio: nada foi gravado.'); return { gravadas: 0, semCopia } }
 
   // Em lotes pequenos: cada linha pesa algumas centenas de KB.
   let gravadas = 0
-  for (let i = 0; i < linhas.length; i += 5) {
-    const lote = linhas.slice(i, i + 5)
+  for (let i = 0; i < linhas.length; i += 3) {
+    const lote = linhas.slice(i, i + 3)
     const { error: e } = await sb.from('analise_relatorio_leitura').upsert(lote, { onConflict: 'id' })
-    if (e) { console.log(`  falhou o lote ${i / 5 + 1}: ${e.message}`); continue }
-    gravadas += lote.length
+    if (!e) { gravadas += lote.length; continue }
+    // Lote que estoura o tempo do banco: tenta linha a linha, que e mais leve.
+    for (const linha of lote) {
+      const { error: e1 } = await sb.from('analise_relatorio_leitura').upsert(linha, { onConflict: 'id' })
+      if (!e1) { gravadas++; continue }
+      /* O HTML baixado que passa de uns MB estoura o tempo do banco (o de
+         09/2026 da Ebix tem 9,8 MB, com imagens dentro). Cai na montagem ao
+         vivo, que e leve; se nem ela couber, a aba abre a Base compartilhada. */
+      let salvou = false
+      if (/^\s*<!doctype html/i.test(linha.html) && linha.id !== 'modelo') {
+        const peca = await montarPeca(linha.id, nome)
+        if (peca) {
+          const { error: e2 } = await sb.from('analise_relatorio_leitura')
+            .upsert({ id: linha.id, html: peca, hash: hashDe(peca), atualizado_em: new Date().toISOString() }, { onConflict: 'id' })
+          if (!e2) { gravadas++; salvou = true; console.log(`  ${linha.id}: o HTML baixado e grande demais, entrou a montagem ao vivo`) }
+        }
+      }
+      if (!salvou) console.log(`  nao gravou ${linha.id}: ${e1.message}`)
+    }
   }
   console.log(`gravadas ${gravadas} de ${linhas.length}.`)
   return { gravadas, semCopia }

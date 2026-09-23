@@ -32,10 +32,16 @@ export default function RelatorioLeitura({ chave, razao }: { chave: string; raza
         if (!vivo) return
         const modelo = data?.find(l => l.id === 'modelo')?.html
         const peca = data?.find(l => l.id === chave)?.html
-        if (error || !modelo || !peca) {
+        if (error || !peca) {
           setErro(error?.message ?? 'A cópia de leitura desta análise ainda não foi publicada.')
           return
         }
+        /* DOIS FORMATOS NA MESMA LINHA. Quem já baixou o HTML tem o arquivo
+           inteiro guardado (com a conversa com a IA e o robô de bordo): abre
+           como está. Quem não baixou tem só a peça da análise, e ela entra no
+           modelo. */
+        if (/^\s*<!doctype html/i.test(peca)) { setHtml(peca); return }
+        if (!modelo) { setErro('O modelo do relatório ainda não foi publicado.'); return }
         // Por FUNÇÃO, nunca por string: um "$'" no texto colaria o resto do documento de novo.
         setHtml(modelo.replace('<!--FAM-DADOS-->', () => peca))
       })
