@@ -221,6 +221,17 @@ export default function EstiloAnalises() {
 .an-kb { display:grid; grid-auto-flow:column; grid-auto-columns:236px; gap:12px; overflow-x:auto; padding-bottom:6px; align-items:start; }
 .an-col-mexer { margin-left:4px; border:none; background:none; color:#6080a0; font-size:15px; line-height:1; cursor:pointer; padding:0 4px; border-radius:6px; }
 .an-col-mexer:hover { background:#fff; color:#0a1628; }
+/* Ordenar a coluna (23/09/2026): o nome é o botão, com cara de título. */
+.an-col-nome { border:none; background:none; padding:0; font:inherit; font-size:13px; font-weight:700; color:#0a1628; cursor:pointer; text-align:left; }
+.an-col-nome:hover { text-decoration:underline; text-decoration-color:#8ba3c0; text-underline-offset:3px; }
+.an-col-ord { font-size:11px; color:#6080a0; margin-left:2px; }
+.an-col-menu { background:#fff; border:1px solid #dbe6f3; border-radius:9px; padding:4px; margin:0 0 9px; display:flex; flex-direction:column; }
+.an-col-menu-tit { font-size:11px; color:#8ba3c0; padding:4px 8px 2px; }
+.an-col-menu button { display:flex; align-items:center; gap:6px; border:none; background:none; font:inherit; font-size:12.5px; color:#26374a; text-align:left; padding:6px 8px; border-radius:6px; cursor:pointer; }
+.an-col-menu button span { width:12px; color:#3070c8; font-size:11px; flex:none; }
+.an-col-menu button:hover { background:#eef4fc; }
+.an-col-menu button.on { font-weight:700; color:#0a1628; }
+.an-col-menu button.fim { border-top:1px solid #eef2f8; border-radius:0 0 6px 6px; margin-top:3px; padding-top:8px; color:#6080a0; }
 .an-col-nova { min-height:60px; border-style:dashed; background:transparent; color:#6080a0; font:inherit; font-size:13px; font-weight:600; cursor:pointer; text-align:center; }
 .an-col-nova:hover { background:#eaf0f8; color:#0a1628; }
 .an-colunas-escolha { display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; }
@@ -268,6 +279,8 @@ export default function EstiloAnalises() {
   /* Os botões do cabeçalho da coluna (↺ e ⋯) no dedo: eram ~15px, que é menos
      da metade do alvo mínimo. Mesma correção, mesmo motivo. */
   .an-col-mexer { min-width:30px; min-height:28px; font-size:17px; }
+  .an-col-nome { min-height:30px; }
+  .an-col-menu button { min-height:36px; font-size:14px; }
 }
 
 .an-ficha { background:#fff; border:1px solid #e3ebf5; border-left:4px solid var(--cor,#8ba3c0); border-radius:11px; padding:11px 12px; margin-bottom:9px;

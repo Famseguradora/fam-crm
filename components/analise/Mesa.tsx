@@ -39,7 +39,7 @@ import {
   COLUNAS_MESA, nomeDaFicha, diasParado, iniciaisDe, corDoNome, desde, corta,
   agruparPorEmpresa, nomeDoGrupo, naMesa, type GrupoEmpresa,
   colunasVisiveis, colunaDoCard, type ColunaMesa,
-  ordenarNaColuna, prioridadeDoGrupo, renumerar, mover,
+  ordenarPor, prioridadeDoGrupo, renumerar, mover, ORDENS_COLUNA, ehOrdemColuna, type OrdemColuna,
   type FilaRica, type EstadoEsteira, type Encaminhamento,
 } from '@/lib/analise/mesa'
 import { nomeArea } from '@/lib/card/secoes'
@@ -54,6 +54,9 @@ type Layout = 'kanban' | 'tabela' | 'galeria'
 type Execucao = NonNullable<EstadoEsteira['execucao']>['execucoes'][number]
 
 const CHAVE_LAYOUT = 'fam-mesa-layout'
+/** Como cada pessoa lê cada coluna (23/09/2026). Fica no navegador dela: é um
+ *  jeito de olhar, e não uma decisão do quadro. */
+const CHAVE_ORDENS = 'fam-mesa-ordem-colunas'
 
 /** As fichas que "esperam a ordem dele": tudo que não está rodando nem pronto.
  *  É a conta `porColuna.fila + porColuna.voce` do cockpit. */
@@ -114,6 +117,41 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     setLayout(l)
     try { localStorage.setItem(CHAVE_LAYOUT, l) } catch { /* ignora */ }
   }
+
+  /* ORDENAR A COLUNA (23/09/2026). `ordens` é por coluna; a ausente é a "Ordem
+     da fila". `menuAberto` é a coluna cujo menu está à vista (só uma por vez). */
+  const [ordens, setOrdens] = useState<Record<string, OrdemColuna>>({})
+  const [menuAberto, setMenuAberto] = useState<string | null>(null)
+  useEffect(() => {
+    try {
+      const bruto = JSON.parse(localStorage.getItem(CHAVE_ORDENS) || '{}') as Record<string, unknown>
+      const ok: Record<string, OrdemColuna> = {}
+      for (const [k, v] of Object.entries(bruto)) if (ehOrdemColuna(v) && v !== 'fila') ok[k] = v
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setOrdens(ok)
+    } catch { /* sem armazenamento, ficam todas na ordem da fila */ }
+  }, [])
+  const ordenarColuna = (colunaId: string, modo: OrdemColuna) => {
+    setOrdens(antes => {
+      const novo = { ...antes }
+      if (modo === 'fila') delete novo[colunaId]; else novo[colunaId] = modo
+      try { localStorage.setItem(CHAVE_ORDENS, JSON.stringify(novo)) } catch { /* ignora */ }
+      return novo
+    })
+    setMenuAberto(null)
+  }
+  // Esc, ou um toque fora do menu, fecha. No celular não há Esc, e sem o toque
+  // fora o menu ficaria empurrando os cards até o próximo clique.
+  useEffect(() => {
+    if (!menuAberto) return
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuAberto(null) }
+    const fora = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.('.an-col-menu, .an-col-nome, .an-col-mexer')) setMenuAberto(null)
+    }
+    window.addEventListener('keydown', esc)
+    document.addEventListener('pointerdown', fora)
+    return () => { window.removeEventListener('keydown', esc); document.removeEventListener('pointerdown', fora) }
+  }, [menuAberto])
 
   const carregar = useCallback(async (vivo = { atual: true }) => {
     const supabase = createClient()
@@ -488,25 +526,54 @@ Nada do que já foi salvo se perde.`)) return
              o resto, na ordem automática (o mais parado primeiro). A regra
              mora em lib/analise/mesa.ts, junto com a que a rota usa para
              renumerar: a tela e o banco não podem discordar sobre quem é o 1. */
-          const das = ordenarNaColuna(grupos.filter(g => colunaDa(g.principal).id === col.id))
+          const modo: OrdemColuna = ordens[col.id] ?? 'fila'
+          const naFila = modo === 'fila'
+          const das = ordenarPor(grupos.filter(g => colunaDa(g.principal).id === col.id), modo)
           const temMao = das.some(g => prioridadeDoGrupo(g) !== null)
-          const podeArrastar = !somenteLeitura && das.length > 1
+          /* ARRASTAR E AS SETAS SÓ VALEM NA "ORDEM DA FILA": numa coluna
+             ordenada por data, a posição que se vê não é a que se grava. */
+          const podeArrastar = !somenteLeitura && das.length > 1 && naFila
+          const menu = menuAberto === col.id
           return (
             <section key={col.id} className="an-col" aria-label={col.titulo}>
               <div className="an-col-cab" title={col.dica ?? 'Coluna sua: o card entra pelo botão "Mudar o substatus" do card'}>
                 <span className="pt" style={{ background: col.cor }} />
-                <b>{col.titulo}</b>
+                {/* O NOME ABRE O MESMO MENU DO ⋯ (ordem dele: "clicando no nome
+                    'Pronta' eu consigo ordenar"). Fica com cara de título. */}
+                <button type="button" className="an-col-nome" onClick={() => setMenuAberto(menu ? null : col.id)}
+                  aria-expanded={menu} aria-label={`Ordenar a coluna ${col.titulo}`}>{col.titulo}</button>
                 <i>{das.length}</i>
-                {temMao && !somenteLeitura && (
+                {!naFila && (
+                  <span className="an-col-ord" title={`Ordenada por: ${ORDENS_COLUNA.find(o => o.id === modo)?.rotulo}`}>
+                    {ORDENS_COLUNA.find(o => o.id === modo)?.curto}
+                  </span>
+                )}
+                {temMao && !somenteLeitura && naFila && (
                   <button type="button" className="an-col-mexer" onClick={() => limparOrdem(das)} disabled={reordenando}
                     title="Devolver esta coluna à ordem automática (o mais parado primeiro)"
                     aria-label={`Devolver a coluna ${col.titulo} à ordem automática`}>↺</button>
                 )}
-                {!somenteLeitura && (
-                  <button type="button" className="an-col-mexer" onClick={() => setEditandoColuna(col)}
-                    title="Renomear, mudar a cor, mudar de lugar ou arquivar" aria-label={`Arrumar a coluna ${col.titulo}`}>⋯</button>
-                )}
+                <button type="button" className="an-col-mexer" onClick={() => setMenuAberto(menu ? null : col.id)}
+                  aria-expanded={menu}
+                  title={somenteLeitura ? 'Ordenar esta coluna' : 'Ordenar, renomear, mudar a cor, mudar de lugar ou arquivar'}
+                  aria-label={`Opções da coluna ${col.titulo}`}>⋯</button>
               </div>
+              {menu && (
+                <div className="an-col-menu" role="menu" aria-label={`Ordenar ${col.titulo}`}>
+                  <div className="an-col-menu-tit">Ordenar por</div>
+                  {ORDENS_COLUNA.map(o => (
+                    <button key={o.id} type="button" role="menuitemradio" aria-checked={modo === o.id}
+                      className={modo === o.id ? 'on' : ''} title={o.dica} onClick={() => ordenarColuna(col.id, o.id)}>
+                      <span>{modo === o.id ? '✓' : ''}</span>{o.rotulo}
+                    </button>
+                  ))}
+                  {!somenteLeitura && (
+                    <button type="button" role="menuitem" className="fim" onClick={() => { setMenuAberto(null); setEditandoColuna(col) }}>
+                      <span />Arrumar a coluna…
+                    </button>
+                  )}
+                </div>
+              )}
               {das.length ? das.map((g, i) => {
                 const naMao = arrastando?.chave === g.chave
                 const souAlvo = !!arrastando && arrastando.coluna === col.id && alvo === g.chave && !naMao
@@ -547,12 +614,14 @@ Nada do que já foi salvo se perde.`)) return
                   >
                     {/* O NÚMERO É A POSIÇÃO NA COLUNA. Dourado quando alguém
                         escolheu; cinza quando é a ordem automática. */}
-                    <span
-                      className={`an-fi-num${prioridadeDoGrupo(g) !== null ? ' mao' : ''}`}
-                      title={prioridadeDoGrupo(g) !== null
-                        ? `${i + 1}º da coluna, por escolha de ${g.principal.prioridade_por ?? 'alguém'}`
-                        : `${i + 1}º da coluna, pela ordem automática (o mais parado primeiro)`}
-                    >{i + 1}</span>
+                    {naFila && (
+                      <span
+                        className={`an-fi-num${prioridadeDoGrupo(g) !== null ? ' mao' : ''}`}
+                        title={prioridadeDoGrupo(g) !== null
+                          ? `${i + 1}º da coluna, por escolha de ${g.principal.prioridade_por ?? 'alguém'}`
+                          : `${i + 1}º da coluna, pela ordem automática (o mais parado primeiro)`}
+                      >{i + 1}</span>
+                    )}
                     {ficha(g)}
                     {podeArrastar && (
                       <div className="an-fi-setas">

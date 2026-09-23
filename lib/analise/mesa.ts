@@ -698,6 +698,57 @@ export function ordenarNaColuna(grupos: GrupoEmpresa[]): GrupoEmpresa[] {
   })
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   ORDENAR A COLUNA  ·  23/09/2026
+
+   Pedido dele: "a opção de ordenar os cards, por data, ou as últimas análises
+   ficam sempre em cima e as mais antigas para baixo. Com opção sutil".
+
+   É UM OLHAR, E NÃO UMA ESCOLHA DO QUADRO. Ordenar não grava nada no banco:
+   cada pessoa escolhe como LER a coluna, e a ordem que o Ivan arrastou à mão
+   (`prioridade`) continua lá, intacta, para quando a coluna voltar a "Ordem da
+   fila". Por isso arrastar e as setas só valem nesse modo: reordenar uma lista
+   que está ordenada por data seria mexer numa ordem que a tela não mostra.
+
+   A DATA É A DA ÚLTIMA MOVIMENTAÇÃO da empresa (o evento mais recente da linha
+   de processos de qualquer pasta do grupo). Na coluna Pronta é o dia em que a
+   análise foi entregue; na Entrada é o dia em que o caso chegou.
+   ══════════════════════════════════════════════════════════════════════════ */
+export type OrdemColuna = 'fila' | 'recentes' | 'antigos' | 'nome'
+
+export const ORDENS_COLUNA: { id: OrdemColuna; rotulo: string; curto: string; dica: string }[] = [
+  { id: 'fila', rotulo: 'Ordem da fila', curto: '', dica: 'A ordem de sempre: os que foram arrastados primeiro, depois o mais parado' },
+  { id: 'recentes', rotulo: 'Mais recentes primeiro', curto: 'recentes', dica: 'Quem se mexeu por último fica em cima' },
+  { id: 'antigos', rotulo: 'Mais antigos primeiro', curto: 'antigos', dica: 'Quem está há mais tempo sem se mexer fica em cima' },
+  { id: 'nome', rotulo: 'Nome, de A a Z', curto: 'A–Z', dica: 'Ordem alfabética pelo nome da empresa' },
+]
+
+export const ehOrdemColuna = (v: unknown): v is OrdemColuna =>
+  typeof v === 'string' && ORDENS_COLUNA.some((o) => o.id === v)
+
+/** O instante do último movimento da empresa, em milissegundos. Sem data
+ *  nenhuma vale 0: vai para o fim em "recentes" e para o começo em "antigos",
+ *  que é onde quem não tem data precisa ser visto. */
+export function ultimoMovimento(g: GrupoEmpresa): number {
+  let max = 0
+  for (const f of g.fichas) {
+    const t = Date.parse(f.parado_desde || f.atualizado_em || f.criado_em || '')
+    if (Number.isFinite(t) && t > max) max = t
+  }
+  return max
+}
+
+/** A coluna na ordem escolhida. `fila` devolve a ordem de sempre. */
+export function ordenarPor(grupos: GrupoEmpresa[], modo: OrdemColuna): GrupoEmpresa[] {
+  if (modo === 'fila') return ordenarNaColuna(grupos)
+  const lista = [...grupos]
+  if (modo === 'nome') return lista.sort((a, b) => nomeDoGrupo(a).localeCompare(nomeDoGrupo(b), 'pt-BR', { sensitivity: 'base' }))
+  const sinal = modo === 'recentes' ? -1 : 1
+  // Data igual (ou nenhuma): desempata pelo nome, para a coluna não pular entre renderizações.
+  return lista.sort((a, b) =>
+    sinal * (ultimoMovimento(a) - ultimoMovimento(b)) || nomeDoGrupo(a).localeCompare(nomeDoGrupo(b), 'pt-BR', { sensitivity: 'base' }))
+}
+
 /** O que gravar depois de arrastar: a coluna inteira renumerada de 1 a N, com
  *  todas as pastas de cada empresa. Renumerar a coluna toda (e não só quem
  *  mexeu) é o que mantém 1, 2, 3 sem buracos e sem empate — dois cards com o
