@@ -80,8 +80,8 @@ function simular(baseMk, destinoMk, regras){
 
 function gerarAgostoPadrao(){
   const regras = [
-    { alvo: 'nat:Taxa fiscalização SUSEP', op: 'zerar', valor: 0 },
-    { alvo: 'nat:Premio recebido',    op: 'subir', valor: 15 },
+    { alvo: 'nat:Taxa Fiscalização SUSEP', op: 'zerar', valor: 0 },
+    { alvo: 'nat:Premio Recebido',    op: 'subir', valor: 15 },
     { alvo: 'nat:Comissão Corretoras',op: 'subir', valor: 15 },
     { alvo: 'nat:Fornecedores',       op: 'subir', valor: 3  },
   ];
@@ -130,7 +130,7 @@ function abrirSimulador(){
       <button class="preset" onclick="addRegra('nat:Remuneração Time FAM','subir',20)">Subir 20% na folha</button>
       <button class="preset" onclick="addRegra('despesas','reduzir',15)">Reduzir 15% nas despesas</button>
       <button class="preset" onclick="addRegra('receitas','subir',10)">Subir 10% nas receitas</button>
-      <button class="preset" onclick="addRegra('nat:Taxa fiscalização SUSEP','zerar',0)">Zerar SUSEP (trimestral)</button>
+      <button class="preset" onclick="addRegra('nat:Taxa Fiscalização SUSEP','zerar',0)">Zerar SUSEP (trimestral)</button>
     </div>
     <div id="s-regras"></div>
     <button class="btn-secondary" style="margin-bottom:14px" onclick="addRegra('despesas','subir',10)">＋ Nova regra</button>
@@ -438,11 +438,6 @@ iniciar();
     <button class="btn-clear" onclick="imprimirTela()">🖨️ Gerar PDF da tela</button>
     <button class="btn-clear" data-escreve onclick="restaurar()">↺ Zerar e voltar à planilha Matriz</button>
   </div>
-  <b>Este sistema não tem nuvem, não tem banco de dados e não manda nada para a internet.</b>
-  Tudo fica neste computador, no navegador deste usuário · por isso a cópia de segurança em arquivo
-  é a forma de levar os dados para outra máquina ou de voltar atrás. ·
-  Tela 1 de <b>FAM Financeiro</b>. A carga de fábrica é a planilha Matriz
-  <i>2026.07 - Santander - Recebimentos e Pagamentos New</i> (julho/2026, 93 lançamentos, 14 naturezas).
 </footer>
 
 <div class="credito"><span class="linha">Desenvolvido por: <b>Marco Aurélio Dragone</b></span></div>

@@ -179,7 +179,22 @@ tr.linha-nat.aberta .seta{transform:rotate(90deg)}
 /* Com seis botoes a barra nao cabe numa linha so em 1440px, e apertar isso
    encurtaria o nome deles. Entao: periodos em cima, acoes embaixo, com um
    fio separando · e de proposito, nao e a barra quebrando sozinha. */
-.acoes-tela{display:flex;gap:8px;flex-wrap:wrap;width:100%;padding-top:12px;border-top:1px solid #e2ebf5}
+/* as ações moram na mesma linha de Expandir/Recolher tudo: sem faixa própria,
+   sem fio e sem largura cheia. Só quebram para baixo se a janela não comportar. */
+.acoes-tela{display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex:1 1 auto}
+/* Importar extrato: escrito, à direita, sem cara de botão · o lançamento manual é
+   o caminho do dia a dia, e a importação fica lá, para quem for procurar. */
+.link-fraco{margin-left:auto;background:none;border:none;padding:4px 2px;font-family:inherit;font-size:11.5px;font-weight:400;color:#7d95b0;cursor:pointer}
+.link-fraco:hover{color:#1e4080;text-decoration:underline}
+/* Como usar esta tela: um texto pequeno que só abre quando alguém clica */
+.ajuda-tela{margin-top:10px;color:var(--soft)}
+.ajuda-tela summary{display:inline-block;cursor:pointer;list-style:none;font-size:11.5px;color:#7d95b0;padding:3px 0}
+.ajuda-tela summary::-webkit-details-marker{display:none}
+.ajuda-tela summary::before{content:'\25B8';margin-right:5px}
+.ajuda-tela[open] summary::before{content:'\25BE'}
+.ajuda-tela summary:hover,.ajuda-tela[open] summary{color:#1e4080}
+.ajuda-tela .ajuda-corpo{margin-top:6px;padding:12px 16px;max-width:980px;background:#fff;border:1px solid var(--border);border-radius:8px;font-size:12.5px;line-height:1.65}
+.ajuda-tela .ajuda-corpo p+p{margin-top:8px}
 .filter-label{font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.8px}
 .fam-input{font-family:inherit;font-size:14px;padding:8px 12px;border:1.5px solid var(--border);border-radius:7px;background:#e8f0fa;color:#1a2a3a;outline:none;width:100%;transition:border-color .2s}
 .fam-input:focus{border-color:#3070c8;background:#fff}
@@ -275,6 +290,24 @@ body.redimensionando .puxador::before{background:#e8b84b;width:3px;height:80%}
 .comp-quadro table{border-radius:0;border:none}
 .comp-quadro .fam-table{font-size:13px;table-layout:fixed}
 .comp-quadro .fam-table thead th{padding:8px 14px}
+/* O cabeçalho da tabela É a faixa ENTRADAS: rótulo e meses na mesma linha, com o
+   mesmo desenho da faixa SAÍDAS (tr.grupo), para as duas se lerem como par. */
+.comp-quadro .fam-table thead{background:var(--resumo-chapado)}
+.comp-quadro .fam-table thead th{padding:7px 14px;box-shadow:none;color:#a0c0e8;font-size:11px;letter-spacing:.5px;text-transform:uppercase}
+.comp-quadro .fam-table thead th.rot-bloco{color:#fff;font-size:11.5px;letter-spacing:1px}
+/* O lápis de renomear: discreto em repouso, cheio quando a linha está sob o mouse.
+   O ✎ vem do ::before para não entrar no texto da linha quando ela é copiada. */
+/* título de coluna que ordena: o cursor conta, e o rótulo acende ao passar o mouse */
+th[data-ord],tr.grupo td[data-ord]{cursor:pointer;user-select:none}
+.comp-quadro .fam-table thead th[data-ord]:hover,.comp-quadro .fam-table tr.grupo td[data-ord]:hover{color:#fff}
+.ord-seta{margin-left:5px;font-size:9px;color:#e8b84b}
+.lapis{display:inline-block;width:22px;height:22px;margin-left:8px;padding:0;border:none;border-radius:5px;background:transparent;
+  color:#6080a0;font-size:14px;line-height:22px;text-align:center;cursor:pointer;vertical-align:middle;opacity:.45}
+.lapis::before{content:'\270E'}
+tr:hover .lapis,.lapis:focus-visible{opacity:1}
+.lapis:hover{background:#d0e4f5;color:#1e4080}
+@media (pointer:coarse){.lapis{display:none}}
+@media print{.lapis{display:none!important}}
 .comp-quadro .fam-table tbody td{padding:7px 14px}
 
 /* ── Contraparte que abre os lançamentos dela (nível 2 da tabela) ── */
@@ -515,7 +548,7 @@ tr.alvo-ctx>td{background:#dbe9f8!important;box-shadow:inset 3px 0 0 #1e4080}
 .filter-row .btn-secondary{padding:5px 11px;font-size:12.5px;gap:5px;border-width:1px;border-radius:6px;
   box-shadow:0 1px 2px rgba(30,64,128,.10)}
 .filter-row .btn-secondary:hover{transform:none;box-shadow:0 1px 3px rgba(30,64,128,.18)}
-.acoes-tela{gap:6px;padding-top:9px}
+.acoes-tela{gap:6px}
 .chip-mes{padding:4px 10px;font-size:12px;border-width:1px}
 .chip-sep{height:17px}
 .chip-conta{font-size:11px}

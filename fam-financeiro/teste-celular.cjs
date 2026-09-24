@@ -168,7 +168,7 @@ const ok = (t, c, extra) => {
 
     // modal: no celular ele PODE ocupar a tela toda · e o desenho certo la.
     // Chamado direto, por baixo da tela, so para conferir o desenho do formulario.
-    await p.evaluate(() => novoLancamentoNaTela());
+    await p.evaluate(() => { mesAtual = compB; abrirLancamento(null, null, undefined, undefined, 'saida'); });
     await p.waitForTimeout(600);
     const modal = await p.evaluate(() => {
       const c = document.querySelector('.modal-box');

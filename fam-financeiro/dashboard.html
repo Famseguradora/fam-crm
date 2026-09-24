@@ -179,7 +179,22 @@ tr.linha-nat.aberta .seta{transform:rotate(90deg)}
 /* Com seis botoes a barra nao cabe numa linha so em 1440px, e apertar isso
    encurtaria o nome deles. Entao: periodos em cima, acoes embaixo, com um
    fio separando · e de proposito, nao e a barra quebrando sozinha. */
-.acoes-tela{display:flex;gap:8px;flex-wrap:wrap;width:100%;padding-top:12px;border-top:1px solid #e2ebf5}
+/* as ações moram na mesma linha de Expandir/Recolher tudo: sem faixa própria,
+   sem fio e sem largura cheia. Só quebram para baixo se a janela não comportar. */
+.acoes-tela{display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex:1 1 auto}
+/* Importar extrato: escrito, à direita, sem cara de botão · o lançamento manual é
+   o caminho do dia a dia, e a importação fica lá, para quem for procurar. */
+.link-fraco{margin-left:auto;background:none;border:none;padding:4px 2px;font-family:inherit;font-size:11.5px;font-weight:400;color:#7d95b0;cursor:pointer}
+.link-fraco:hover{color:#1e4080;text-decoration:underline}
+/* Como usar esta tela: um texto pequeno que só abre quando alguém clica */
+.ajuda-tela{margin-top:10px;color:var(--soft)}
+.ajuda-tela summary{display:inline-block;cursor:pointer;list-style:none;font-size:11.5px;color:#7d95b0;padding:3px 0}
+.ajuda-tela summary::-webkit-details-marker{display:none}
+.ajuda-tela summary::before{content:'\25B8';margin-right:5px}
+.ajuda-tela[open] summary::before{content:'\25BE'}
+.ajuda-tela summary:hover,.ajuda-tela[open] summary{color:#1e4080}
+.ajuda-tela .ajuda-corpo{margin-top:6px;padding:12px 16px;max-width:980px;background:#fff;border:1px solid var(--border);border-radius:8px;font-size:12.5px;line-height:1.65}
+.ajuda-tela .ajuda-corpo p+p{margin-top:8px}
 .filter-label{font-size:11px;font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.8px}
 .fam-input{font-family:inherit;font-size:14px;padding:8px 12px;border:1.5px solid var(--border);border-radius:7px;background:#e8f0fa;color:#1a2a3a;outline:none;width:100%;transition:border-color .2s}
 .fam-input:focus{border-color:#3070c8;background:#fff}
@@ -275,6 +290,24 @@ body.redimensionando .puxador::before{background:#e8b84b;width:3px;height:80%}
 .comp-quadro table{border-radius:0;border:none}
 .comp-quadro .fam-table{font-size:13px;table-layout:fixed}
 .comp-quadro .fam-table thead th{padding:8px 14px}
+/* O cabeçalho da tabela É a faixa ENTRADAS: rótulo e meses na mesma linha, com o
+   mesmo desenho da faixa SAÍDAS (tr.grupo), para as duas se lerem como par. */
+.comp-quadro .fam-table thead{background:var(--resumo-chapado)}
+.comp-quadro .fam-table thead th{padding:7px 14px;box-shadow:none;color:#a0c0e8;font-size:11px;letter-spacing:.5px;text-transform:uppercase}
+.comp-quadro .fam-table thead th.rot-bloco{color:#fff;font-size:11.5px;letter-spacing:1px}
+/* O lápis de renomear: discreto em repouso, cheio quando a linha está sob o mouse.
+   O ✎ vem do ::before para não entrar no texto da linha quando ela é copiada. */
+/* título de coluna que ordena: o cursor conta, e o rótulo acende ao passar o mouse */
+th[data-ord],tr.grupo td[data-ord]{cursor:pointer;user-select:none}
+.comp-quadro .fam-table thead th[data-ord]:hover,.comp-quadro .fam-table tr.grupo td[data-ord]:hover{color:#fff}
+.ord-seta{margin-left:5px;font-size:9px;color:#e8b84b}
+.lapis{display:inline-block;width:22px;height:22px;margin-left:8px;padding:0;border:none;border-radius:5px;background:transparent;
+  color:#6080a0;font-size:14px;line-height:22px;text-align:center;cursor:pointer;vertical-align:middle;opacity:.45}
+.lapis::before{content:'\270E'}
+tr:hover .lapis,.lapis:focus-visible{opacity:1}
+.lapis:hover{background:#d0e4f5;color:#1e4080}
+@media (pointer:coarse){.lapis{display:none}}
+@media print{.lapis{display:none!important}}
 .comp-quadro .fam-table tbody td{padding:7px 14px}
 
 /* ── Contraparte que abre os lançamentos dela (nível 2 da tabela) ── */
@@ -515,7 +548,7 @@ tr.alvo-ctx>td{background:#dbe9f8!important;box-shadow:inset 3px 0 0 #1e4080}
 .filter-row .btn-secondary{padding:5px 11px;font-size:12.5px;gap:5px;border-width:1px;border-radius:6px;
   box-shadow:0 1px 2px rgba(30,64,128,.10)}
 .filter-row .btn-secondary:hover{transform:none;box-shadow:0 1px 3px rgba(30,64,128,.18)}
-.acoes-tela{gap:6px;padding-top:9px}
+.acoes-tela{gap:6px}
 .chip-mes{padding:4px 10px;font-size:12px;border-width:1px}
 .chip-sep{height:17px}
 .chip-conta{font-size:11px}
@@ -884,39 +917,44 @@ body.arrastando-calc .hp-placa{cursor:grabbing}
         <select id="c-a" class="fam-input" onchange="fixarPar(this.value, compB)"></select>
         <span class="seta-par">→</span>
         <select id="c-b" class="fam-input" onchange="fixarPar(compA, this.value)"></select>
-        <button class="btn-mini" id="btn-solta-par" onclick="soltarPar()" title="voltar para os dois últimos meses da tela">↺ dois últimos</button>
       </div>
     </div>
-    <button class="btn-clear" onclick="inverterPeriodos()">⇄ Inverter</button>
     <button class="btn-clear" onclick="expandirTudo()">Expandir tudo</button>
     <button class="btn-clear" onclick="recolherTudo()">Recolher tudo</button>
     <button class="btn-clear" id="btn-desfazer" style="display:none" onclick="desfazer()">↶ Desfazer</button>
     <button class="btn-clear" id="btn-refazer" style="display:none" onclick="refazer()">↷ Refazer</button>
     <span class="acoes-tela">
-      <button class="btn-secondary" data-escreve onclick="novoLancamentoNaTela()">＋ Novo lançamento</button>
       <button class="btn-secondary" data-escreve onclick="abrirNovaNatureza()">＋ Nova natureza</button>
       <button class="btn-secondary" data-escreve onclick="abrirNovoMes()">📅 Novo mês</button>
-      <button class="btn-secondary" data-escreve onclick="abrirImportacao()">📥 Importar extrato</button>
       <button id="btn-sim" class="btn-secondary" data-escreve onclick="abrirSimulador()">🧪 Simulador</button>
       <button class="btn-secondary" onclick="imprimirTela()">🖨️ PDF</button>
+      <button class="link-fraco" data-escreve onclick="abrirImportacao()" title="Só para quem prefere importar o extrato do banco em vez de digitar">Importar extrato</button>
     </span>
   </div>
 
   <div id="comp-corpo" data-ctx="tabela"></div>
 
-  <p class="dica-tela" style="font-size:12.5px;color:var(--soft);margin-top:12px;line-height:1.6">
-    <b>Todos os meses cabem na tela.</b> Escolha em “Meses na tela”, aqui em cima, quantos aparecem: eles entram
-    em ordem de calendário. O <b>botão direito na tela</b> abre o resto: agrupar por trimestre, escolher mês a
-    mês e a trilha de auditoria.
-    A <b>Dif. R$</b> e a <b>Var. %</b> comparam sempre <b>dois</b> meses (por padrão os dois últimos da tela),
-    e as colunas desse par ficam marcadas · comparar tudo com tudo não é comparação.
-    <br>Clique numa conta para ver as empresas e grupos dela · clique na empresa para abrir os lançamentos.
-    A largura das colunas se ajusta arrastando a borda do título, como no Excel (dois cliques na borda volta ao tamanho de fábrica).
-    Nos lançamentos, <b>dois cliques na descrição ou no valor</b> corrigem ali mesmo, e <b>dois cliques na casa vazia</b>
-    lançam aquele mesmo lançamento no mês que ainda não o teve. Tudo se desfaz com <b>Ctrl+Z</b>.
-    Conta que existe num mês e não no outro <b>continua aparecendo</b>, com “zerou” ou “novo”: sumir da tabela é o que esconde informação.
-    <br><b>Como no Excel:</b> clique com o <b>botão direito</b> em qualquer linha para inserir, editar, duplicar, copiar ou excluir.
-  </p>
+  <details class="dica-tela ajuda-tela">
+    <summary>Como usar esta tela</summary>
+    <div class="ajuda-corpo">
+      <p><b>Todos os meses cabem na tela.</b> Escolha em “Meses na tela”, aqui em cima, quantos aparecem: eles entram
+      em ordem de calendário. O <b>botão direito na tela</b> abre o resto: agrupar por trimestre, escolher mês a
+      mês e a trilha de auditoria.
+      A <b>Dif. R$</b> e a <b>Var. %</b> comparam sempre <b>dois</b> meses (por padrão os dois últimos da tela),
+      e as colunas desse par ficam marcadas · comparar tudo com tudo não é comparação.</p>
+      <p>Clique numa conta para ver as empresas e grupos dela · clique na empresa para abrir os lançamentos.
+      A largura das colunas se ajusta arrastando a borda do título, como no Excel (dois cliques na borda volta ao tamanho de fábrica).
+      Nos lançamentos, <b>dois cliques na descrição ou no valor</b> corrigem ali mesmo, e <b>dois cliques na casa vazia</b>
+      lançam aquele mesmo lançamento no mês que ainda não o teve. Tudo se desfaz com <b>Ctrl+Z</b>.
+      Conta que existe num mês e não no outro <b>continua aparecendo</b>, com “zerou” ou “novo”: sumir da tabela é o que esconde informação.</p>
+      <p><b>Para lançar:</b> botão direito <b>dentro de Entradas ou de Saídas</b> · o lançamento já nasce do lado certo.</p>
+      <p><b>Para ordenar:</b> clique no título de uma coluna (ENTRADAS, SAÍDAS ou um mês). As contas, as empresas e os lançamentos
+      se ordenam dentro dos seus grupos, com os valores acompanhando cada linha. Clique de novo para inverter, e uma terceira vez para voltar.</p>
+      <p><b>Para editar:</b> o lápis ✎ ao lado de uma conta, empresa ou lançamento renomeia ou abre o lançamento inteiro. O nome novo vale na Principal e nas simulações.
+      Uma <b>simulação</b> nasce sempre como cópia da Principal.</p>
+      <p><b>Como no Excel:</b> clique com o <b>botão direito</b> em qualquer linha para inserir, editar, duplicar, copiar ou excluir.</p>
+    </div>
+  </details>
 </div>
 
 <!-- ═══ Botões flutuantes ═══ -->
@@ -1027,6 +1065,10 @@ let abertasCP = new Set();        // empresas com os lançamentos abertos (níve
 
 const clonar = o => JSON.parse(JSON.stringify(o));
 const simulando = () => abaAtual !== 'principal';
+/* A Principal e todas as simulações: o que é CONFIGURAÇÃO (nome de conta, de
+   contraparte, cadastro de contas) vale para as abas todas, e é por aqui que
+   ela chega a todas. */
+const todosOsDb = () => [RAIZ.principal, ...(RAIZ.cenarios || []).map(c => c.db)].filter(Boolean);
 const cenarioAtual = () => (RAIZ.cenarios || []).find(c => c.id === abaAtual) || null;
 const nomeDaAba = () => simulando() ? (cenarioAtual() || {}).nome : 'Principal';
 
@@ -1077,6 +1119,18 @@ function carregar(){
     return;
   }
   RAIZ.cenarios = RAIZ.cenarios || [];
+  /* A máscara vale para tudo, inclusive para o que já estava gravado. Roda
+     ao abrir e diz na trilha quantos nomes mudaram, com exemplos · mudança em
+     massa que não se explica é a que ninguém aceita. */
+  const trocas = new Set();
+  const qtdNomes = normalizarNomesRaiz(trocas);
+  if (qtdNomes) {
+    auditar('alteracao', 'Nomes padronizados', {
+      onde: 'contas, contrapartes e descrições',
+      de: qtdNomes + ' campo(s) fora do padrão',
+      para: [...trocas].slice(0, 12).join(' · ') + (trocas.size > 12 ? ' · … e mais ' + (trocas.size - 12) : '') });
+    gravar();
+  }
   /* aba que não existe mais (excluída noutra sessão) não pode deixar a tela órfã */
   if (abaAtual !== 'principal' && !RAIZ.cenarios.some(c => c.id === abaAtual)) abaAtual = 'principal';
   abrirAba(abaAtual, true);
@@ -1107,6 +1161,8 @@ const fotoAgora = () => ({ json: JSON.stringify(RAIZ), aba: abaAtual, mes: mesAt
 const ultimaAcao = () => (AUDITORIA[AUDITORIA.length - 1] || {}).acao || 'a última mudança';
 
 function gravar(){
+  /* todo nome que chega aqui (digitado, importado, restaurado) sai no padrão */
+  normalizarNomesRaiz();
   const agora = JSON.stringify(RAIZ);
   if (!mexendoNaPilha && estadoAnterior && estadoAnterior.json !== agora) {
     /* o rótulo vem da trilha: em toda mutação o auditar() roda antes do gravar,
@@ -1202,17 +1258,18 @@ function abrirAba(id, semDesenhar){
   if (!semDesenhar) render();
 }
 
-/* A simulação nasce como cópia inteira da aba em que se está: o CFO parte do
-   que está vendo, mexe à vontade, e a Principal fica exatamente como estava. */
+/* A simulação nasce como cópia da PRINCIPAL, de qualquer aba que se esteja: o
+   sistema tem uma configuração só, e ela é a da Principal. O CFO mexe à
+   vontade nos números, e a Principal fica exatamente como estava. */
 function novaSimulacao(){
   RAIZ.cenarios = RAIZ.cenarios || [];
   const n = RAIZ.cenarios.length + 1;
   const c = {
     id: 'C' + Date.now().toString(36) + n,
     nome: 'Simulação ' + n,
-    nasceuDe: nomeDaAba(),
+    nasceuDe: 'Principal',
     criadoEm: new Date().toISOString(),
-    db: clonar(DB),
+    db: clonar(RAIZ.principal),
   };
   RAIZ.cenarios.push(c);
   auditar('inclusao', 'Simulação criada', { onde: c.nome, de: 'cópia de ' + c.nasceuDe, para: c.nome });
@@ -1272,7 +1329,7 @@ function barraAbas(){
   return `<div class="abas">
     ${aba('principal', 'Principal', false)}
     ${(RAIZ.cenarios || []).map(c => aba(c.id, c.nome, true)).join('')}
-    <button type="button" class="aba-nova" data-escreve onclick="novaSimulacao()" title="cria uma cópia desta aba para simular sem tocar na Principal">＋ Nova simulação</button>
+    <button type="button" class="aba-nova" data-escreve onclick="novaSimulacao()" title="cria uma cópia da Principal para simular sem tocar nela">＋ Nova simulação</button>
   </div>`;
 }
 
@@ -1580,7 +1637,7 @@ function recolherTudo(){ abertasComp.clear(); abertasCP.clear(); render(); }
 
 /* O botão "＋ Novo lançamento" da barra trabalha no período B, o mês mais
    recente da tela · o título do modal diz em qual mês está entrando. */
-function novoLancamentoNaTela(){ mesAtual = compB; abrirLancamento(); }
+
 
 /* ═══════════════ PDF ═══════════════
    Sem biblioteca: a folha é a própria tela, com o CSS de impressão. No Edge,
@@ -1761,7 +1818,7 @@ function abrirNovaNatureza(){
     <div class="form-grid" style="margin-top:12px">
       <div class="form-field full">
         <label class="form-label">Natureza / conta</label>
-        <input id="n-nome" class="fam-input" placeholder="como ela vai aparecer na tabela">
+        <input id="n-nome" class="fam-input" data-nome placeholder="como ela vai aparecer na tabela">
       </div>
       <div class="form-field full">
         <label class="form-label">Entra em qual bloco</label>
@@ -1779,14 +1836,18 @@ function abrirNovaNatureza(){
 }
 
 function salvarNatureza(){
-  const nome = document.getElementById('n-nome').value.trim();
+  const nome = mascaraNome(document.getElementById('n-nome').value.trim());
   const tipo = document.getElementById('n-tipo').value;
   const erro = m => { document.getElementById('erro-nat').innerHTML = '<div class="alert-error">' + m + '</div>'; };
   if (!nome) return erro('Escreva o nome da natureza.');
   if (naturezasConhecidas().some(n => normalizar(n) === normalizar(nome)))
     return erro('Já existe uma natureza chamada "' + esc(nome) + '".');
   DB.naturezas = DB.naturezas || [];
-  DB.naturezas.push({ nome, tipo });
+  /* a conta nova nasce em todas as abas: a configuração é uma só */
+  for (const d of todosOsDb()) {
+    d.naturezas = d.naturezas || [];
+    if (!d.naturezas.some(n => n.nome === nome)) d.naturezas.push({ nome, tipo });
+  }
   auditar('inclusao', 'Natureza criada', { onde: nome, para: tipo === 'saida' ? 'bloco de Saídas' : 'bloco de Entradas' });
   gravar(); fecharModal(); render();
   flash('Natureza "' + nome + '" criada. Já está na tabela e na lista de lançamento.');
@@ -1802,16 +1863,37 @@ function excluirNaturezaVazia(nat){
   flash('Natureza "' + nat + '" excluída.');
 }
 
-function abrirLancamento(id, natPre, dataPre, posicao){
+/* Em que lado do caixa está uma natureza: o mesmo critério da tabela (apurar). */
+function tipoDaNatureza(nat){
+  for (const mk of Object.keys(DB.meses)) {
+    const a = apurar(mk);
+    const x = a && a.porNatureza.find(n => n.natureza === nat);
+    if (x) return x.tipo;
+  }
+  const cad = (DB.naturezas || []).find(n => n.nome === nat);
+  return cad ? cad.tipo : null;
+}
+const nomeDoBloco = tipo => tipo === 'entrada' ? 'Entradas' : 'Saídas';
+
+/* O lançamento nasce DENTRO do bloco: quem clicou com o botão direito em
+   Entradas está lançando uma entrada, e o sistema não pergunta de novo. É o que
+   tira da tela o "Tipo" e o erro de lançar com o sinal trocado. `tipoPre` vem do
+   bloco onde o clique caiu; ao editar, o lado é o da própria conta. */
+function abrirLancamento(id, natPre, dataPre, posicao, tipoPre){
   const m = DB.meses[mesAtual];
   const l = id ? m.lancamentos.find(x => x.id === id) : null;
   lancEditando = id || null;
   lancInserirEm = (id || posicao == null) ? null : posicao;
   const hoje = dataPre || (mesAtual + '-01');
-  const dl = naturezasConhecidas().map(n => `<option value="${esc(n)}">`).join('');
+  const tipo = l ? (l.valor < 0 ? 'saida' : (tipoDaNatureza(l.natureza) || 'entrada'))
+                 : (tipoPre || (natPre && tipoDaNatureza(natPre)) || 'saida');
+  /* só as contas do lado certo entram na lista: escolher uma de Saídas dentro
+     de Entradas seria exatamente o erro que este desenho evita */
+  const dl = naturezasConhecidas().filter(n => { const t = tipoDaNatureza(n); return !t || t === tipo; })
+    .map(n => `<option value="${esc(n)}">`).join('');
   abrirModal(`
     <div class="modal-header">
-      <div class="modal-title">${l ? 'Editar lançamento' : 'Novo lançamento'}<small>${rotuloMes(mesAtual)}${DB.meses[mesAtual].simulado?' · mês simulado':''}</small></div>
+      <div class="modal-title">${l ? 'Editar lançamento' : 'Novo lançamento'}<small>${nomeDoBloco(tipo)} · ${rotuloMes(mesAtual)}${DB.meses[mesAtual].simulado?' · mês simulado':''}</small></div>
       <button class="fechar" onclick="fecharModal()">×</button>
     </div>
     <div id="erro-lanc"></div>
@@ -1821,20 +1903,18 @@ function abrirLancamento(id, natPre, dataPre, posicao){
         <input type="date" id="f-data" class="fam-input" value="${l ? l.data : hoje}" min="${mesAtual}-01" max="${mesAtual}-31">
       </div>
       <div class="form-field">
-        <label class="form-label">Tipo</label>
-        <select id="f-tipo" class="fam-input">
-          <option value="s"${l && l.valor < 0 ? ' selected' : ''}>Saída (-)</option>
-          <option value="e"${l && l.valor >= 0 ? ' selected' : ''}>Entrada (+)</option>
-        </select>
+        <label class="form-label">Bloco</label>
+        <div style="padding:6px 0"><span class="badge ${tipo === 'entrada' ? 'badge-green' : 'badge-red'}">${tipo === 'entrada' ? 'Entrada (+)' : 'Saída (-)'}</span></div>
+        <input type="hidden" id="f-tipo" value="${tipo === 'entrada' ? 'e' : 's'}">
       </div>
       <div class="form-field full">
         <label class="form-label">Natureza / conta</label>
-        <input id="f-nat" class="fam-input" list="dl-nat" placeholder="escolha uma existente ou digite uma nova" value="${l ? esc(l.natureza) : (natPre ? esc(natPre) : '')}">
+        <input id="f-nat" class="fam-input" data-nome list="dl-nat" placeholder="escolha uma existente ou digite uma nova" value="${l ? esc(l.natureza) : (natPre ? esc(natPre) : '')}">
         <datalist id="dl-nat">${dl}</datalist>
       </div>
       <div class="form-field">
         <label class="form-label">Contraparte</label>
-        <input id="f-cp" class="fam-input" placeholder="quem pagou ou recebeu" value="${l ? esc(l.contraparte) : ''}">
+        <input id="f-cp" class="fam-input" data-nome placeholder="quem pagou ou recebeu" value="${l ? esc(l.contraparte) : ''}">
       </div>
       <div class="form-field">
         <label class="form-label">Valor (R$)</label>
@@ -1842,7 +1922,7 @@ function abrirLancamento(id, natPre, dataPre, posicao){
       </div>
       <div class="form-field full">
         <label class="form-label">Descritivo</label>
-        <input id="f-desc" class="fam-input" placeholder="o que é esse lançamento" value="${l ? esc(l.descritivo) : ''}">
+        <input id="f-desc" class="fam-input" data-nome placeholder="o que é esse lançamento" value="${l ? esc(l.descritivo) : ''}">
       </div>
       <div class="form-field full">
         <label class="form-label">Observação</label>
@@ -1866,17 +1946,30 @@ function lerValor(txt){
 
 function salvarLancamento(){
   const data = document.getElementById('f-data').value;
-  const nat  = document.getElementById('f-nat').value.trim();
-  const cp   = document.getElementById('f-cp').value.trim();
-  const desc = document.getElementById('f-desc').value.trim();
+  const antes = lancEditando ? DB.meses[mesAtual].lancamentos.find(x => x.id === lancEditando) : null;
+  /* a máscara só age no que a pessoa escreveu: abrir um lançamento antigo e
+     salvar sem mexer não pode trocar a caixa do que já estava lá */
+  const campoNome = (id, original) => {
+    const v = document.getElementById(id).value.trim();
+    return antes && v === String(original || '').trim() ? v : mascaraNome(v);
+  };
+  let nat    = campoNome('f-nat', antes && antes.natureza);
+  const cp   = campoNome('f-cp', antes && antes.contraparte);
+  const desc = campoNome('f-desc', antes && antes.descritivo);
   const obs  = document.getElementById('f-obs').value.trim();
   const tipo = document.getElementById('f-tipo').value;
   const bruto = lerValor(document.getElementById('f-valor').value);
+  /* conta que já existe vale na grafia dela: senão "TRIBUTOS E TAXAS" e
+     "Tributos e Taxas" virariam duas linhas na tabela */
+  const existente = naturezasConhecidas().find(n => normalizar(n) === normalizar(nat));
+  if (existente) nat = existente;
 
   const erros = [];
   if (!data) erros.push('informe a data');
   else if (data.slice(0,7) !== mesAtual) erros.push('a data precisa estar dentro de ' + rotuloMes(mesAtual));
   if (!nat) erros.push('informe a natureza');
+  else if (existente && tipoDaNatureza(existente) && tipoDaNatureza(existente) !== (tipo === 'e' ? 'entrada' : 'saida'))
+    erros.push('"' + esc(existente) + '" é uma conta de ' + nomeDoBloco(tipoDaNatureza(existente)) + ' · escolha uma de ' + nomeDoBloco(tipo === 'e' ? 'entrada' : 'saida'));
   if (!cp) erros.push('informe a contraparte');
   /* ZERO É NÚMERO. Um estorno que zera a linha, uma cobrança que veio e voltou,
      uma conta que existe no plano mas não teve movimento no mês: tudo isso é
@@ -2012,21 +2105,87 @@ const rotuloColuna = c => {
   return c.tipo === 'dif' ? 'Dif. R$' : 'Var. %';
 };
 
+/* ═══════════════ ORDENAR POR COLUNA, COMO NO EXCEL ═══════════════
+   Clicar no título de uma coluna ordena o BLOCO (Entradas ou Saídas) por ela.
+   A hierarquia nunca se desfaz: as contas se ordenam entre si, as contrapartes
+   se ordenam DENTRO da conta, e os lançamentos DENTRO da contraparte · cada
+   linha leva os valores dela junto, porque a ordem só mexe na posição.
+   Clicar de novo inverte; um terceiro clique volta à ordem de fábrica (maior
+   valor primeiro). Cada bloco tem a sua própria ordem.
+   Coluna do nome: A→Z. Coluna de valor: do menor para o maior (como o Excel);
+   nas Saídas, que são negativas, isso já põe a maior despesa no topo. Linha sem
+   valor naquela coluna vai sempre para o fim, e empate desempata pelo nome. */
+let ordemBloco = { entrada: null, saida: null };
+const idCol = c => c.tipo === 'mes' ? 'm' + c.mk : c.tipo === 'tot' ? 't' + c.tri : c.tipo;
+const cmpNome = (a, b) => String(a).localeCompare(String(b), 'pt-BR', { sensitivity: 'base', numeric: true });
+
+/* o número pelo qual a linha se ordena naquela coluna · null = sem valor.
+   `vals` é o valor por mês; mês ausente (undefined) é lançamento que não existe. */
+function chaveNum(col, vals, tipo){
+  if (col.tipo === 'mes') return vals[col.mk] === undefined ? null : vals[col.mk];
+  if (col.tipo === 'tot') {
+    const ex = col.mks.filter(mk => vals[mk] !== undefined);
+    return ex.length ? ex.reduce((s, mk) => s + vals[mk], 0) : null;
+  }
+  if (vals[compA] === undefined && vals[compB] === undefined) return null;
+  const v = variacao(vals[compA] || 0, vals[compB] || 0, tipo);
+  if (col.tipo === 'dif') return v.dif;
+  if (v.pct !== undefined) return v.pct;
+  return v.texto === 'novo' ? Infinity : (v.texto === 'zerou' ? -100 : null);
+}
+
+/* `obter(item)` devolve { nome, vals, tipo }. Sem ordem escolhida, devolve a
+   lista como veio (a ordem de fábrica). */
+function ordenar(itens, bloco, cols, obter){
+  const o = ordemBloco[bloco];
+  if (!o) return itens;
+  const col = o.id === 'nome' ? null : cols.find(c => idCol(c) === o.id);
+  if (o.id !== 'nome' && !col) return itens;          // coluna que saiu da tela
+  const arr = itens.map((it, i) => ({ it, i, x: obter(it) }));
+  arr.forEach(a => { a.k = col ? chaveNum(col, a.x.vals, a.x.tipo) : null; });
+  arr.sort((a, b) => {
+    if (!col) return o.dir * cmpNome(a.x.nome, b.x.nome) || a.i - b.i;
+    if (a.k === null && b.k === null) return a.i - b.i;
+    if (a.k === null) return 1;
+    if (b.k === null) return -1;
+    if (a.k === b.k) return cmpNome(a.x.nome, b.x.nome) || a.i - b.i;
+    return o.dir * (a.k < b.k ? -1 : 1);
+  });
+  return arr.map(a => a.it);
+}
+
+function ordenarPor(ev, bloco, id){
+  /* a alça de largura mora no mesmo título: arrastar (ou dar dois cliques para
+     voltar ao tamanho de fábrica) não pode ordenar a tabela junto */
+  if (ev && ev.target && ev.target.closest && ev.target.closest('.puxador')) return;
+  if (!cliqueDeVerdade()) return;
+  const o = ordemBloco[bloco];
+  if (!o || o.id !== id) ordemBloco[bloco] = { id, dir: 1 };
+  else if (o.dir === 1) ordemBloco[bloco] = { id, dir: -1 };
+  else ordemBloco[bloco] = null;
+  render();
+}
+const setaOrd = (bloco, id) => { const o = ordemBloco[bloco]; return o && o.id === id ? '<span class="ord-seta">' + (o.dir === 1 ? '▲' : '▼') + '</span>' : ''; };
+const attrOrd = (bloco, id) => ` data-ord="${id}" onclick="ordenarPor(event,'${bloco}','${id}')" title="Clique para ordenar ${bloco === 'entrada' ? 'as entradas' : 'as saídas'} por esta coluna"`;
+
 /* Duas linhas de cabeçalho: a de cima agrupa por trimestre, a de baixo nomeia
    cada mês. É o desenho de planilha que o CFO já lê sem manual. */
 /* Com o trimestre desligado (o padrão) é UMA linha de cabeçalho: um mês por
    coluna e pronto. Ligado, entra por cima a faixa que agrupa os meses de cada
    trimestre, e aí o cabeçalho tem duas linhas. */
 function cabecalhoTabela(cols, grupos){
+  /* O cabeçalho é a própria faixa ENTRADAS: o rótulo e os meses na mesma linha,
+     como na faixa SAÍDAS. Antes eram duas linhas (meses em cima, a faixa embaixo)
+     e sobrava um vazio acima da palavra. */
   const fim = cols.filter(c => c.tipo === 'dif' || c.tipo === 'var');
   const comFaixa = grupos.some(g => g.total);
-  const mes = c => `<th class="num${marcaPar(c)}">${rotuloColuna(c)}${puxador(letraCol(c))}</th>`;
-  const ponta = c => `<th class="num fix fix${letraCol(c)}"${comFaixa ? ' rowspan="2"' : ''}>${rotuloColuna(c)}${puxador(letraCol(c))}</th>`;
+  const mes = c => `<th class="num${marcaPar(c)}"${attrOrd('entrada', idCol(c))}>${rotuloColuna(c)}${setaOrd('entrada', idCol(c))}${puxador(letraCol(c))}</th>`;
+  const ponta = c => `<th class="num fix fix${letraCol(c)}"${comFaixa ? ' rowspan="2"' : ''}${attrOrd('entrada', idCol(c))}>${rotuloColuna(c)}${setaOrd('entrada', idCol(c))}${puxador(letraCol(c))}</th>`;
 
   if (!comFaixa)
-    return '<thead><tr><th></th>' + colsDeValor(cols).map(mes).join('') + fim.map(ponta).join('') + '</tr></thead>';
+    return '<thead><tr><th class="rot-bloco"' + attrOrd('entrada', 'nome') + '>Entradas' + setaOrd('entrada', 'nome') + '</th>' + colsDeValor(cols).map(mes).join('') + fim.map(ponta).join('') + '</tr></thead>';
 
-  let h = '<thead><tr class="faixa-tri"><th rowspan="2"></th>';
+  let h = '<thead><tr class="faixa-tri"><th class="rot-bloco" rowspan="2"' + attrOrd('entrada', 'nome') + '>Entradas' + setaOrd('entrada', 'nome') + '</th>';
   for (const g of grupos)
     h += `<th class="tri" colspan="${g.mks.length + (g.total ? 1 : 0)}">${rotuloTri(g.tk)}</th>`;
   h += fim.map(ponta).join('') + '</tr><tr>' + colsDeValor(cols).map(mes).join('');
@@ -2039,20 +2198,20 @@ function renderComparativo(){
 
   const linhas = linhasComparativo();
   const peso = l => Math.abs(l.vals[compB] || l.vals[compA] || 0);
-  const ent = linhas.filter(l => l.tipo === 'entrada').sort((a,b) => peso(b) - peso(a));
-  const sai = linhas.filter(l => l.tipo === 'saida').sort((a,b) => peso(b) - peso(a));
+  const porConta = l => ({ nome: l.natureza, vals: l.vals, tipo: l.tipo });
+  const ent = ordenar(linhas.filter(l => l.tipo === 'entrada').sort((a,b) => peso(b) - peso(a)), 'entrada', cols, porConta);
+  const sai = ordenar(linhas.filter(l => l.tipo === 'saida').sort((a,b) => peso(b) - peso(a)), 'saida', cols, porConta);
 
   const n = nCols(cols);
   let h = `<div class="comp-quadro" style="${estiloColunas(cols)}">` + cabecalhoIndicadores(cols) +
     `<table class="fam-table">${grade(cols)}${cabecalhoTabela(cols, grupos)}<tbody>`;
 
-  h += faixaGrupo('Entradas', null, n);
   h += ent.map(l => linhaComp(l, cols)).join('') || `<tr><td colspan="${n}" class="vazio">Sem entradas nos meses da tela.</td></tr>`;
   h += totalComp('TOTAL ENTRADAS', a => a.entradas, 'entrada', cols);
 
   h += `<tr class="respiro"><td colspan="${n}"></td></tr>`;
   /* a faixa de saídas vem longe do cabeçalho, então repete os títulos */
-  h += faixaGrupo('Saídas', cols, n);
+  h += faixaGrupo('Saídas', cols, n, 'saida');
   h += sai.map(l => linhaComp(l, cols)).join('') || `<tr><td colspan="${n}" class="vazio">Sem saídas nos meses da tela.</td></tr>`;
   h += totalComp('TOTAL SAÍDAS', a => a.saidas, 'saida', cols);
 
@@ -2060,10 +2219,10 @@ function renderComparativo(){
   document.getElementById('comp-corpo').innerHTML = h;
 }
 
-function faixaGrupo(rotulo, cols, n){
-  if (!cols) return `<tr class="grupo"><td colspan="${n}">${rotulo}</td></tr>`;
-  return `<tr class="grupo"><td>${rotulo}</td>` +
-    cols.map(c => `<td class="rep${c.tipo === 'dif' || c.tipo === 'var' ? ' fix fix' + letraCol(c) : ''}">${rotuloColuna(c)}</td>`).join('') + `</tr>`;
+function faixaGrupo(rotulo, cols, n, bloco){
+  if (!cols) return `<tr class="grupo" data-bloco="${bloco}"><td colspan="${n}">${rotulo}</td></tr>`;
+  return `<tr class="grupo" data-bloco="${bloco}"><td${attrOrd(bloco, 'nome')}>${rotulo}${setaOrd(bloco, 'nome')}</td>` +
+    cols.map(c => `<td class="rep${c.tipo === 'dif' || c.tipo === 'var' ? ' fix fix' + letraCol(c) : ''}"${attrOrd(bloco, idCol(c))}>${rotuloColuna(c)}${setaOrd(bloco, idCol(c))}</td>`).join('') + `</tr>`;
 }
 
 /* ═══════════════ QUADRO ESCURO DE INDICADORES ═══════════════
@@ -2121,7 +2280,7 @@ function linhaComp(l, cols){
   const aberta = abertasComp.has(l.natureza);
   const tag = l.interna ? ' <span class="badge badge-gray">entre contas da FAM</span>' : '';
   let h = `<tr class="linha-nat${aberta?' aberta':''}" data-ctx="natcomp" data-nat="${esc(l.natureza)}" onclick="alternarComp(this)">
-    <td><span class="seta">▶</span> <b>${esc(l.natureza)}</b>${tag}</td>
+    <td><span class="seta">▶</span> <b>${esc(l.natureza)}</b>${tag}<button type="button" class="lapis" data-escreve title="Renomear esta conta" onclick="event.stopPropagation();renomearConta(this.closest('tr').dataset.nat)"></button></td>
     ${colsDeValor(cols).map(c => celComp(valorCol(c, l.vals), marcaPar(c))).join('')}
     <td class="num fix fixD${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
     <td class="num fix fixV">${selo(v)}</td>
@@ -2187,7 +2346,7 @@ function gavetaComp(l, cols){
   ms.forEach(mk => porMes[mk] = porCP(mk));
   const chaves = [...new Set(ms.flatMap(mk => [...porMes[mk].keys()]))];
 
-  const linhas = chaves.map(k => {
+  let linhas = chaves.map(k => {
     const vals = {};
     let nome = k;
     for (const mk of ms) {
@@ -2197,11 +2356,12 @@ function gavetaComp(l, cols){
     }
     return { chave: k, nome, vals, v: variacao(vals[compA] || 0, vals[compB] || 0, l.tipo) };
   }).sort((x,y) => Math.abs(y.vals[compB] || y.vals[compA] || 0) - Math.abs(x.vals[compB] || x.vals[compA] || 0));
+  linhas = ordenar(linhas, l.tipo, cols, x => ({ nome: x.nome, vals: x.vals, tipo: l.tipo }));
 
   const corpo = linhas.map(x => {
     const aberta = abertasCP.has(idCP(l.natureza, x.chave));
     let t = `<tr class="cp n2${aberta?' aberta':''}" data-ctx="cpcomp" data-nat="${esc(l.natureza)}" data-cp="${esc(x.chave)}" onclick="alternarCP(this)">
-      <td class="rot"><span class="seta">▶</span> <b>${esc(x.nome)}</b></td>
+      <td class="rot"><span class="seta">▶</span> <b>${esc(x.nome)}</b><button type="button" class="lapis" data-escreve title="Renomear esta contraparte" onclick="event.stopPropagation();renomearContraparte(this.closest('tr'))"></button></td>
       ${colsDeValor(cols).map(c => celComp(valorCol(c, x.vals), marcaPar(c))).join('')}
       <td class="num fix fixD${clsNeg(x.v.dif)}">${fmtDif(x.v.dif)}</td>
       <td class="num fix fixV">${selo(x.v)}</td>
@@ -2236,8 +2396,14 @@ function lancamentosDaCP(nat, chave, tipo, nome, cols){
     }
   }
 
-  const linhas = [...par.values()].sort((x, y) =>
+  let linhas = [...par.values()].sort((x, y) =>
     (x.ref.data.slice(8) + x.ref.descritivo).localeCompare(y.ref.data.slice(8) + y.ref.descritivo));
+  /* o mês em que o lançamento não existe fica sem valor (não é zero) */
+  linhas = ordenar(linhas, tipo, cols, x => {
+    const vals = {};
+    ms.forEach(mk => { vals[mk] = x.por[mk] ? x.por[mk].valor : undefined; });
+    return { nome: x.ref.descritivo, vals, tipo };
+  });
 
   /* A célula de valor se edita com dois cliques e carrega o mês dela: o botão
      direito e a edição agem no mês onde o clique caiu, sem perguntar nada.
@@ -2274,7 +2440,7 @@ function lancamentosDaCP(nat, chave, tipo, nome, cols){
        cada linha, dizer que ali tem data era repetir o óbvio. */
     return `<tr class="lanc n3" data-ctx="lancpar" data-nat="${esc(nat)}" data-cp="${esc(chave)}" data-ids="${ids}">
       <td class="rot" data-edit="desc" data-texto="${esc(x.ref.descritivo)}" title="dois cliques para corrigir a descrição aqui mesmo">
-        <span class="dia">${datas}</span> ${esc(x.ref.descritivo)}</td>
+        <span class="dia">${datas}</span> ${esc(x.ref.descritivo)}<button type="button" class="lapis" data-escreve title="Editar o lançamento inteiro" onclick="event.stopPropagation();editarLinhaLanc(this,event)"></button></td>
       ${celulas}
       <td class="num fix fixD${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
       <td class="num fix fixV">${selo(v)}</td>
@@ -3425,6 +3591,253 @@ document.addEventListener('keydown', e => {
   c.dispatchEvent(new Event('input', { bubbles: true }));   // quem escuta o campo recalcula
 });
 
+/* ═══════════════ MÁSCARA DE NOMES ═══════════════
+   O padrão do sistema para título, conta, contraparte e descrição: cada palavra
+   com a inicial maiúscula e o resto minúsculo, respeitando os acentos que a
+   pessoa digitou. "marco aurélio dragone" vira "Marco Aurélio Dragone". A
+   abreviação escrita em maiúsculas fica como foi escrita ("MAD"), e as siglas
+   conhecidas do caixa (SUSEP, PIX, IOF...) também. Ligações (de, da, do, e...)
+   ficam em minúsculas no meio do nome.
+   NÃO vale para os títulos ENTRADAS e SAÍDAS, que são fixos e maiúsculos: eles
+   não passam por campo nenhum. Como a de dinheiro, liga por atributo
+   (data-nome) e por delegação · campo que nasce depois já vem com ela. */
+/* os nomes que o código conhece de fábrica, guardados antes de qualquer renomeação */
+const INTERNAS_PADRAO = INTERNAS.slice();
+const REGRAS_PADRAO = REGRAS_FABRICA.map(r => r.natureza);
+const LIGACOES_NOME = new Set(['de','da','do','das','dos','e','em','no','na','nos','nas','para','por','com','ao','aos','pelo','pela']);
+/* "a" e "o" só ficam minúsculos se JÁ vieram minúsculos: em maiúscula é a
+   inicial de um nome ("Marco A Dragone") e não pode ser tirada da pessoa. */
+const LIGACOES_MINUSCULAS = new Set(['a','o','as','os']);
+const SIGLAS_NOME = new Set(['PMSP','RFB','FG','KRL','VR','ME','JUCESP','RJ','SP','BB','CC','SUSEP','PIX','TED','DOC','IOF','IRPJ','CSLL','COFINS','INSS','FGTS','CNPJ','CPF','CDB','LFT','ISS','PIS','FAM','CEO','CFO']);
+
+/* `vivo` é a máscara enquanto se digita: só põe a inicial em maiúscula e nunca
+   apaga uma maiúscula que a pessoa digitou. Quem digita "BETA SERVICOS" com o
+   Caps Lock ligado não pode ter "BETA" achatada no meio da frase e as outras
+   palavras lidas como abreviação. O acerto completo (o resto em minúsculas)
+   vem ao sair do campo e ao salvar. */
+function mascaraNome(txt, vivo){
+  const s = String(txt == null ? '' : txt);
+  const letras = s.replace(/[^\p{L}]/gu, '');
+  if (!letras) return s;
+  if (vivo) {
+    /* as ligações (de, da, com...) ficam para o acerto final: "com" pode ser o
+       começo de "comissão", e baixá-la no meio da digitação estraga a palavra */
+    return s.replace(/[\p{L}\p{N}]+/gu, p => /\p{N}/u.test(p) ? p : p.charAt(0).toLocaleUpperCase('pt-BR') + p.slice(1));
+  }
+  /* "PAGAMENTO da COMISSAO": as ligações minúsculas não contam, senão a máscara
+     viva (que as baixa enquanto se digita) faria o resto parecer misturado */
+  const semLigacoes = (s.match(/[\p{L}\p{N}]+/gu) || [])
+    .filter((p, k) => k === 0 || !LIGACOES_NOME.has(p.toLocaleLowerCase('pt-BR'))).join('').replace(/[^\p{L}]/gu, '');
+  const tudoMaiusc = semLigacoes === semLigacoes.toUpperCase();
+  const total = (s.match(/[\p{L}\p{N}]+/gu) || []).length;
+  let i = 0;
+  return s.replace(/[\p{L}\p{N}]+/gu, p => {
+    const primeira = i++ === 0;
+    if (!/\p{L}/u.test(p)) return p;                          // só número: 2026, 2.1
+    if (/\p{N}/u.test(p)) return p.toUpperCase();             // S3, 3A
+    const baixo = p.toLocaleLowerCase('pt-BR');
+    if (!primeira && LIGACOES_NOME.has(baixo)) return baixo;
+    if (!primeira && LIGACOES_MINUSCULAS.has(p)) return p;     // "Apol. 123 a 13": o "a" já vinha minúsculo
+    /* sigla curta só vale se veio em maiúsculas: "me" e "sp" minúsculos são palavra */
+    if (SIGLAS_NOME.has(p.toUpperCase()) && (p === p.toUpperCase() || p.length >= 4)) return p.toUpperCase();
+    if (p === p.toUpperCase() && p.length > 1) {
+      if (!tudoMaiusc) return p;                               // "Marco MAD Dragone": a abreviação é dele
+      if (total === 1 && p.length <= 3) return p;              // "MAD" sozinha
+    }
+    return p.charAt(0).toLocaleUpperCase('pt-BR') + baixo.slice(1);
+  });
+}
+
+const ehNome = el => el && el.matches && el.matches('input[data-nome]');
+function aplicarMascaraNome(campo, vivo){
+  const v = campo.value, n = mascaraNome(v, vivo);
+  /* só troca a caixa: se o tamanho mudasse (letra que vira duas), o cursor
+     ficaria no lugar errado, e aí a máscara espera o campo perder o foco */
+  if (n === v || n.length !== v.length) return;
+  const a = campo.selectionStart, b = campo.selectionEnd;
+  campo.value = n;
+  try { campo.setSelectionRange(a, b); } catch(err) {}
+}
+/* acento por tecla morta chega em composição: mexer no campo no meio dela
+   quebraria a letra, então a máscara espera a composição acabar */
+document.addEventListener('input', e => { if (ehNome(e.target) && !e.isComposing) aplicarMascaraNome(e.target, true); });
+document.addEventListener('compositionend', e => { if (ehNome(e.target)) aplicarMascaraNome(e.target, true); });
+document.addEventListener('focusout', e => { if (ehNome(e.target)) aplicarMascaraNome(e.target); });
+
+/* ═══════════════ A MÁSCARA VALE PARA TUDO, INCLUSIVE O QUE JÁ EXISTE ═══════════════
+   Conta, contraparte e descrição de todos os lançamentos, de todas as abas e
+   meses, mais o cadastro de contas, as regras aprendidas e as constantes que
+   citam conta pelo nome (as internas e as regras de fábrica do importador) ·
+   se só o razão mudasse, "Reembolso de despesas" no código deixaria de casar
+   com "Reembolso de Despesas" nos dados. Idempotente: rodar de novo não muda
+   nada. `detalhes` (um Set) recebe os pares "antes → depois" para a trilha. */
+function normalizarNomesRaiz(detalhes){
+  const cache = new Map();
+  const m = t => {
+    if (typeof t !== 'string' || !t) return t;
+    let r = cache.get(t);
+    if (r === undefined) { r = mascaraNome(t); cache.set(t, r); }
+    return r;
+  };
+  let n = 0;
+  const troca = (o, k) => {
+    const v = o[k], nv = m(v);
+    if (nv === v) return;
+    if (detalhes) detalhes.add(v + ' → ' + nv);
+    o[k] = nv; n++;
+  };
+  /* as contas internas e as regras de fábrica citam conta pelo nome: valem o
+     nome padrão, ou o que o usuário deu a ela (RAIZ.apelidos) */
+  const apelidos = (RAIZ && RAIZ.apelidos) || {};
+  const atual = padrao => { const p = m(padrao); return apelidos[p] || p; };
+  for (let i = 0; i < INTERNAS.length; i++) INTERNAS[i] = atual(INTERNAS_PADRAO[i]);
+  REGRAS_FABRICA.forEach((r, i) => { r.natureza = atual(REGRAS_PADRAO[i]); });
+  if (!RAIZ) return 0;
+  const dbs = [RAIZ.principal, ...(RAIZ.cenarios || []).map(c => c.db)].filter(Boolean);
+  for (const db of dbs) {
+    for (const mk of Object.keys(db.meses || {}))
+      for (const l of (db.meses[mk].lancamentos || [])) { troca(l, 'natureza'); troca(l, 'contraparte'); troca(l, 'descritivo'); }
+    /* as regras do simulador apontam para a conta pelo nome ("nat:Fornecedores"),
+       nos meses simulados e nas regras aprendidas */
+    const alvoRegra = r => { if (r && typeof r.alvo === 'string' && r.alvo.startsWith('nat:')) {
+      const nv = 'nat:' + m(r.alvo.slice(4)); if (nv !== r.alvo) { r.alvo = nv; n++; } } };
+    for (const mk of Object.keys(db.meses || {})) (db.meses[mk].regras || []).forEach(alvoRegra);
+    (db.naturezas || []).forEach(x => troca(x, 'nome'));
+    (db.regras || []).forEach(r => troca(r, 'natureza'));
+  }
+  /* simulações criadas antes ganham o cadastro de contas da Principal · o que
+     é configuração é uma só */
+  for (const c of (RAIZ.cenarios || [])) {
+    c.db.naturezas = c.db.naturezas || [];
+    for (const x of (RAIZ.principal.naturezas || []))
+      if (!c.db.naturezas.some(y => y.nome === x.nome)) c.db.naturezas.push({ ...x });
+  }
+  return n;
+}
+
+/* ═══════════════ EDITAR: a conta, a contraparte e a linha do lançamento ═══════════════
+   A customização do sistema depende de quem usa: cada pessoa entende um nome
+   de um jeito, e o nome tem de poder mudar sem refazer os lançamentos. O lápis
+   aparece ao lado do nome (e o mesmo está no botão direito). */
+function podeMexer(){
+  if (soVisualizacao()) { flash('No celular o Financeiro é só para conferir. Para editar, abra no computador.'); return false; }
+  if (typeof nuvemPodeEditar === 'function' && !nuvemPodeEditar()) {
+    flash('Seu acesso ao Financeiro é de leitura: dá para conferir, não para editar.');
+    return false;
+  }
+  return true;
+}
+
+let _renomeiaFaz = null;
+function abrirRenomear(titulo, sub, atual, faz){
+  _renomeiaFaz = faz;
+  abrirModal(`
+    <div class="modal-header">
+      <div class="modal-title">${esc(titulo)}<small>${esc(sub)}</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button>
+    </div>
+    <div id="erro-ren"></div>
+    <div class="form-field full" style="margin-top:12px">
+      <label class="form-label">Nome</label>
+      <input id="rn-nome" class="fam-input" data-nome value="${esc(atual)}" onkeydown="if(event.key==='Enter')salvarRenomear()">
+    </div>
+    <div class="modal-rodape">
+      <button class="btn-clear" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" onclick="salvarRenomear()">Salvar</button>
+    </div>`);
+  setTimeout(() => { const c = document.getElementById('rn-nome'); if (c) { c.focus(); c.select(); } }, 40);
+}
+
+function salvarRenomear(){
+  const c = document.getElementById('rn-nome');
+  if (!c || !_renomeiaFaz) return;
+  const novo = mascaraNome(c.value.trim());
+  const erro = !novo ? 'Escreva o nome.' : _renomeiaFaz(novo);
+  if (erro) document.getElementById('erro-ren').innerHTML = '<div class="alert-error">' + esc(erro) + '</div>';
+}
+
+function renomearConta(nat){
+  if (!podeMexer()) return;
+  /* A conta de transferência entre contas da FAM também se renomeia: o que a
+     marca como "interna" é o nome, então o nome novo herda a marca, e isso fica
+     gravado (RAIZ.apelidos) para valer depois de recarregar e no backup. */
+  const ehInterna = INTERNAS.includes(nat);
+  const qtd = Object.keys(DB.meses).reduce((s, mk) => s + DB.meses[mk].lancamentos.filter(l => l.natureza === nat).length, 0);
+  abrirRenomear('Renomear a conta', qtd + ' lançamento(s), em todos os meses, passam a usar o nome novo', nat, novo => {
+    if (novo === nat) { fecharModal(); return ''; }
+    const outra = naturezasConhecidas().find(n => n !== nat && normalizar(n) === normalizar(novo));
+    if (outra) {
+      const a = tipoDaNatureza(outra), b = tipoDaNatureza(nat);
+      if (a && b && a !== b) return '"' + outra + '" é uma conta de ' + nomeDoBloco(a) + '. Não dá para juntar Entradas com Saídas.';
+      if (ehInterna || INTERNAS.includes(outra)) return 'Conta de transferência entre contas da FAM não se junta com outra conta.';
+      if (!confirm('Já existe a conta "' + outra + '".\nJuntar as duas? Os lançamentos de "' + nat + '" passam para ela.')) return 'Nada foi alterado.';
+      novo = outra;
+    }
+    let n = 0;
+    /* Uma configuração só: o nome novo vale na Principal e em todas as
+       simulações. Se cada aba guardasse o seu vocabulário, a mesma conta teria
+       dois nomes conforme a aba, e a de interna perderia a marca. */
+    for (const d of todosOsDb()) {
+      for (const mk of Object.keys(d.meses)) {
+        for (const l of d.meses[mk].lancamentos) if (l.natureza === nat) { l.natureza = novo; if (d === DB) n++; }
+        (d.meses[mk].regras || []).forEach(r => { if (r.alvo === 'nat:' + nat) r.alvo = 'nat:' + novo; });
+      }
+      const cad = (d.naturezas || []).find(x => x.nome === nat);
+      if (cad) { if (d.naturezas.some(x => x.nome === novo)) d.naturezas = d.naturezas.filter(x => x !== cad); else cad.nome = novo; }
+      (d.regras || []).forEach(r => { if (r.natureza === nat) r.natureza = novo; });
+    }
+    if (ehInterna) {
+      const i = INTERNAS.indexOf(nat);
+      RAIZ.apelidos = RAIZ.apelidos || {};
+      RAIZ.apelidos[mascaraNome(INTERNAS_PADRAO[i])] = novo;
+      INTERNAS[i] = novo;
+      REGRAS_FABRICA.forEach(r => { if (r.natureza === nat) r.natureza = novo; });
+    }
+    abertasComp.delete(nat); abertasComp.add(novo); abertasCP.clear();
+    auditar('alteracao', 'Conta renomeada', { onde: n + ' lançamento(s)', de: nat, para: novo });
+    gravar(); fecharModal(); render();
+    flash('Conta renomeada para "' + novo + '". Ctrl+Z desfaz.');
+    return '';
+  });
+}
+
+/* a contraparte se renomeia DENTRO da conta onde foi clicada: a mesma empresa
+   pode aparecer em contas diferentes, e trocar a de lá sem ninguém pedir seria
+   mexer no que não estava na tela */
+function renomearContraparte(tr){
+  if (!podeMexer()) return;
+  const nat = tr.dataset.nat, chave = tr.dataset.cp;
+  const atual = tr.querySelector('b').textContent;
+  /* vale na Principal e nas simulações (uma configuração só); a contagem do
+     aviso é a da aba que está na tela */
+  const alvo = todas => { const r = []; for (const d of (todas ? todosOsDb() : [DB])) for (const mk of Object.keys(d.meses)) for (const l of d.meses[mk].lancamentos)
+    if (l.natureza === nat && normalizar(l.contraparte) === chave) r.push(l); return r; };
+  abrirRenomear('Renomear a contraparte', nat + ' · ' + alvo().length + ' lançamento(s), em todos os meses', atual, novo => {
+    const ls = alvo(true);
+    if (ls.every(l => l.contraparte === novo)) { fecharModal(); return ''; }
+    ls.forEach(l => { l.contraparte = novo; });
+    abertasCP.clear();
+    auditar('alteracao', 'Contraparte renomeada', { onde: nat + ' · ' + alvo().length + ' lançamento(s)', de: atual, para: novo });
+    gravar(); fecharModal(); render();
+    flash('Contraparte renomeada para "' + novo + '". Ctrl+Z desfaz.');
+    return '';
+  });
+}
+
+/* a linha do lançamento pode ser de mais de um mês: um item por mês */
+function itensEditarLinha(tr){
+  const alvos = String(tr.dataset.ids || '').split(';').filter(Boolean).map(z => z.split('|'));
+  return alvos.map(([mk, id]) => ({ ic:'🗂️', t:'Editar o lançamento inteiro · ' + rotuloMes(mk),
+    faz: () => { mesAtual = mk; abrirLancamento(id); } }));
+}
+function editarLinhaLanc(btn, ev){
+  if (!podeMexer()) return;
+  const tr = btn.closest('tr');
+  const itens = itensEditarLinha(tr);
+  if (itens.length === 1) return itens[0].faz();
+  if (itens.length) abrirCtx(ev.clientX, ev.clientY, 'Editar o lançamento de qual mês?', itens, tr);
+}
+
 /* ═══════════════ EDITAR NA PRÓPRIA LINHA ═══════════════
    Dois cliques na célula e ela vira campo, como no Excel. Enter grava, Esc
    desiste, sair do campo grava. Percentual e diferença ninguém digita: quem
@@ -3464,6 +3877,7 @@ function editarCelula(td){
   campo.value = tipo === 'novo' ? '' : (ehValor ? valorEditavel(Number(td.dataset.valor)) : td.dataset.texto);
   if (ehValor) { campo.inputMode = 'decimal'; campo.dataset.dinheiro = 'neg'; }
   if (tipo === 'novo') campo.placeholder = 'R$ 0,00';
+  if (tipo === 'desc') campo.setAttribute('data-nome', '');
   td.innerHTML = '';
   td.appendChild(campo);
   campo.focus();
@@ -3531,8 +3945,11 @@ function salvarCelula(td, texto){
     return;
   }
 
-  const novo = texto.trim();
-  if (!novo) { flash('A descrição não pode ficar vazia.'); return render(); }
+  const bruto = texto.trim();
+  if (!bruto) { flash('A descrição não pode ficar vazia.'); return render(); }
+  /* abrir a célula e sair sem digitar não pode trocar a caixa do que já estava */
+  if (bruto === String(td.dataset.texto || '').trim()) return render();
+  const novo = mascaraNome(bruto);
   /* O descritivo é o que casa o lançamento de um mês com o do outro. Mudar só
      de um lado desfaria o par na hora, então os dois andam juntos. */
   const tr = td.closest('tr');
@@ -3601,13 +4018,36 @@ const mesesDeAcao = () => { const ms = mesesNaTela(); return ms.length <= 6 ? ms
 /* Toda ação de lançamento trabalha no mês corrente. Aqui a tela tem dois, então
    a ação troca o mês corrente para aquele em que ela vai mexer, e o título do
    modal mostra qual é · quem clicou vê em que mês está entrando. */
-function novoLanc(mk, nat, cp){
+function novoLanc(mk, nat, cp, tipo){
   mesAtual = mk;
-  abrirLancamento(null, nat);
+  abrirLancamento(null, nat, undefined, undefined, tipo);
   if (cp) { const el = document.getElementById('f-cp'); if (el) el.value = cp; }
 }
 
 /* ═══════════════ MENU DO BOTÃO DIREITO ═══════════════ */
+/* Em que bloco está a linha: 'entrada' ou 'saida'. O cabeçalho da tabela é a
+   faixa ENTRADAS, e a faixa SAÍDAS (tr.grupo com data-bloco) marca onde o outro
+   lado começa · o que está entre uma e outra, incluindo as gavetas abertas, é
+   do bloco daquela faixa. Fora da tabela (indicadores, barra), não há bloco. */
+function blocoDe(el){
+  const tr = el && el.closest ? el.closest('tr') : null;
+  if (!tr || !tr.closest('.comp-quadro')) return null;
+  if (tr.classList.contains('respiro')) return null;
+  if (tr.closest('thead')) return 'entrada';
+  for (let r = tr; r; r = r.previousElementSibling)
+    if (r.classList.contains('grupo')) return r.dataset.bloco || null;
+  return 'entrada';
+}
+/* o mês da coluna onde o clique caiu, quando ele caiu numa coluna de mês */
+function mesDaCelula(el){
+  const td = el && el.closest ? el.closest('tbody td') : null;
+  if (!td || !td.closest('.comp-quadro')) return null;
+  const i = [...td.parentElement.children].indexOf(td);
+  if (i < 1) return null;
+  const col = colsDeValor(colunasDaTela().cols)[i - 1];
+  return col && col.tipo === 'mes' ? col.mk : null;
+}
+let _blocoCtx = null, _mesCtx = null;
 let _acoes = [];
 let _scrollAoAbrir = 0;
 
@@ -3670,10 +4110,12 @@ function ctxConta(tr, x, y){
   const qtd = mk => DB.meses[mk].lancamentos.filter(l => l.natureza === nat).length;
   const itens = [
     { ic: aberta ? '▼' : '▶', t: aberta ? 'Recolher as contrapartes' : 'Abrir as contrapartes', faz: () => alternarComp(tr) },
+    { ic:'✏️', t:'Renomear esta conta', faz: () => renomearConta(nat) },
     '-',
   ];
+  const bloco = blocoDe(tr);
   for (const mk of mesesDeAcao())
-    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat) });
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, null, bloco) });
   itens.push('-',
     { ic:'📋', t:'Copiar os lançamentos desta conta', atalho:'p/ o Excel', faz: () => copiarConta(nat) },
     { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) },
@@ -3693,10 +4135,12 @@ function ctxContraparte(tr, x, y){
   const aberta = abertasCP.has(idCP(nat, cp));
   const itens = [
     { ic: aberta ? '▼' : '▶', t: aberta ? 'Recolher os lançamentos' : 'Abrir os lançamentos', faz: () => alternarCP(tr) },
+    { ic:'✏️', t:'Renomear esta contraparte', faz: () => renomearContraparte(tr) },
     '-',
   ];
+  const bloco = blocoDe(tr);
   for (const mk of mesesDeAcao())
-    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, nome) });
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, nome, bloco) });
   itens.push('-',
     { ic:'📋', t:'Copiar os lançamentos desta contraparte', atalho:'p/ o Excel', faz: () => copiarContraparte(nat, cp, nome) },
     { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) });
@@ -3715,8 +4159,8 @@ function ctxLancamento(td, x, y){
     { ic:'✏️', t:'Corrigir o valor aqui na linha', atalho:'2 cliques', faz: () => editarCelula(td) },
     { ic:'🗂️', t:'Editar o lançamento inteiro', faz: () => { mesAtual = mk; abrirLancamento(id); } },
     '-',
-    { ic:'⬆️', t:'Inserir lançamento acima',  faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i); } },
-    { ic:'⬇️', t:'Inserir lançamento abaixo', faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i + 1); } },
+    { ic:'⬆️', t:'Inserir lançamento acima',  faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i, blocoDe(tr)); } },
+    { ic:'⬇️', t:'Inserir lançamento abaixo', faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i + 1, blocoDe(tr)); } },
     { ic:'📄', t:'Duplicar lançamento', faz: () => duplicarLancamento(id, mk) },
     '-',
     { ic:'📋', t:'Copiar a linha', atalho:'p/ o Excel', faz: () => copiar(linhaExcel(l, mk)) },
@@ -3729,7 +4173,13 @@ function ctxLancamento(td, x, y){
 /* a linha de lançamento fora da célula de valor · não dá para saber de que mês
    o clique falava, então ela pergunta o mês em cada ação */
 function ctxLancamentoPar(tr, x, y){
-  const nat = tr.dataset.nat, cp = tr.dataset.cp;
+  const nat = tr.dataset.nat;
+  /* a chave da contraparte é o nome sem caixa nem acento: o campo do lançamento
+     novo precisa do nome como foi escrito, e ele mora no lançamento da linha */
+  const primeiro = String(tr.dataset.ids || '').split(';').filter(Boolean).map(z => z.split('|'))
+    .map(([mk, id]) => DB.meses[mk] && DB.meses[mk].lancamentos.find(z => z.id === id)).find(Boolean);
+  const cp = primeiro ? primeiro.contraparte : tr.dataset.cp;
+  const bloco = blocoDe(tr);
   /* O NOME VEM DA DESCRIÇÃO DA PRÓPRIA LINHA. Aqui estava
      `tr.querySelector('b').textContent`, copiado do menu da contraparte · só
      que a linha do lançamento não tem <b> nenhum. O menu estourava TypeError e
@@ -3740,10 +4190,11 @@ function ctxLancamentoPar(tr, x, y){
   const nome = (tdDesc && (tdDesc.dataset.texto || tdDesc.textContent.trim())) || 'Lançamento';
   const itens = [];
   for (const mk of mesesDeAcao())
-    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, cp) });
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, cp, bloco) });
   itens.unshift(
     { ic:'✏️', t:'Corrigir a descrição aqui na linha', atalho:'2 cliques',
       faz: () => editarCelula(tr.querySelector('td[data-edit="desc"]')) },
+    ...itensEditarLinha(tr),
     '-');
   itens.push('-',
     { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) },
@@ -3776,8 +4227,17 @@ function ctxTela(el, x, y){
     if (pilhaRefazer.length)  itens.push({ ic:'↷', t:'Refazer: ' + oQueRefazer(),  atalho:'Ctrl+Y', faz: () => refazer() });
     itens.push('-');
   }
-  for (const mk of mesesDeAcao())
-    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk) });
+  /* O lançamento só nasce por dentro de um bloco: o clique em Entradas lança
+     uma entrada, em Saídas lança uma saída, e o mês da coluna onde o clique
+     caiu vai na frente. Fora dos dois blocos não há "Novo lançamento". */
+  if (_blocoCtx) {
+    const lado = nomeDoBloco(_blocoCtx);
+    const meses = mesesDeAcao().slice();
+    if (_mesCtx && DB.meses[_mesCtx]) meses.sort((a, b) => (b === _mesCtx) - (a === _mesCtx));
+    for (const mk of meses)
+      itens.push({ ic:'➕', t:'Novo lançamento em ' + lado + ' · ' + rotuloMes(mk), faz: () => novoLanc(mk, null, null, _blocoCtx) });
+    itens.push('-');
+  }
   itens.push(
     { ic:'🏷️', t:'Nova natureza / conta', faz: () => abrirNovaNatureza() },
     { ic:'📅', t:'Novo mês / período', faz: () => abrirNovoMes() },
@@ -3792,11 +4252,10 @@ function ctxTela(el, x, y){
     '-',
     { ic:'▼', t:'Expandir tudo', off: abertasComp.size === todas, faz: () => expandirTudo() },
     { ic:'▶', t:'Recolher tudo', off: abertasComp.size === 0 && abertasCP.size === 0, faz: () => recolherTudo() },
-    { ic:'⇄', t:'Inverter os períodos', off: compA === compB, faz: () => inverterPeriodos() },
     '-',
     { ic:'📋', t:'Copiar a tabela', atalho:'p/ o Excel', faz: () => copiarTabela() },
     { ic:'🖨️', t:'Gerar PDF da tela', faz: () => imprimirTela() });
-  abrirCtx(x, y, 'Acompanhamento mensal · ' + rotuloCurto(compA) + ' × ' + rotuloCurto(compB), itens, null);
+  abrirCtx(x, y, (_blocoCtx ? nomeDoBloco(_blocoCtx).toUpperCase() : 'Acompanhamento mensal') + ' · ' + rotuloCurto(compA) + ' × ' + rotuloCurto(compB), itens, null);
 }
 
 /* ── o que os itens fazem ── */
@@ -3856,9 +4315,12 @@ function copiarTabela(){
   });
   const todas = linhasComparativo();
   const A = apurar(compA), B = apurar(compB);
-  linhas.push('ENTRADAS', ...monta(todas.filter(l => l.tipo === 'entrada')));
+  /* copiar sai na ordem em que a tela está: quem ordenou e copiou espera isso */
+  const colsTela = colunasDaTela().cols;
+  const porConta = l => ({ nome: l.natureza, vals: l.vals, tipo: l.tipo });
+  linhas.push('ENTRADAS', ...monta(ordenar(todas.filter(l => l.tipo === 'entrada'), 'entrada', colsTela, porConta)));
   linhas.push(['TOTAL ENTRADAS', valorExcel(A.entradas), valorExcel(B.entradas), valorExcel(B.entradas - A.entradas), ''].join('\t'));
-  linhas.push('SAÍDAS', ...monta(todas.filter(l => l.tipo === 'saida')));
+  linhas.push('SAÍDAS', ...monta(ordenar(todas.filter(l => l.tipo === 'saida'), 'saida', colsTela, porConta)));
   linhas.push(['TOTAL SAÍDAS', valorExcel(A.saidas), valorExcel(B.saidas), valorExcel(B.saidas - A.saidas), ''].join('\t'));
   copiar(linhas.join('\n'), 'Tabela copiada. Cole no Excel com Ctrl+V.');
 }
@@ -3879,6 +4341,8 @@ document.addEventListener('contextmenu', e => {
      copiar um texto qualquer da tela não perde o caminho de sempre */
   if (!alvo) { fecharCtx(); return; }
   e.preventDefault();
+  _blocoCtx = blocoDe(e.target);
+  _mesCtx = mesDaCelula(e.target);
   menuDe(alvo, e.clientX, e.clientY);
 });
 
@@ -5860,8 +6324,8 @@ function simular(baseMk, destinoMk, regras){
 
 function gerarAgostoPadrao(){
   const regras = [
-    { alvo: 'nat:Taxa fiscalização SUSEP', op: 'zerar', valor: 0 },
-    { alvo: 'nat:Premio recebido',    op: 'subir', valor: 15 },
+    { alvo: 'nat:Taxa Fiscalização SUSEP', op: 'zerar', valor: 0 },
+    { alvo: 'nat:Premio Recebido',    op: 'subir', valor: 15 },
     { alvo: 'nat:Comissão Corretoras',op: 'subir', valor: 15 },
     { alvo: 'nat:Fornecedores',       op: 'subir', valor: 3  },
   ];
@@ -5910,7 +6374,7 @@ function abrirSimulador(){
       <button class="preset" onclick="addRegra('nat:Remuneração Time FAM','subir',20)">Subir 20% na folha</button>
       <button class="preset" onclick="addRegra('despesas','reduzir',15)">Reduzir 15% nas despesas</button>
       <button class="preset" onclick="addRegra('receitas','subir',10)">Subir 10% nas receitas</button>
-      <button class="preset" onclick="addRegra('nat:Taxa fiscalização SUSEP','zerar',0)">Zerar SUSEP (trimestral)</button>
+      <button class="preset" onclick="addRegra('nat:Taxa Fiscalização SUSEP','zerar',0)">Zerar SUSEP (trimestral)</button>
     </div>
     <div id="s-regras"></div>
     <button class="btn-secondary" style="margin-bottom:14px" onclick="addRegra('despesas','subir',10)">＋ Nova regra</button>
@@ -6218,11 +6682,6 @@ iniciar();
     <button class="btn-clear" onclick="imprimirTela()">🖨️ Gerar PDF da tela</button>
     <button class="btn-clear" data-escreve onclick="restaurar()">↺ Zerar e voltar à planilha Matriz</button>
   </div>
-  <b>Este sistema não tem nuvem, não tem banco de dados e não manda nada para a internet.</b>
-  Tudo fica neste computador, no navegador deste usuário · por isso a cópia de segurança em arquivo
-  é a forma de levar os dados para outra máquina ou de voltar atrás. ·
-  Tela 1 de <b>FAM Financeiro</b>. A carga de fábrica é a planilha Matriz
-  <i>2026.07 - Santander - Recebimentos e Pagamentos New</i> (julho/2026, 93 lançamentos, 14 naturezas).
 </footer>
 
 <div class="credito"><span class="linha">Desenvolvido por: <b>Marco Aurélio Dragone</b></span></div>

@@ -83,11 +83,11 @@ const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   // ═══ cabeçalho e faixas na cor do quadro resumo ═══
   const cores = await p.evaluate(() => {
     const g = el => getComputedStyle(el).backgroundImage + ' | ' + getComputedStyle(el).backgroundColor;
-    return { cc: g(document.querySelector('#comp-corpo .cc')), th: g(document.querySelector('#comp-corpo .fam-table thead')) };
+    return { cc: g(document.querySelector('#comp-corpo .cc')), th: g(document.querySelector('#comp-corpo .fam-table thead')), faixa: g(document.querySelector('#comp-corpo tr.grupo td')) };
   });
-  ok('cabeçalho da tabela usa a cor do quadro resumo', cores.cc.split(' | ')[0] === cores.th.split(' | ')[0], cores.th.slice(0, 60));
-  ok('o primeiro título da tabela está vazio (sem "Natureza / Conta")',
-    (await p.$eval('#comp-corpo .fam-table thead th', e => e.textContent.trim())) === '');
+  ok('cabeçalho da tabela é a faixa ENTRADAS, na mesma cor da faixa SAÍDAS', cores.th.split(' | ')[1] === cores.faixa.split(' | ')[1], cores.th.slice(0, 60) + ' × ' + cores.faixa.slice(0, 60));
+  ok('o primeiro título da tabela é ENTRADAS (a faixa e o cabeçalho na mesma linha)',
+    (await p.$eval('#comp-corpo .fam-table thead th', e => e.textContent.trim())) === 'Entradas');
   const faixaSai = await p.$eval('#comp-corpo tr.grupo:has-text("Saídas")', txt);
   ok('a faixa de saídas repete os títulos das colunas', /jul\/26/.test(faixaSai) && /Dif\. R\$/.test(faixaSai), faixaSai.slice(0, 80));
 
@@ -170,7 +170,7 @@ const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   await p.waitForTimeout(200);
 
   // ═══ CRUD pela barra: entra no período B ═══
-  await p.click('button:has-text("＋ Novo lançamento")');
+  await p.evaluate(() => { mesAtual = compB; abrirLancamento(null, null, undefined, undefined, 'saida'); });
   await p.waitForTimeout(250);
   ok('o modal diz em que mês está entrando', /Agosto\/2026/.test(await p.$eval('.modal-title', txt)));
   await p.fill('#f-nat', 'Fornecedores');
@@ -201,28 +201,28 @@ const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   const contasAntes = await p.$$eval('#comp-corpo tr.linha-nat', els => els.length);
   await p.click('button:has-text("＋ Nova natureza")');
   await p.waitForTimeout(250);
-  await p.fill('#n-nome', 'Aluguel da sede');
+  await p.fill('#n-nome', 'Aluguel da Sede');
   await p.selectOption('#n-tipo', 'saida');
   await p.click('button:has-text("Criar natureza")');
   await p.waitForTimeout(300);
   ok('a natureza nova entra na tabela', (await p.$$eval('#comp-corpo tr.linha-nat', els => els.length)) === contasAntes + 1);
-  const nova = await p.$eval('#comp-corpo tr.linha-nat:has-text("Aluguel da sede")', txt);
-  ok('ela nasce zerada, nos dois meses', /Aluguel da sede/.test(nova) && !/R\$/.test(nova), nova.slice(0, 70));
+  const nova = await p.$eval('#comp-corpo tr.linha-nat:has-text("Aluguel da Sede")', txt);
+  ok('ela nasce zerada, nos dois meses', /Aluguel da Sede/.test(nova) && !/R\$/.test(nova), nova.slice(0, 70));
   ok('e entra no bloco de saídas', await p.evaluate(() => {
     const ls = [...document.querySelectorAll('#comp-corpo tbody tr')];
-    const i = ls.findIndex(t => t.textContent.includes('Aluguel da sede'));
+    const i = ls.findIndex(t => t.textContent.includes('Aluguel da Sede'));
     const s = ls.findIndex(t => t.classList.contains('grupo') && /Saídas/.test(t.textContent));
     return i > s;
   }));
-  ok('e já aparece na lista do lançamento', await p.evaluate(() => naturezasConhecidas().includes('Aluguel da sede')));
+  ok('e já aparece na lista do lançamento', await p.evaluate(() => naturezasConhecidas().includes('Aluguel da Sede')));
   await p.reload(); await p.waitForTimeout(400);
-  ok('a natureza nova sobrevive ao recarregar', (await p.$$('#comp-corpo tr.linha-nat:has-text("Aluguel da sede")')).length === 1);
+  ok('a natureza nova sobrevive ao recarregar', (await p.$$('#comp-corpo tr.linha-nat:has-text("Aluguel da Sede")')).length === 1);
   // e sai pelo menu dela, já que nunca teve movimento
-  await p.click('#comp-corpo tr.linha-nat:has-text("Aluguel da sede")', { button: 'right' });
+  await p.click('#comp-corpo tr.linha-nat:has-text("Aluguel da Sede")', { button: 'right' });
   await p.waitForTimeout(250);
   await p.click('#ctx-menu .ctx-item:has-text("Excluir esta natureza")');
   await p.waitForTimeout(300);
-  ok('natureza sem movimento se apaga pelo menu', (await p.$$('#comp-corpo tr.linha-nat:has-text("Aluguel da sede")')).length === 0);
+  ok('natureza sem movimento se apaga pelo menu', (await p.$$('#comp-corpo tr.linha-nat:has-text("Aluguel da Sede")')).length === 0);
 
   // ═══ simulador ═══
   /* Ele deixou de existir na Principal: gerar um mês de mentira dentro da
@@ -393,7 +393,7 @@ const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
     String(await p.evaluate(() => DB.meses['2026-08'].simulado)));
   ok('os 11 do extrato mais o 1 digitado à mão', (await qtdMes('2026-08')) === 12, String(await qtdMes('2026-08')));
   ok('o lançamento à mão entrou com o que foi digitado', await p.evaluate(() =>
-    DB.meses['2026-08'].lancamentos.some(l => l.contraparte === 'CARTORIO DO CENTRO' && l.valor === -250 && l.origem === 'manual')));
+    DB.meses['2026-08'].lancamentos.some(l => l.contraparte === 'Cartorio do Centro' && l.valor === -250 && l.origem === 'manual')));
   // o manual não está no extrato: a conciliação tem que acusar, não esconder
   const conc = await p.evaluate(() => fmt(apurar('2026-08').diferenca));
   ok('a conciliação acusa o que não veio do extrato', conc === '-R$ 250,00', conc);

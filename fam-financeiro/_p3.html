@@ -61,6 +61,10 @@ let abertasCP = new Set();        // empresas com os lançamentos abertos (níve
 
 const clonar = o => JSON.parse(JSON.stringify(o));
 const simulando = () => abaAtual !== 'principal';
+/* A Principal e todas as simulações: o que é CONFIGURAÇÃO (nome de conta, de
+   contraparte, cadastro de contas) vale para as abas todas, e é por aqui que
+   ela chega a todas. */
+const todosOsDb = () => [RAIZ.principal, ...(RAIZ.cenarios || []).map(c => c.db)].filter(Boolean);
 const cenarioAtual = () => (RAIZ.cenarios || []).find(c => c.id === abaAtual) || null;
 const nomeDaAba = () => simulando() ? (cenarioAtual() || {}).nome : 'Principal';
 
@@ -111,6 +115,18 @@ function carregar(){
     return;
   }
   RAIZ.cenarios = RAIZ.cenarios || [];
+  /* A máscara vale para tudo, inclusive para o que já estava gravado. Roda
+     ao abrir e diz na trilha quantos nomes mudaram, com exemplos · mudança em
+     massa que não se explica é a que ninguém aceita. */
+  const trocas = new Set();
+  const qtdNomes = normalizarNomesRaiz(trocas);
+  if (qtdNomes) {
+    auditar('alteracao', 'Nomes padronizados', {
+      onde: 'contas, contrapartes e descrições',
+      de: qtdNomes + ' campo(s) fora do padrão',
+      para: [...trocas].slice(0, 12).join(' · ') + (trocas.size > 12 ? ' · … e mais ' + (trocas.size - 12) : '') });
+    gravar();
+  }
   /* aba que não existe mais (excluída noutra sessão) não pode deixar a tela órfã */
   if (abaAtual !== 'principal' && !RAIZ.cenarios.some(c => c.id === abaAtual)) abaAtual = 'principal';
   abrirAba(abaAtual, true);
@@ -141,6 +157,8 @@ const fotoAgora = () => ({ json: JSON.stringify(RAIZ), aba: abaAtual, mes: mesAt
 const ultimaAcao = () => (AUDITORIA[AUDITORIA.length - 1] || {}).acao || 'a última mudança';
 
 function gravar(){
+  /* todo nome que chega aqui (digitado, importado, restaurado) sai no padrão */
+  normalizarNomesRaiz();
   const agora = JSON.stringify(RAIZ);
   if (!mexendoNaPilha && estadoAnterior && estadoAnterior.json !== agora) {
     /* o rótulo vem da trilha: em toda mutação o auditar() roda antes do gravar,
@@ -236,17 +254,18 @@ function abrirAba(id, semDesenhar){
   if (!semDesenhar) render();
 }
 
-/* A simulação nasce como cópia inteira da aba em que se está: o CFO parte do
-   que está vendo, mexe à vontade, e a Principal fica exatamente como estava. */
+/* A simulação nasce como cópia da PRINCIPAL, de qualquer aba que se esteja: o
+   sistema tem uma configuração só, e ela é a da Principal. O CFO mexe à
+   vontade nos números, e a Principal fica exatamente como estava. */
 function novaSimulacao(){
   RAIZ.cenarios = RAIZ.cenarios || [];
   const n = RAIZ.cenarios.length + 1;
   const c = {
     id: 'C' + Date.now().toString(36) + n,
     nome: 'Simulação ' + n,
-    nasceuDe: nomeDaAba(),
+    nasceuDe: 'Principal',
     criadoEm: new Date().toISOString(),
-    db: clonar(DB),
+    db: clonar(RAIZ.principal),
   };
   RAIZ.cenarios.push(c);
   auditar('inclusao', 'Simulação criada', { onde: c.nome, de: 'cópia de ' + c.nasceuDe, para: c.nome });
@@ -306,7 +325,7 @@ function barraAbas(){
   return `<div class="abas">
     ${aba('principal', 'Principal', false)}
     ${(RAIZ.cenarios || []).map(c => aba(c.id, c.nome, true)).join('')}
-    <button type="button" class="aba-nova" data-escreve onclick="novaSimulacao()" title="cria uma cópia desta aba para simular sem tocar na Principal">＋ Nova simulação</button>
+    <button type="button" class="aba-nova" data-escreve onclick="novaSimulacao()" title="cria uma cópia da Principal para simular sem tocar nela">＋ Nova simulação</button>
   </div>`;
 }
 
@@ -614,7 +633,7 @@ function recolherTudo(){ abertasComp.clear(); abertasCP.clear(); render(); }
 
 /* O botão "＋ Novo lançamento" da barra trabalha no período B, o mês mais
    recente da tela · o título do modal diz em qual mês está entrando. */
-function novoLancamentoNaTela(){ mesAtual = compB; abrirLancamento(); }
+
 
 /* ═══════════════ PDF ═══════════════
    Sem biblioteca: a folha é a própria tela, com o CSS de impressão. No Edge,

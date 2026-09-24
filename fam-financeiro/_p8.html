@@ -164,6 +164,253 @@ document.addEventListener('keydown', e => {
   c.dispatchEvent(new Event('input', { bubbles: true }));   // quem escuta o campo recalcula
 });
 
+/* ═══════════════ MÁSCARA DE NOMES ═══════════════
+   O padrão do sistema para título, conta, contraparte e descrição: cada palavra
+   com a inicial maiúscula e o resto minúsculo, respeitando os acentos que a
+   pessoa digitou. "marco aurélio dragone" vira "Marco Aurélio Dragone". A
+   abreviação escrita em maiúsculas fica como foi escrita ("MAD"), e as siglas
+   conhecidas do caixa (SUSEP, PIX, IOF...) também. Ligações (de, da, do, e...)
+   ficam em minúsculas no meio do nome.
+   NÃO vale para os títulos ENTRADAS e SAÍDAS, que são fixos e maiúsculos: eles
+   não passam por campo nenhum. Como a de dinheiro, liga por atributo
+   (data-nome) e por delegação · campo que nasce depois já vem com ela. */
+/* os nomes que o código conhece de fábrica, guardados antes de qualquer renomeação */
+const INTERNAS_PADRAO = INTERNAS.slice();
+const REGRAS_PADRAO = REGRAS_FABRICA.map(r => r.natureza);
+const LIGACOES_NOME = new Set(['de','da','do','das','dos','e','em','no','na','nos','nas','para','por','com','ao','aos','pelo','pela']);
+/* "a" e "o" só ficam minúsculos se JÁ vieram minúsculos: em maiúscula é a
+   inicial de um nome ("Marco A Dragone") e não pode ser tirada da pessoa. */
+const LIGACOES_MINUSCULAS = new Set(['a','o','as','os']);
+const SIGLAS_NOME = new Set(['PMSP','RFB','FG','KRL','VR','ME','JUCESP','RJ','SP','BB','CC','SUSEP','PIX','TED','DOC','IOF','IRPJ','CSLL','COFINS','INSS','FGTS','CNPJ','CPF','CDB','LFT','ISS','PIS','FAM','CEO','CFO']);
+
+/* `vivo` é a máscara enquanto se digita: só põe a inicial em maiúscula e nunca
+   apaga uma maiúscula que a pessoa digitou. Quem digita "BETA SERVICOS" com o
+   Caps Lock ligado não pode ter "BETA" achatada no meio da frase e as outras
+   palavras lidas como abreviação. O acerto completo (o resto em minúsculas)
+   vem ao sair do campo e ao salvar. */
+function mascaraNome(txt, vivo){
+  const s = String(txt == null ? '' : txt);
+  const letras = s.replace(/[^\p{L}]/gu, '');
+  if (!letras) return s;
+  if (vivo) {
+    /* as ligações (de, da, com...) ficam para o acerto final: "com" pode ser o
+       começo de "comissão", e baixá-la no meio da digitação estraga a palavra */
+    return s.replace(/[\p{L}\p{N}]+/gu, p => /\p{N}/u.test(p) ? p : p.charAt(0).toLocaleUpperCase('pt-BR') + p.slice(1));
+  }
+  /* "PAGAMENTO da COMISSAO": as ligações minúsculas não contam, senão a máscara
+     viva (que as baixa enquanto se digita) faria o resto parecer misturado */
+  const semLigacoes = (s.match(/[\p{L}\p{N}]+/gu) || [])
+    .filter((p, k) => k === 0 || !LIGACOES_NOME.has(p.toLocaleLowerCase('pt-BR'))).join('').replace(/[^\p{L}]/gu, '');
+  const tudoMaiusc = semLigacoes === semLigacoes.toUpperCase();
+  const total = (s.match(/[\p{L}\p{N}]+/gu) || []).length;
+  let i = 0;
+  return s.replace(/[\p{L}\p{N}]+/gu, p => {
+    const primeira = i++ === 0;
+    if (!/\p{L}/u.test(p)) return p;                          // só número: 2026, 2.1
+    if (/\p{N}/u.test(p)) return p.toUpperCase();             // S3, 3A
+    const baixo = p.toLocaleLowerCase('pt-BR');
+    if (!primeira && LIGACOES_NOME.has(baixo)) return baixo;
+    if (!primeira && LIGACOES_MINUSCULAS.has(p)) return p;     // "Apol. 123 a 13": o "a" já vinha minúsculo
+    /* sigla curta só vale se veio em maiúsculas: "me" e "sp" minúsculos são palavra */
+    if (SIGLAS_NOME.has(p.toUpperCase()) && (p === p.toUpperCase() || p.length >= 4)) return p.toUpperCase();
+    if (p === p.toUpperCase() && p.length > 1) {
+      if (!tudoMaiusc) return p;                               // "Marco MAD Dragone": a abreviação é dele
+      if (total === 1 && p.length <= 3) return p;              // "MAD" sozinha
+    }
+    return p.charAt(0).toLocaleUpperCase('pt-BR') + baixo.slice(1);
+  });
+}
+
+const ehNome = el => el && el.matches && el.matches('input[data-nome]');
+function aplicarMascaraNome(campo, vivo){
+  const v = campo.value, n = mascaraNome(v, vivo);
+  /* só troca a caixa: se o tamanho mudasse (letra que vira duas), o cursor
+     ficaria no lugar errado, e aí a máscara espera o campo perder o foco */
+  if (n === v || n.length !== v.length) return;
+  const a = campo.selectionStart, b = campo.selectionEnd;
+  campo.value = n;
+  try { campo.setSelectionRange(a, b); } catch(err) {}
+}
+/* acento por tecla morta chega em composição: mexer no campo no meio dela
+   quebraria a letra, então a máscara espera a composição acabar */
+document.addEventListener('input', e => { if (ehNome(e.target) && !e.isComposing) aplicarMascaraNome(e.target, true); });
+document.addEventListener('compositionend', e => { if (ehNome(e.target)) aplicarMascaraNome(e.target, true); });
+document.addEventListener('focusout', e => { if (ehNome(e.target)) aplicarMascaraNome(e.target); });
+
+/* ═══════════════ A MÁSCARA VALE PARA TUDO, INCLUSIVE O QUE JÁ EXISTE ═══════════════
+   Conta, contraparte e descrição de todos os lançamentos, de todas as abas e
+   meses, mais o cadastro de contas, as regras aprendidas e as constantes que
+   citam conta pelo nome (as internas e as regras de fábrica do importador) ·
+   se só o razão mudasse, "Reembolso de despesas" no código deixaria de casar
+   com "Reembolso de Despesas" nos dados. Idempotente: rodar de novo não muda
+   nada. `detalhes` (um Set) recebe os pares "antes → depois" para a trilha. */
+function normalizarNomesRaiz(detalhes){
+  const cache = new Map();
+  const m = t => {
+    if (typeof t !== 'string' || !t) return t;
+    let r = cache.get(t);
+    if (r === undefined) { r = mascaraNome(t); cache.set(t, r); }
+    return r;
+  };
+  let n = 0;
+  const troca = (o, k) => {
+    const v = o[k], nv = m(v);
+    if (nv === v) return;
+    if (detalhes) detalhes.add(v + ' → ' + nv);
+    o[k] = nv; n++;
+  };
+  /* as contas internas e as regras de fábrica citam conta pelo nome: valem o
+     nome padrão, ou o que o usuário deu a ela (RAIZ.apelidos) */
+  const apelidos = (RAIZ && RAIZ.apelidos) || {};
+  const atual = padrao => { const p = m(padrao); return apelidos[p] || p; };
+  for (let i = 0; i < INTERNAS.length; i++) INTERNAS[i] = atual(INTERNAS_PADRAO[i]);
+  REGRAS_FABRICA.forEach((r, i) => { r.natureza = atual(REGRAS_PADRAO[i]); });
+  if (!RAIZ) return 0;
+  const dbs = [RAIZ.principal, ...(RAIZ.cenarios || []).map(c => c.db)].filter(Boolean);
+  for (const db of dbs) {
+    for (const mk of Object.keys(db.meses || {}))
+      for (const l of (db.meses[mk].lancamentos || [])) { troca(l, 'natureza'); troca(l, 'contraparte'); troca(l, 'descritivo'); }
+    /* as regras do simulador apontam para a conta pelo nome ("nat:Fornecedores"),
+       nos meses simulados e nas regras aprendidas */
+    const alvoRegra = r => { if (r && typeof r.alvo === 'string' && r.alvo.startsWith('nat:')) {
+      const nv = 'nat:' + m(r.alvo.slice(4)); if (nv !== r.alvo) { r.alvo = nv; n++; } } };
+    for (const mk of Object.keys(db.meses || {})) (db.meses[mk].regras || []).forEach(alvoRegra);
+    (db.naturezas || []).forEach(x => troca(x, 'nome'));
+    (db.regras || []).forEach(r => troca(r, 'natureza'));
+  }
+  /* simulações criadas antes ganham o cadastro de contas da Principal · o que
+     é configuração é uma só */
+  for (const c of (RAIZ.cenarios || [])) {
+    c.db.naturezas = c.db.naturezas || [];
+    for (const x of (RAIZ.principal.naturezas || []))
+      if (!c.db.naturezas.some(y => y.nome === x.nome)) c.db.naturezas.push({ ...x });
+  }
+  return n;
+}
+
+/* ═══════════════ EDITAR: a conta, a contraparte e a linha do lançamento ═══════════════
+   A customização do sistema depende de quem usa: cada pessoa entende um nome
+   de um jeito, e o nome tem de poder mudar sem refazer os lançamentos. O lápis
+   aparece ao lado do nome (e o mesmo está no botão direito). */
+function podeMexer(){
+  if (soVisualizacao()) { flash('No celular o Financeiro é só para conferir. Para editar, abra no computador.'); return false; }
+  if (typeof nuvemPodeEditar === 'function' && !nuvemPodeEditar()) {
+    flash('Seu acesso ao Financeiro é de leitura: dá para conferir, não para editar.');
+    return false;
+  }
+  return true;
+}
+
+let _renomeiaFaz = null;
+function abrirRenomear(titulo, sub, atual, faz){
+  _renomeiaFaz = faz;
+  abrirModal(`
+    <div class="modal-header">
+      <div class="modal-title">${esc(titulo)}<small>${esc(sub)}</small></div>
+      <button class="fechar" onclick="fecharModal()">×</button>
+    </div>
+    <div id="erro-ren"></div>
+    <div class="form-field full" style="margin-top:12px">
+      <label class="form-label">Nome</label>
+      <input id="rn-nome" class="fam-input" data-nome value="${esc(atual)}" onkeydown="if(event.key==='Enter')salvarRenomear()">
+    </div>
+    <div class="modal-rodape">
+      <button class="btn-clear" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" onclick="salvarRenomear()">Salvar</button>
+    </div>`);
+  setTimeout(() => { const c = document.getElementById('rn-nome'); if (c) { c.focus(); c.select(); } }, 40);
+}
+
+function salvarRenomear(){
+  const c = document.getElementById('rn-nome');
+  if (!c || !_renomeiaFaz) return;
+  const novo = mascaraNome(c.value.trim());
+  const erro = !novo ? 'Escreva o nome.' : _renomeiaFaz(novo);
+  if (erro) document.getElementById('erro-ren').innerHTML = '<div class="alert-error">' + esc(erro) + '</div>';
+}
+
+function renomearConta(nat){
+  if (!podeMexer()) return;
+  /* A conta de transferência entre contas da FAM também se renomeia: o que a
+     marca como "interna" é o nome, então o nome novo herda a marca, e isso fica
+     gravado (RAIZ.apelidos) para valer depois de recarregar e no backup. */
+  const ehInterna = INTERNAS.includes(nat);
+  const qtd = Object.keys(DB.meses).reduce((s, mk) => s + DB.meses[mk].lancamentos.filter(l => l.natureza === nat).length, 0);
+  abrirRenomear('Renomear a conta', qtd + ' lançamento(s), em todos os meses, passam a usar o nome novo', nat, novo => {
+    if (novo === nat) { fecharModal(); return ''; }
+    const outra = naturezasConhecidas().find(n => n !== nat && normalizar(n) === normalizar(novo));
+    if (outra) {
+      const a = tipoDaNatureza(outra), b = tipoDaNatureza(nat);
+      if (a && b && a !== b) return '"' + outra + '" é uma conta de ' + nomeDoBloco(a) + '. Não dá para juntar Entradas com Saídas.';
+      if (ehInterna || INTERNAS.includes(outra)) return 'Conta de transferência entre contas da FAM não se junta com outra conta.';
+      if (!confirm('Já existe a conta "' + outra + '".\nJuntar as duas? Os lançamentos de "' + nat + '" passam para ela.')) return 'Nada foi alterado.';
+      novo = outra;
+    }
+    let n = 0;
+    /* Uma configuração só: o nome novo vale na Principal e em todas as
+       simulações. Se cada aba guardasse o seu vocabulário, a mesma conta teria
+       dois nomes conforme a aba, e a de interna perderia a marca. */
+    for (const d of todosOsDb()) {
+      for (const mk of Object.keys(d.meses)) {
+        for (const l of d.meses[mk].lancamentos) if (l.natureza === nat) { l.natureza = novo; if (d === DB) n++; }
+        (d.meses[mk].regras || []).forEach(r => { if (r.alvo === 'nat:' + nat) r.alvo = 'nat:' + novo; });
+      }
+      const cad = (d.naturezas || []).find(x => x.nome === nat);
+      if (cad) { if (d.naturezas.some(x => x.nome === novo)) d.naturezas = d.naturezas.filter(x => x !== cad); else cad.nome = novo; }
+      (d.regras || []).forEach(r => { if (r.natureza === nat) r.natureza = novo; });
+    }
+    if (ehInterna) {
+      const i = INTERNAS.indexOf(nat);
+      RAIZ.apelidos = RAIZ.apelidos || {};
+      RAIZ.apelidos[mascaraNome(INTERNAS_PADRAO[i])] = novo;
+      INTERNAS[i] = novo;
+      REGRAS_FABRICA.forEach(r => { if (r.natureza === nat) r.natureza = novo; });
+    }
+    abertasComp.delete(nat); abertasComp.add(novo); abertasCP.clear();
+    auditar('alteracao', 'Conta renomeada', { onde: n + ' lançamento(s)', de: nat, para: novo });
+    gravar(); fecharModal(); render();
+    flash('Conta renomeada para "' + novo + '". Ctrl+Z desfaz.');
+    return '';
+  });
+}
+
+/* a contraparte se renomeia DENTRO da conta onde foi clicada: a mesma empresa
+   pode aparecer em contas diferentes, e trocar a de lá sem ninguém pedir seria
+   mexer no que não estava na tela */
+function renomearContraparte(tr){
+  if (!podeMexer()) return;
+  const nat = tr.dataset.nat, chave = tr.dataset.cp;
+  const atual = tr.querySelector('b').textContent;
+  /* vale na Principal e nas simulações (uma configuração só); a contagem do
+     aviso é a da aba que está na tela */
+  const alvo = todas => { const r = []; for (const d of (todas ? todosOsDb() : [DB])) for (const mk of Object.keys(d.meses)) for (const l of d.meses[mk].lancamentos)
+    if (l.natureza === nat && normalizar(l.contraparte) === chave) r.push(l); return r; };
+  abrirRenomear('Renomear a contraparte', nat + ' · ' + alvo().length + ' lançamento(s), em todos os meses', atual, novo => {
+    const ls = alvo(true);
+    if (ls.every(l => l.contraparte === novo)) { fecharModal(); return ''; }
+    ls.forEach(l => { l.contraparte = novo; });
+    abertasCP.clear();
+    auditar('alteracao', 'Contraparte renomeada', { onde: nat + ' · ' + alvo().length + ' lançamento(s)', de: atual, para: novo });
+    gravar(); fecharModal(); render();
+    flash('Contraparte renomeada para "' + novo + '". Ctrl+Z desfaz.');
+    return '';
+  });
+}
+
+/* a linha do lançamento pode ser de mais de um mês: um item por mês */
+function itensEditarLinha(tr){
+  const alvos = String(tr.dataset.ids || '').split(';').filter(Boolean).map(z => z.split('|'));
+  return alvos.map(([mk, id]) => ({ ic:'🗂️', t:'Editar o lançamento inteiro · ' + rotuloMes(mk),
+    faz: () => { mesAtual = mk; abrirLancamento(id); } }));
+}
+function editarLinhaLanc(btn, ev){
+  if (!podeMexer()) return;
+  const tr = btn.closest('tr');
+  const itens = itensEditarLinha(tr);
+  if (itens.length === 1) return itens[0].faz();
+  if (itens.length) abrirCtx(ev.clientX, ev.clientY, 'Editar o lançamento de qual mês?', itens, tr);
+}
+
 /* ═══════════════ EDITAR NA PRÓPRIA LINHA ═══════════════
    Dois cliques na célula e ela vira campo, como no Excel. Enter grava, Esc
    desiste, sair do campo grava. Percentual e diferença ninguém digita: quem
@@ -203,6 +450,7 @@ function editarCelula(td){
   campo.value = tipo === 'novo' ? '' : (ehValor ? valorEditavel(Number(td.dataset.valor)) : td.dataset.texto);
   if (ehValor) { campo.inputMode = 'decimal'; campo.dataset.dinheiro = 'neg'; }
   if (tipo === 'novo') campo.placeholder = 'R$ 0,00';
+  if (tipo === 'desc') campo.setAttribute('data-nome', '');
   td.innerHTML = '';
   td.appendChild(campo);
   campo.focus();
@@ -270,8 +518,11 @@ function salvarCelula(td, texto){
     return;
   }
 
-  const novo = texto.trim();
-  if (!novo) { flash('A descrição não pode ficar vazia.'); return render(); }
+  const bruto = texto.trim();
+  if (!bruto) { flash('A descrição não pode ficar vazia.'); return render(); }
+  /* abrir a célula e sair sem digitar não pode trocar a caixa do que já estava */
+  if (bruto === String(td.dataset.texto || '').trim()) return render();
+  const novo = mascaraNome(bruto);
   /* O descritivo é o que casa o lançamento de um mês com o do outro. Mudar só
      de um lado desfaria o par na hora, então os dois andam juntos. */
   const tr = td.closest('tr');
@@ -340,13 +591,36 @@ const mesesDeAcao = () => { const ms = mesesNaTela(); return ms.length <= 6 ? ms
 /* Toda ação de lançamento trabalha no mês corrente. Aqui a tela tem dois, então
    a ação troca o mês corrente para aquele em que ela vai mexer, e o título do
    modal mostra qual é · quem clicou vê em que mês está entrando. */
-function novoLanc(mk, nat, cp){
+function novoLanc(mk, nat, cp, tipo){
   mesAtual = mk;
-  abrirLancamento(null, nat);
+  abrirLancamento(null, nat, undefined, undefined, tipo);
   if (cp) { const el = document.getElementById('f-cp'); if (el) el.value = cp; }
 }
 
 /* ═══════════════ MENU DO BOTÃO DIREITO ═══════════════ */
+/* Em que bloco está a linha: 'entrada' ou 'saida'. O cabeçalho da tabela é a
+   faixa ENTRADAS, e a faixa SAÍDAS (tr.grupo com data-bloco) marca onde o outro
+   lado começa · o que está entre uma e outra, incluindo as gavetas abertas, é
+   do bloco daquela faixa. Fora da tabela (indicadores, barra), não há bloco. */
+function blocoDe(el){
+  const tr = el && el.closest ? el.closest('tr') : null;
+  if (!tr || !tr.closest('.comp-quadro')) return null;
+  if (tr.classList.contains('respiro')) return null;
+  if (tr.closest('thead')) return 'entrada';
+  for (let r = tr; r; r = r.previousElementSibling)
+    if (r.classList.contains('grupo')) return r.dataset.bloco || null;
+  return 'entrada';
+}
+/* o mês da coluna onde o clique caiu, quando ele caiu numa coluna de mês */
+function mesDaCelula(el){
+  const td = el && el.closest ? el.closest('tbody td') : null;
+  if (!td || !td.closest('.comp-quadro')) return null;
+  const i = [...td.parentElement.children].indexOf(td);
+  if (i < 1) return null;
+  const col = colsDeValor(colunasDaTela().cols)[i - 1];
+  return col && col.tipo === 'mes' ? col.mk : null;
+}
+let _blocoCtx = null, _mesCtx = null;
 let _acoes = [];
 let _scrollAoAbrir = 0;
 
@@ -409,10 +683,12 @@ function ctxConta(tr, x, y){
   const qtd = mk => DB.meses[mk].lancamentos.filter(l => l.natureza === nat).length;
   const itens = [
     { ic: aberta ? '▼' : '▶', t: aberta ? 'Recolher as contrapartes' : 'Abrir as contrapartes', faz: () => alternarComp(tr) },
+    { ic:'✏️', t:'Renomear esta conta', faz: () => renomearConta(nat) },
     '-',
   ];
+  const bloco = blocoDe(tr);
   for (const mk of mesesDeAcao())
-    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat) });
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, null, bloco) });
   itens.push('-',
     { ic:'📋', t:'Copiar os lançamentos desta conta', atalho:'p/ o Excel', faz: () => copiarConta(nat) },
     { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) },
@@ -432,10 +708,12 @@ function ctxContraparte(tr, x, y){
   const aberta = abertasCP.has(idCP(nat, cp));
   const itens = [
     { ic: aberta ? '▼' : '▶', t: aberta ? 'Recolher os lançamentos' : 'Abrir os lançamentos', faz: () => alternarCP(tr) },
+    { ic:'✏️', t:'Renomear esta contraparte', faz: () => renomearContraparte(tr) },
     '-',
   ];
+  const bloco = blocoDe(tr);
   for (const mk of mesesDeAcao())
-    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, nome) });
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, nome, bloco) });
   itens.push('-',
     { ic:'📋', t:'Copiar os lançamentos desta contraparte', atalho:'p/ o Excel', faz: () => copiarContraparte(nat, cp, nome) },
     { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) });
@@ -454,8 +732,8 @@ function ctxLancamento(td, x, y){
     { ic:'✏️', t:'Corrigir o valor aqui na linha', atalho:'2 cliques', faz: () => editarCelula(td) },
     { ic:'🗂️', t:'Editar o lançamento inteiro', faz: () => { mesAtual = mk; abrirLancamento(id); } },
     '-',
-    { ic:'⬆️', t:'Inserir lançamento acima',  faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i); } },
-    { ic:'⬇️', t:'Inserir lançamento abaixo', faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i + 1); } },
+    { ic:'⬆️', t:'Inserir lançamento acima',  faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i, blocoDe(tr)); } },
+    { ic:'⬇️', t:'Inserir lançamento abaixo', faz: () => { mesAtual = mk; abrirLancamento(null, l.natureza, l.data, i + 1, blocoDe(tr)); } },
     { ic:'📄', t:'Duplicar lançamento', faz: () => duplicarLancamento(id, mk) },
     '-',
     { ic:'📋', t:'Copiar a linha', atalho:'p/ o Excel', faz: () => copiar(linhaExcel(l, mk)) },
@@ -468,7 +746,13 @@ function ctxLancamento(td, x, y){
 /* a linha de lançamento fora da célula de valor · não dá para saber de que mês
    o clique falava, então ela pergunta o mês em cada ação */
 function ctxLancamentoPar(tr, x, y){
-  const nat = tr.dataset.nat, cp = tr.dataset.cp;
+  const nat = tr.dataset.nat;
+  /* a chave da contraparte é o nome sem caixa nem acento: o campo do lançamento
+     novo precisa do nome como foi escrito, e ele mora no lançamento da linha */
+  const primeiro = String(tr.dataset.ids || '').split(';').filter(Boolean).map(z => z.split('|'))
+    .map(([mk, id]) => DB.meses[mk] && DB.meses[mk].lancamentos.find(z => z.id === id)).find(Boolean);
+  const cp = primeiro ? primeiro.contraparte : tr.dataset.cp;
+  const bloco = blocoDe(tr);
   /* O NOME VEM DA DESCRIÇÃO DA PRÓPRIA LINHA. Aqui estava
      `tr.querySelector('b').textContent`, copiado do menu da contraparte · só
      que a linha do lançamento não tem <b> nenhum. O menu estourava TypeError e
@@ -479,10 +763,11 @@ function ctxLancamentoPar(tr, x, y){
   const nome = (tdDesc && (tdDesc.dataset.texto || tdDesc.textContent.trim())) || 'Lançamento';
   const itens = [];
   for (const mk of mesesDeAcao())
-    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, cp) });
+    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk, nat, cp, bloco) });
   itens.unshift(
     { ic:'✏️', t:'Corrigir a descrição aqui na linha', atalho:'2 cliques',
       faz: () => editarCelula(tr.querySelector('td[data-edit="desc"]')) },
+    ...itensEditarLinha(tr),
     '-');
   itens.push('-',
     { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) },
@@ -515,8 +800,17 @@ function ctxTela(el, x, y){
     if (pilhaRefazer.length)  itens.push({ ic:'↷', t:'Refazer: ' + oQueRefazer(),  atalho:'Ctrl+Y', faz: () => refazer() });
     itens.push('-');
   }
-  for (const mk of mesesDeAcao())
-    itens.push({ ic:'➕', t:'Novo lançamento em ' + rotuloMes(mk), faz: () => novoLanc(mk) });
+  /* O lançamento só nasce por dentro de um bloco: o clique em Entradas lança
+     uma entrada, em Saídas lança uma saída, e o mês da coluna onde o clique
+     caiu vai na frente. Fora dos dois blocos não há "Novo lançamento". */
+  if (_blocoCtx) {
+    const lado = nomeDoBloco(_blocoCtx);
+    const meses = mesesDeAcao().slice();
+    if (_mesCtx && DB.meses[_mesCtx]) meses.sort((a, b) => (b === _mesCtx) - (a === _mesCtx));
+    for (const mk of meses)
+      itens.push({ ic:'➕', t:'Novo lançamento em ' + lado + ' · ' + rotuloMes(mk), faz: () => novoLanc(mk, null, null, _blocoCtx) });
+    itens.push('-');
+  }
   itens.push(
     { ic:'🏷️', t:'Nova natureza / conta', faz: () => abrirNovaNatureza() },
     { ic:'📅', t:'Novo mês / período', faz: () => abrirNovoMes() },
@@ -531,11 +825,10 @@ function ctxTela(el, x, y){
     '-',
     { ic:'▼', t:'Expandir tudo', off: abertasComp.size === todas, faz: () => expandirTudo() },
     { ic:'▶', t:'Recolher tudo', off: abertasComp.size === 0 && abertasCP.size === 0, faz: () => recolherTudo() },
-    { ic:'⇄', t:'Inverter os períodos', off: compA === compB, faz: () => inverterPeriodos() },
     '-',
     { ic:'📋', t:'Copiar a tabela', atalho:'p/ o Excel', faz: () => copiarTabela() },
     { ic:'🖨️', t:'Gerar PDF da tela', faz: () => imprimirTela() });
-  abrirCtx(x, y, 'Acompanhamento mensal · ' + rotuloCurto(compA) + ' × ' + rotuloCurto(compB), itens, null);
+  abrirCtx(x, y, (_blocoCtx ? nomeDoBloco(_blocoCtx).toUpperCase() : 'Acompanhamento mensal') + ' · ' + rotuloCurto(compA) + ' × ' + rotuloCurto(compB), itens, null);
 }
 
 /* ── o que os itens fazem ── */
@@ -595,9 +888,12 @@ function copiarTabela(){
   });
   const todas = linhasComparativo();
   const A = apurar(compA), B = apurar(compB);
-  linhas.push('ENTRADAS', ...monta(todas.filter(l => l.tipo === 'entrada')));
+  /* copiar sai na ordem em que a tela está: quem ordenou e copiou espera isso */
+  const colsTela = colunasDaTela().cols;
+  const porConta = l => ({ nome: l.natureza, vals: l.vals, tipo: l.tipo });
+  linhas.push('ENTRADAS', ...monta(ordenar(todas.filter(l => l.tipo === 'entrada'), 'entrada', colsTela, porConta)));
   linhas.push(['TOTAL ENTRADAS', valorExcel(A.entradas), valorExcel(B.entradas), valorExcel(B.entradas - A.entradas), ''].join('\t'));
-  linhas.push('SAÍDAS', ...monta(todas.filter(l => l.tipo === 'saida')));
+  linhas.push('SAÍDAS', ...monta(ordenar(todas.filter(l => l.tipo === 'saida'), 'saida', colsTela, porConta)));
   linhas.push(['TOTAL SAÍDAS', valorExcel(A.saidas), valorExcel(B.saidas), valorExcel(B.saidas - A.saidas), ''].join('\t'));
   copiar(linhas.join('\n'), 'Tabela copiada. Cole no Excel com Ctrl+V.');
 }
@@ -618,6 +914,8 @@ document.addEventListener('contextmenu', e => {
      copiar um texto qualquer da tela não perde o caminho de sempre */
   if (!alvo) { fecharCtx(); return; }
   e.preventDefault();
+  _blocoCtx = blocoDe(e.target);
+  _mesCtx = mesDaCelula(e.target);
   menuDe(alvo, e.clientX, e.clientY);
 });
 

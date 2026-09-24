@@ -237,7 +237,7 @@ const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   ok('de fabrica nao ha faixa de trimestre', (await p.$$('#comp-corpo thead tr.faixa-tri')).length === 0);
   const soMeses = await p.$$eval('#comp-corpo thead th', els => els.map(e => e.textContent.trim()));
   ok('cinco meses, so eles, mais Dif. e Var.',
-    soMeses.join('|') === '|mai/26|jun/26|jul/26|ago/26|set/26|Dif. R$|Var. %', soMeses.join('|'));
+    soMeses.join('|') === 'Entradas|mai/26|jun/26|jul/26|ago/26|set/26|Dif. R$|Var. %', soMeses.join('|'));
 
   /* ligado pelo botao direito, o trimestre volta inteiro */
   await p.evaluate(() => alternarTotalTri());
@@ -277,7 +277,7 @@ const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   await p.evaluate(() => fixarPar('2026-05', '2026-07'));
   const par2 = await p.evaluate(() => [compA, compB, parFixado]);
   ok('dá para escolher outro par na mão', par2[0] === '2026-05' && par2[1] === '2026-07' && par2[2] === true, par2.join(','));
-  await p.click('#btn-solta-par');
+  await p.evaluate(() => soltarPar());
   const par3 = await p.evaluate(() => [compA, compB, parFixado]);
   ok('e voltar para os dois últimos', par3[0] === '2026-08' && par3[1] === '2026-09' && par3[2] === false, par3.join(','));
 

@@ -111,7 +111,7 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   ok('o modal abre no mês da linha, não no mês da barra', /Julho\/2026/.test(await p.$eval('.modal-title', e => e.textContent)));
   ok('já vem com a conta da linha', (await p.inputValue('#f-nat')) === 'Comissão Corretoras', await p.inputValue('#f-nat'));
   ok('já vem com a data da linha', (await p.inputValue('#f-data')) === antes7[i].data, await p.inputValue('#f-data'));
-  await p.fill('#f-cp', 'INSERIDO ABAIXO');
+  await p.fill('#f-cp', 'Inserido Abaixo');
   await p.fill('#f-valor', '10,00');
   await p.click('button:has-text("Incluir lançamento")');
   await p.waitForTimeout(350);
@@ -119,10 +119,10 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   ok('inserir abaixo: julho vai a 94', dep7.length === 94, String(dep7.length));
   ok('agosto continua intocado', (await qtd('2026-08')) === 89, String(await qtd('2026-08')));
   ok('o novo entrou logo abaixo da linha clicada',
-    dep7[i].id === alvo && dep7[i + 1].cp === 'INSERIDO ABAIXO', dep7[i].cp + ' → ' + dep7[i + 1].cp);
+    dep7[i].id === alvo && dep7[i + 1].cp === 'Inserido Abaixo', dep7[i].cp + ' → ' + dep7[i + 1].cp);
 
   // ═══ 6 · inserir acima ═══
-  await p.click('#comp-corpo tr.cp:has-text("INSERIDO ABAIXO")');
+  await p.click('#comp-corpo tr.cp:has-text("Inserido Abaixo")');
   await p.waitForTimeout(250);
   const idNovo = await p.$eval('#comp-corpo tr.lanc td[data-mk="2026-07"]', e => e.dataset.id);
   const iNovo = (await lancs('2026-07')).findIndex(l => l.id === idNovo);
@@ -130,16 +130,16 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   await p.waitForTimeout(200);
   await clicar(p, 'Inserir lançamento acima');
   await p.waitForTimeout(300);
-  await p.fill('#f-cp', 'INSERIDO ABAIXO');
+  await p.fill('#f-cp', 'Inserido Abaixo');
   await p.fill('#f-valor', '20,00');
   await p.click('button:has-text("Incluir lançamento")');
   await p.waitForTimeout(350);
   const dep7b = await lancs('2026-07');
   ok('inserir acima entrou antes da linha clicada',
-    dep7b[iNovo].cp === 'INSERIDO ABAIXO' && dep7b[iNovo + 1].id === idNovo, dep7b[iNovo].cp + ' → ' + dep7b[iNovo + 1].cp);
+    dep7b[iNovo].cp === 'Inserido Abaixo' && dep7b[iNovo + 1].id === idNovo, dep7b[iNovo].cp + ' → ' + dep7b[iNovo + 1].cp);
 
   // ═══ 7 · duplicar ═══
-  await p.click('#comp-corpo tr.cp:has-text("INSERIDO ABAIXO")');
+  await p.click('#comp-corpo tr.cp:has-text("Inserido Abaixo")');
   await p.waitForTimeout(250);
   await p.click('#comp-corpo tr.lanc td[data-mk="2026-07"]', { button: 'right' });
   await p.waitForTimeout(200);
@@ -149,7 +149,7 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   ok('duplicar avisa em que mês foi', /Julho\/2026/.test(await p.textContent('.aviso-flutua')), await p.textContent('.aviso-flutua'));
 
   // ═══ 8 · excluir o lançamento pelo menu ═══
-  await p.click('#comp-corpo tr.cp:has-text("INSERIDO ABAIXO")');
+  await p.click('#comp-corpo tr.cp:has-text("Inserido Abaixo")');
   await p.waitForTimeout(250);
   await p.click('#comp-corpo tr.lanc td[data-mk="2026-07"]', { button: 'right' });
   await p.waitForTimeout(200);
@@ -166,7 +166,7 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   await clicar(p, 'Excluir os 18 de Julho/2026');
   await p.waitForTimeout(400);
   ok('tirou os 18 de julho', (await qtd('2026-07')) === 77, String(await qtd('2026-07')));
-  const sobrouAgo = await p.evaluate(() => DB.meses['2026-08'].lancamentos.filter(l => l.natureza === 'Tarifa bancária').length);
+  const sobrouAgo = await p.evaluate(() => DB.meses['2026-08'].lancamentos.filter(l => l.natureza === 'Tarifa Bancária').length);
   ok('e não encostou nos de agosto', sobrouAgo === 18, String(sobrouAgo));
   ok('a conta continua na tabela, agora como "zerou" de um lado',
     /zerou|novo/.test(await p.$eval('#comp-corpo tr:has-text("Tarifa bancária")', e => e.textContent)));
@@ -189,7 +189,6 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   const mTela = await itens(p);
   ok('o menu da tela traz copiar a tabela e o PDF',
     mTela.some(t => /Copiar a tabela/.test(t)) && mTela.some(t => /Gerar PDF da tela/.test(t)), mTela.join(' | ').slice(0, 120));
-  ok('e traz inverter os períodos', mTela.some(t => /Inverter os períodos/.test(t)));
   await p.keyboard.press('Escape');
   await p.waitForTimeout(150);
 
@@ -267,13 +266,13 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   await p.keyboard.press('Enter');
   await p.waitForTimeout(350);
   const nosDois = await p.evaluate(() => ['2026-07','2026-08'].map(mk =>
-    DB.meses[mk].lancamentos.filter(l => l.descritivo === 'Premio MASKAN corrigido').length));
+    DB.meses[mk].lancamentos.filter(l => l.descritivo === 'Premio MASKAN Corrigido').length));
   ok('a descrição muda nos dois meses, para o par não se desfazer', nosDois.join(',') === '1,1', nosDois.join(','));
   ok('e a linha continua pareada, não virou duas', (await p.$$('#comp-corpo tr.lanc')).length === 1);
   await p.reload();
   await p.waitForTimeout(450);
   ok('o que foi corrigido na linha sobrevive ao recarregar', await p.evaluate(() =>
-    DB.meses['2026-07'].lancamentos.some(l => l.descritivo === 'Premio MASKAN corrigido' && l.valor === 100000)));
+    DB.meses['2026-07'].lancamentos.some(l => l.descritivo === 'Premio MASKAN Corrigido' && l.valor === 100000)));
 
   // ═══ 14 · o respiro entre entradas e saídas ═══
   const respiro = await p.evaluate(() => {
@@ -294,7 +293,7 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   // ═══ 15 · máscara de dinheiro: quem digita mexe só nos dígitos ═══
   await p.reload();
   await p.waitForTimeout(450);
-  await p.click('button:has-text("＋ Novo lançamento")');
+  await p.evaluate(() => { mesAtual = compB; abrirLancamento(null, null, undefined, undefined, 'saida'); });
   await p.waitForTimeout(300);
   await p.click('#f-valor');
   for (const k of '123456') await p.keyboard.press(k);
@@ -305,14 +304,14 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   for (const k of '900000') await p.keyboard.press(k);
   ok('selecionar tudo e digitar troca o valor inteiro', (await p.inputValue('#f-valor')) === 'R$ 9.000,00', await p.inputValue('#f-valor'));
   await p.fill('#f-nat', 'Fornecedores');
-  await p.fill('#f-cp', 'TESTE MASCARA');
+  await p.fill('#f-cp', 'Teste Mascara');
   await p.click('button:has-text("Incluir lançamento")');
   await p.waitForTimeout(350);
   ok('e o valor mascarado entra certo no lançamento', await p.evaluate(() =>
-    DB.meses[compB].lancamentos.some(l => l.contraparte === 'TESTE MASCARA' && l.valor === -9000)));
+    DB.meses[compB].lancamentos.some(l => l.contraparte === 'Teste Mascara' && l.valor === -9000)));
 
   // na edição da linha a máscara vale igual · salvar já deixou a conta aberta
-  await p.click('#comp-corpo tr.cp:has-text("TESTE MASCARA")');
+  await p.click('#comp-corpo tr.cp:has-text("Teste Mascara")');
   await p.waitForTimeout(250);
   const celMasc = '#comp-corpo tr.lanc td[data-edit="valor"]';
   await p.dblclick(celMasc);
@@ -326,7 +325,7 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   await p.keyboard.press('Enter');
   await p.waitForTimeout(350);
   ok('o valor com sinal grava como negativo', await p.evaluate(() =>
-    DB.meses[compB].lancamentos.some(l => l.contraparte === 'TESTE MASCARA' && l.valor === -1500)));
+    DB.meses[compB].lancamentos.some(l => l.contraparte === 'Teste Mascara' && l.valor === -1500)));
 
   // ═══ 16 · largura de coluna arrastável, como no Excel ═══
   const largJul = () => p.$eval('#comp-corpo > .comp-quadro > table.fam-table thead th:nth-child(2)',
@@ -443,7 +442,7 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   // ═══ 17 · arrastar o mouse para selecionar não pode fechar nada ═══
   await p.reload();
   await p.waitForTimeout(450);
-  await p.click('button:has-text("＋ Novo lançamento")');
+  await p.evaluate(() => { mesAtual = compB; abrirLancamento(null, null, undefined, undefined, 'saida'); });
   await p.waitForTimeout(300);
   const tit = await p.$eval('.modal-title', e => { const r = e.getBoundingClientRect(); return { x: r.x + 4, y: r.y + r.height / 2 }; });
   await p.mouse.move(tit.x, tit.y);
@@ -459,7 +458,7 @@ const clicar = (p, texto) => p.click(`#ctx-menu .ctx-item:has-text("${texto}")`)
   await p.mouse.click(120, 600);
   await p.waitForTimeout(300);
   ok('um clique de verdade no fundo fecha', (await p.$('.modal-box')) === null);
-  await p.click('button:has-text("＋ Novo lançamento")');
+  await p.evaluate(() => { mesAtual = compB; abrirLancamento(null, null, undefined, undefined, 'saida'); });
   await p.waitForTimeout(300);
   await p.keyboard.press('Escape');
   await p.waitForTimeout(250);

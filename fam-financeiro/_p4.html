@@ -148,7 +148,7 @@ function abrirNovaNatureza(){
     <div class="form-grid" style="margin-top:12px">
       <div class="form-field full">
         <label class="form-label">Natureza / conta</label>
-        <input id="n-nome" class="fam-input" placeholder="como ela vai aparecer na tabela">
+        <input id="n-nome" class="fam-input" data-nome placeholder="como ela vai aparecer na tabela">
       </div>
       <div class="form-field full">
         <label class="form-label">Entra em qual bloco</label>
@@ -166,14 +166,18 @@ function abrirNovaNatureza(){
 }
 
 function salvarNatureza(){
-  const nome = document.getElementById('n-nome').value.trim();
+  const nome = mascaraNome(document.getElementById('n-nome').value.trim());
   const tipo = document.getElementById('n-tipo').value;
   const erro = m => { document.getElementById('erro-nat').innerHTML = '<div class="alert-error">' + m + '</div>'; };
   if (!nome) return erro('Escreva o nome da natureza.');
   if (naturezasConhecidas().some(n => normalizar(n) === normalizar(nome)))
     return erro('Já existe uma natureza chamada "' + esc(nome) + '".');
   DB.naturezas = DB.naturezas || [];
-  DB.naturezas.push({ nome, tipo });
+  /* a conta nova nasce em todas as abas: a configuração é uma só */
+  for (const d of todosOsDb()) {
+    d.naturezas = d.naturezas || [];
+    if (!d.naturezas.some(n => n.nome === nome)) d.naturezas.push({ nome, tipo });
+  }
   auditar('inclusao', 'Natureza criada', { onde: nome, para: tipo === 'saida' ? 'bloco de Saídas' : 'bloco de Entradas' });
   gravar(); fecharModal(); render();
   flash('Natureza "' + nome + '" criada. Já está na tabela e na lista de lançamento.');
@@ -189,16 +193,37 @@ function excluirNaturezaVazia(nat){
   flash('Natureza "' + nat + '" excluída.');
 }
 
-function abrirLancamento(id, natPre, dataPre, posicao){
+/* Em que lado do caixa está uma natureza: o mesmo critério da tabela (apurar). */
+function tipoDaNatureza(nat){
+  for (const mk of Object.keys(DB.meses)) {
+    const a = apurar(mk);
+    const x = a && a.porNatureza.find(n => n.natureza === nat);
+    if (x) return x.tipo;
+  }
+  const cad = (DB.naturezas || []).find(n => n.nome === nat);
+  return cad ? cad.tipo : null;
+}
+const nomeDoBloco = tipo => tipo === 'entrada' ? 'Entradas' : 'Saídas';
+
+/* O lançamento nasce DENTRO do bloco: quem clicou com o botão direito em
+   Entradas está lançando uma entrada, e o sistema não pergunta de novo. É o que
+   tira da tela o "Tipo" e o erro de lançar com o sinal trocado. `tipoPre` vem do
+   bloco onde o clique caiu; ao editar, o lado é o da própria conta. */
+function abrirLancamento(id, natPre, dataPre, posicao, tipoPre){
   const m = DB.meses[mesAtual];
   const l = id ? m.lancamentos.find(x => x.id === id) : null;
   lancEditando = id || null;
   lancInserirEm = (id || posicao == null) ? null : posicao;
   const hoje = dataPre || (mesAtual + '-01');
-  const dl = naturezasConhecidas().map(n => `<option value="${esc(n)}">`).join('');
+  const tipo = l ? (l.valor < 0 ? 'saida' : (tipoDaNatureza(l.natureza) || 'entrada'))
+                 : (tipoPre || (natPre && tipoDaNatureza(natPre)) || 'saida');
+  /* só as contas do lado certo entram na lista: escolher uma de Saídas dentro
+     de Entradas seria exatamente o erro que este desenho evita */
+  const dl = naturezasConhecidas().filter(n => { const t = tipoDaNatureza(n); return !t || t === tipo; })
+    .map(n => `<option value="${esc(n)}">`).join('');
   abrirModal(`
     <div class="modal-header">
-      <div class="modal-title">${l ? 'Editar lançamento' : 'Novo lançamento'}<small>${rotuloMes(mesAtual)}${DB.meses[mesAtual].simulado?' · mês simulado':''}</small></div>
+      <div class="modal-title">${l ? 'Editar lançamento' : 'Novo lançamento'}<small>${nomeDoBloco(tipo)} · ${rotuloMes(mesAtual)}${DB.meses[mesAtual].simulado?' · mês simulado':''}</small></div>
       <button class="fechar" onclick="fecharModal()">×</button>
     </div>
     <div id="erro-lanc"></div>
@@ -208,20 +233,18 @@ function abrirLancamento(id, natPre, dataPre, posicao){
         <input type="date" id="f-data" class="fam-input" value="${l ? l.data : hoje}" min="${mesAtual}-01" max="${mesAtual}-31">
       </div>
       <div class="form-field">
-        <label class="form-label">Tipo</label>
-        <select id="f-tipo" class="fam-input">
-          <option value="s"${l && l.valor < 0 ? ' selected' : ''}>Saída (-)</option>
-          <option value="e"${l && l.valor >= 0 ? ' selected' : ''}>Entrada (+)</option>
-        </select>
+        <label class="form-label">Bloco</label>
+        <div style="padding:6px 0"><span class="badge ${tipo === 'entrada' ? 'badge-green' : 'badge-red'}">${tipo === 'entrada' ? 'Entrada (+)' : 'Saída (-)'}</span></div>
+        <input type="hidden" id="f-tipo" value="${tipo === 'entrada' ? 'e' : 's'}">
       </div>
       <div class="form-field full">
         <label class="form-label">Natureza / conta</label>
-        <input id="f-nat" class="fam-input" list="dl-nat" placeholder="escolha uma existente ou digite uma nova" value="${l ? esc(l.natureza) : (natPre ? esc(natPre) : '')}">
+        <input id="f-nat" class="fam-input" data-nome list="dl-nat" placeholder="escolha uma existente ou digite uma nova" value="${l ? esc(l.natureza) : (natPre ? esc(natPre) : '')}">
         <datalist id="dl-nat">${dl}</datalist>
       </div>
       <div class="form-field">
         <label class="form-label">Contraparte</label>
-        <input id="f-cp" class="fam-input" placeholder="quem pagou ou recebeu" value="${l ? esc(l.contraparte) : ''}">
+        <input id="f-cp" class="fam-input" data-nome placeholder="quem pagou ou recebeu" value="${l ? esc(l.contraparte) : ''}">
       </div>
       <div class="form-field">
         <label class="form-label">Valor (R$)</label>
@@ -229,7 +252,7 @@ function abrirLancamento(id, natPre, dataPre, posicao){
       </div>
       <div class="form-field full">
         <label class="form-label">Descritivo</label>
-        <input id="f-desc" class="fam-input" placeholder="o que é esse lançamento" value="${l ? esc(l.descritivo) : ''}">
+        <input id="f-desc" class="fam-input" data-nome placeholder="o que é esse lançamento" value="${l ? esc(l.descritivo) : ''}">
       </div>
       <div class="form-field full">
         <label class="form-label">Observação</label>
@@ -253,17 +276,30 @@ function lerValor(txt){
 
 function salvarLancamento(){
   const data = document.getElementById('f-data').value;
-  const nat  = document.getElementById('f-nat').value.trim();
-  const cp   = document.getElementById('f-cp').value.trim();
-  const desc = document.getElementById('f-desc').value.trim();
+  const antes = lancEditando ? DB.meses[mesAtual].lancamentos.find(x => x.id === lancEditando) : null;
+  /* a máscara só age no que a pessoa escreveu: abrir um lançamento antigo e
+     salvar sem mexer não pode trocar a caixa do que já estava lá */
+  const campoNome = (id, original) => {
+    const v = document.getElementById(id).value.trim();
+    return antes && v === String(original || '').trim() ? v : mascaraNome(v);
+  };
+  let nat    = campoNome('f-nat', antes && antes.natureza);
+  const cp   = campoNome('f-cp', antes && antes.contraparte);
+  const desc = campoNome('f-desc', antes && antes.descritivo);
   const obs  = document.getElementById('f-obs').value.trim();
   const tipo = document.getElementById('f-tipo').value;
   const bruto = lerValor(document.getElementById('f-valor').value);
+  /* conta que já existe vale na grafia dela: senão "TRIBUTOS E TAXAS" e
+     "Tributos e Taxas" virariam duas linhas na tabela */
+  const existente = naturezasConhecidas().find(n => normalizar(n) === normalizar(nat));
+  if (existente) nat = existente;
 
   const erros = [];
   if (!data) erros.push('informe a data');
   else if (data.slice(0,7) !== mesAtual) erros.push('a data precisa estar dentro de ' + rotuloMes(mesAtual));
   if (!nat) erros.push('informe a natureza');
+  else if (existente && tipoDaNatureza(existente) && tipoDaNatureza(existente) !== (tipo === 'e' ? 'entrada' : 'saida'))
+    erros.push('"' + esc(existente) + '" é uma conta de ' + nomeDoBloco(tipoDaNatureza(existente)) + ' · escolha uma de ' + nomeDoBloco(tipo === 'e' ? 'entrada' : 'saida'));
   if (!cp) erros.push('informe a contraparte');
   /* ZERO É NÚMERO. Um estorno que zera a linha, uma cobrança que veio e voltou,
      uma conta que existe no plano mas não teve movimento no mês: tudo isso é
@@ -399,21 +435,87 @@ const rotuloColuna = c => {
   return c.tipo === 'dif' ? 'Dif. R$' : 'Var. %';
 };
 
+/* ═══════════════ ORDENAR POR COLUNA, COMO NO EXCEL ═══════════════
+   Clicar no título de uma coluna ordena o BLOCO (Entradas ou Saídas) por ela.
+   A hierarquia nunca se desfaz: as contas se ordenam entre si, as contrapartes
+   se ordenam DENTRO da conta, e os lançamentos DENTRO da contraparte · cada
+   linha leva os valores dela junto, porque a ordem só mexe na posição.
+   Clicar de novo inverte; um terceiro clique volta à ordem de fábrica (maior
+   valor primeiro). Cada bloco tem a sua própria ordem.
+   Coluna do nome: A→Z. Coluna de valor: do menor para o maior (como o Excel);
+   nas Saídas, que são negativas, isso já põe a maior despesa no topo. Linha sem
+   valor naquela coluna vai sempre para o fim, e empate desempata pelo nome. */
+let ordemBloco = { entrada: null, saida: null };
+const idCol = c => c.tipo === 'mes' ? 'm' + c.mk : c.tipo === 'tot' ? 't' + c.tri : c.tipo;
+const cmpNome = (a, b) => String(a).localeCompare(String(b), 'pt-BR', { sensitivity: 'base', numeric: true });
+
+/* o número pelo qual a linha se ordena naquela coluna · null = sem valor.
+   `vals` é o valor por mês; mês ausente (undefined) é lançamento que não existe. */
+function chaveNum(col, vals, tipo){
+  if (col.tipo === 'mes') return vals[col.mk] === undefined ? null : vals[col.mk];
+  if (col.tipo === 'tot') {
+    const ex = col.mks.filter(mk => vals[mk] !== undefined);
+    return ex.length ? ex.reduce((s, mk) => s + vals[mk], 0) : null;
+  }
+  if (vals[compA] === undefined && vals[compB] === undefined) return null;
+  const v = variacao(vals[compA] || 0, vals[compB] || 0, tipo);
+  if (col.tipo === 'dif') return v.dif;
+  if (v.pct !== undefined) return v.pct;
+  return v.texto === 'novo' ? Infinity : (v.texto === 'zerou' ? -100 : null);
+}
+
+/* `obter(item)` devolve { nome, vals, tipo }. Sem ordem escolhida, devolve a
+   lista como veio (a ordem de fábrica). */
+function ordenar(itens, bloco, cols, obter){
+  const o = ordemBloco[bloco];
+  if (!o) return itens;
+  const col = o.id === 'nome' ? null : cols.find(c => idCol(c) === o.id);
+  if (o.id !== 'nome' && !col) return itens;          // coluna que saiu da tela
+  const arr = itens.map((it, i) => ({ it, i, x: obter(it) }));
+  arr.forEach(a => { a.k = col ? chaveNum(col, a.x.vals, a.x.tipo) : null; });
+  arr.sort((a, b) => {
+    if (!col) return o.dir * cmpNome(a.x.nome, b.x.nome) || a.i - b.i;
+    if (a.k === null && b.k === null) return a.i - b.i;
+    if (a.k === null) return 1;
+    if (b.k === null) return -1;
+    if (a.k === b.k) return cmpNome(a.x.nome, b.x.nome) || a.i - b.i;
+    return o.dir * (a.k < b.k ? -1 : 1);
+  });
+  return arr.map(a => a.it);
+}
+
+function ordenarPor(ev, bloco, id){
+  /* a alça de largura mora no mesmo título: arrastar (ou dar dois cliques para
+     voltar ao tamanho de fábrica) não pode ordenar a tabela junto */
+  if (ev && ev.target && ev.target.closest && ev.target.closest('.puxador')) return;
+  if (!cliqueDeVerdade()) return;
+  const o = ordemBloco[bloco];
+  if (!o || o.id !== id) ordemBloco[bloco] = { id, dir: 1 };
+  else if (o.dir === 1) ordemBloco[bloco] = { id, dir: -1 };
+  else ordemBloco[bloco] = null;
+  render();
+}
+const setaOrd = (bloco, id) => { const o = ordemBloco[bloco]; return o && o.id === id ? '<span class="ord-seta">' + (o.dir === 1 ? '▲' : '▼') + '</span>' : ''; };
+const attrOrd = (bloco, id) => ` data-ord="${id}" onclick="ordenarPor(event,'${bloco}','${id}')" title="Clique para ordenar ${bloco === 'entrada' ? 'as entradas' : 'as saídas'} por esta coluna"`;
+
 /* Duas linhas de cabeçalho: a de cima agrupa por trimestre, a de baixo nomeia
    cada mês. É o desenho de planilha que o CFO já lê sem manual. */
 /* Com o trimestre desligado (o padrão) é UMA linha de cabeçalho: um mês por
    coluna e pronto. Ligado, entra por cima a faixa que agrupa os meses de cada
    trimestre, e aí o cabeçalho tem duas linhas. */
 function cabecalhoTabela(cols, grupos){
+  /* O cabeçalho é a própria faixa ENTRADAS: o rótulo e os meses na mesma linha,
+     como na faixa SAÍDAS. Antes eram duas linhas (meses em cima, a faixa embaixo)
+     e sobrava um vazio acima da palavra. */
   const fim = cols.filter(c => c.tipo === 'dif' || c.tipo === 'var');
   const comFaixa = grupos.some(g => g.total);
-  const mes = c => `<th class="num${marcaPar(c)}">${rotuloColuna(c)}${puxador(letraCol(c))}</th>`;
-  const ponta = c => `<th class="num fix fix${letraCol(c)}"${comFaixa ? ' rowspan="2"' : ''}>${rotuloColuna(c)}${puxador(letraCol(c))}</th>`;
+  const mes = c => `<th class="num${marcaPar(c)}"${attrOrd('entrada', idCol(c))}>${rotuloColuna(c)}${setaOrd('entrada', idCol(c))}${puxador(letraCol(c))}</th>`;
+  const ponta = c => `<th class="num fix fix${letraCol(c)}"${comFaixa ? ' rowspan="2"' : ''}${attrOrd('entrada', idCol(c))}>${rotuloColuna(c)}${setaOrd('entrada', idCol(c))}${puxador(letraCol(c))}</th>`;
 
   if (!comFaixa)
-    return '<thead><tr><th></th>' + colsDeValor(cols).map(mes).join('') + fim.map(ponta).join('') + '</tr></thead>';
+    return '<thead><tr><th class="rot-bloco"' + attrOrd('entrada', 'nome') + '>Entradas' + setaOrd('entrada', 'nome') + '</th>' + colsDeValor(cols).map(mes).join('') + fim.map(ponta).join('') + '</tr></thead>';
 
-  let h = '<thead><tr class="faixa-tri"><th rowspan="2"></th>';
+  let h = '<thead><tr class="faixa-tri"><th class="rot-bloco" rowspan="2"' + attrOrd('entrada', 'nome') + '>Entradas' + setaOrd('entrada', 'nome') + '</th>';
   for (const g of grupos)
     h += `<th class="tri" colspan="${g.mks.length + (g.total ? 1 : 0)}">${rotuloTri(g.tk)}</th>`;
   h += fim.map(ponta).join('') + '</tr><tr>' + colsDeValor(cols).map(mes).join('');
@@ -426,20 +528,20 @@ function renderComparativo(){
 
   const linhas = linhasComparativo();
   const peso = l => Math.abs(l.vals[compB] || l.vals[compA] || 0);
-  const ent = linhas.filter(l => l.tipo === 'entrada').sort((a,b) => peso(b) - peso(a));
-  const sai = linhas.filter(l => l.tipo === 'saida').sort((a,b) => peso(b) - peso(a));
+  const porConta = l => ({ nome: l.natureza, vals: l.vals, tipo: l.tipo });
+  const ent = ordenar(linhas.filter(l => l.tipo === 'entrada').sort((a,b) => peso(b) - peso(a)), 'entrada', cols, porConta);
+  const sai = ordenar(linhas.filter(l => l.tipo === 'saida').sort((a,b) => peso(b) - peso(a)), 'saida', cols, porConta);
 
   const n = nCols(cols);
   let h = `<div class="comp-quadro" style="${estiloColunas(cols)}">` + cabecalhoIndicadores(cols) +
     `<table class="fam-table">${grade(cols)}${cabecalhoTabela(cols, grupos)}<tbody>`;
 
-  h += faixaGrupo('Entradas', null, n);
   h += ent.map(l => linhaComp(l, cols)).join('') || `<tr><td colspan="${n}" class="vazio">Sem entradas nos meses da tela.</td></tr>`;
   h += totalComp('TOTAL ENTRADAS', a => a.entradas, 'entrada', cols);
 
   h += `<tr class="respiro"><td colspan="${n}"></td></tr>`;
   /* a faixa de saídas vem longe do cabeçalho, então repete os títulos */
-  h += faixaGrupo('Saídas', cols, n);
+  h += faixaGrupo('Saídas', cols, n, 'saida');
   h += sai.map(l => linhaComp(l, cols)).join('') || `<tr><td colspan="${n}" class="vazio">Sem saídas nos meses da tela.</td></tr>`;
   h += totalComp('TOTAL SAÍDAS', a => a.saidas, 'saida', cols);
 
@@ -447,10 +549,10 @@ function renderComparativo(){
   document.getElementById('comp-corpo').innerHTML = h;
 }
 
-function faixaGrupo(rotulo, cols, n){
-  if (!cols) return `<tr class="grupo"><td colspan="${n}">${rotulo}</td></tr>`;
-  return `<tr class="grupo"><td>${rotulo}</td>` +
-    cols.map(c => `<td class="rep${c.tipo === 'dif' || c.tipo === 'var' ? ' fix fix' + letraCol(c) : ''}">${rotuloColuna(c)}</td>`).join('') + `</tr>`;
+function faixaGrupo(rotulo, cols, n, bloco){
+  if (!cols) return `<tr class="grupo" data-bloco="${bloco}"><td colspan="${n}">${rotulo}</td></tr>`;
+  return `<tr class="grupo" data-bloco="${bloco}"><td${attrOrd(bloco, 'nome')}>${rotulo}${setaOrd(bloco, 'nome')}</td>` +
+    cols.map(c => `<td class="rep${c.tipo === 'dif' || c.tipo === 'var' ? ' fix fix' + letraCol(c) : ''}"${attrOrd(bloco, idCol(c))}>${rotuloColuna(c)}${setaOrd(bloco, idCol(c))}</td>`).join('') + `</tr>`;
 }
 
 /* ═══════════════ QUADRO ESCURO DE INDICADORES ═══════════════
@@ -508,7 +610,7 @@ function linhaComp(l, cols){
   const aberta = abertasComp.has(l.natureza);
   const tag = l.interna ? ' <span class="badge badge-gray">entre contas da FAM</span>' : '';
   let h = `<tr class="linha-nat${aberta?' aberta':''}" data-ctx="natcomp" data-nat="${esc(l.natureza)}" onclick="alternarComp(this)">
-    <td><span class="seta">▶</span> <b>${esc(l.natureza)}</b>${tag}</td>
+    <td><span class="seta">▶</span> <b>${esc(l.natureza)}</b>${tag}<button type="button" class="lapis" data-escreve title="Renomear esta conta" onclick="event.stopPropagation();renomearConta(this.closest('tr').dataset.nat)"></button></td>
     ${colsDeValor(cols).map(c => celComp(valorCol(c, l.vals), marcaPar(c))).join('')}
     <td class="num fix fixD${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
     <td class="num fix fixV">${selo(v)}</td>
@@ -574,7 +676,7 @@ function gavetaComp(l, cols){
   ms.forEach(mk => porMes[mk] = porCP(mk));
   const chaves = [...new Set(ms.flatMap(mk => [...porMes[mk].keys()]))];
 
-  const linhas = chaves.map(k => {
+  let linhas = chaves.map(k => {
     const vals = {};
     let nome = k;
     for (const mk of ms) {
@@ -584,11 +686,12 @@ function gavetaComp(l, cols){
     }
     return { chave: k, nome, vals, v: variacao(vals[compA] || 0, vals[compB] || 0, l.tipo) };
   }).sort((x,y) => Math.abs(y.vals[compB] || y.vals[compA] || 0) - Math.abs(x.vals[compB] || x.vals[compA] || 0));
+  linhas = ordenar(linhas, l.tipo, cols, x => ({ nome: x.nome, vals: x.vals, tipo: l.tipo }));
 
   const corpo = linhas.map(x => {
     const aberta = abertasCP.has(idCP(l.natureza, x.chave));
     let t = `<tr class="cp n2${aberta?' aberta':''}" data-ctx="cpcomp" data-nat="${esc(l.natureza)}" data-cp="${esc(x.chave)}" onclick="alternarCP(this)">
-      <td class="rot"><span class="seta">▶</span> <b>${esc(x.nome)}</b></td>
+      <td class="rot"><span class="seta">▶</span> <b>${esc(x.nome)}</b><button type="button" class="lapis" data-escreve title="Renomear esta contraparte" onclick="event.stopPropagation();renomearContraparte(this.closest('tr'))"></button></td>
       ${colsDeValor(cols).map(c => celComp(valorCol(c, x.vals), marcaPar(c))).join('')}
       <td class="num fix fixD${clsNeg(x.v.dif)}">${fmtDif(x.v.dif)}</td>
       <td class="num fix fixV">${selo(x.v)}</td>
@@ -623,8 +726,14 @@ function lancamentosDaCP(nat, chave, tipo, nome, cols){
     }
   }
 
-  const linhas = [...par.values()].sort((x, y) =>
+  let linhas = [...par.values()].sort((x, y) =>
     (x.ref.data.slice(8) + x.ref.descritivo).localeCompare(y.ref.data.slice(8) + y.ref.descritivo));
+  /* o mês em que o lançamento não existe fica sem valor (não é zero) */
+  linhas = ordenar(linhas, tipo, cols, x => {
+    const vals = {};
+    ms.forEach(mk => { vals[mk] = x.por[mk] ? x.por[mk].valor : undefined; });
+    return { nome: x.ref.descritivo, vals, tipo };
+  });
 
   /* A célula de valor se edita com dois cliques e carrega o mês dela: o botão
      direito e a edição agem no mês onde o clique caiu, sem perguntar nada.
@@ -661,7 +770,7 @@ function lancamentosDaCP(nat, chave, tipo, nome, cols){
        cada linha, dizer que ali tem data era repetir o óbvio. */
     return `<tr class="lanc n3" data-ctx="lancpar" data-nat="${esc(nat)}" data-cp="${esc(chave)}" data-ids="${ids}">
       <td class="rot" data-edit="desc" data-texto="${esc(x.ref.descritivo)}" title="dois cliques para corrigir a descrição aqui mesmo">
-        <span class="dia">${datas}</span> ${esc(x.ref.descritivo)}</td>
+        <span class="dia">${datas}</span> ${esc(x.ref.descritivo)}<button type="button" class="lapis" data-escreve title="Editar o lançamento inteiro" onclick="event.stopPropagation();editarLinhaLanc(this,event)"></button></td>
       ${celulas}
       <td class="num fix fixD${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
       <td class="num fix fixV">${selo(v)}</td>
