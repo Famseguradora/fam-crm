@@ -42,6 +42,7 @@
       <button class="btn-secondary" data-escreve onclick="abrirNovaNatureza()">＋ Nova natureza</button>
       <button class="btn-secondary" data-escreve onclick="abrirNovoMes()">📅 Novo mês</button>
       <button id="btn-sim" class="btn-secondary" data-escreve onclick="abrirSimulador()">🧪 Simulador</button>
+      <button class="btn-secondary" onclick="alternarResumoGerencial()" title="Operacional × não operacional, nos dois lados do caixa · a janela se arrasta">📊 Resumo gerencial</button>
       <button class="btn-secondary" onclick="imprimirTela()">🖨️ PDF</button>
       <button class="link-fraco" data-escreve onclick="abrirImportacao()" title="Só para quem prefere importar o extrato do banco em vez de digitar">Importar extrato</button>
     </span>
@@ -63,6 +64,11 @@
       lançam aquele mesmo lançamento no mês que ainda não o teve. Tudo se desfaz com <b>Ctrl+Z</b>.
       Conta que existe num mês e não no outro <b>continua aparecendo</b>, com “zerou” ou “novo”: sumir da tabela é o que esconde informação.</p>
       <p><b>Para lançar:</b> botão direito <b>dentro de Entradas ou de Saídas</b> · o lançamento já nasce do lado certo.</p>
+      <p><b>Operacional ou não operacional.</b> Clique com o <b>botão direito</b> numa conta, numa empresa ou num lançamento e
+      escolha em "Classificação gerencial". A conta passa a etiqueta para o que está embaixo dela, e a empresa ou o lançamento
+      podem discordar quando for o caso. Entrada ou saída o sistema já sabe pelo sinal do valor, então não há o que escolher ali.
+      O botão <b>📊 Resumo gerencial</b>, aqui em cima, soma as quatro caixas que nascem disso e mostra o que ainda falta classificar.
+      Quem decide é o CFO: o sistema herda, nunca chuta.</p>
       <p><b>Para ordenar:</b> clique no título de uma coluna (ENTRADAS, SAÍDAS ou um mês). As contas, as empresas e os lançamentos
       se ordenam dentro dos seus grupos, com os valores acompanhando cada linha. Clique de novo para inverter, e uma terceira vez para voltar.</p>
       <p><b>Para editar:</b> o lápis ✎ ao lado de uma conta, empresa ou lançamento renomeia ou abre o lançamento inteiro. O nome novo vale na Principal e nas simulações.
@@ -113,6 +119,30 @@
     <div class="hp-marca">HEWLETT<span>·</span>PACKARD</div>
   </div>
   <div class="hp-espia" id="hp-espia"></div>
+</div>
+
+<!-- ═══ Resumo gerencial · janela arrastável ═══
+     Fica FORA de #modais de propósito: modal é remontado a cada abertura, e
+     quem se arrasta precisa de um elemento estável, com id fixo, para a
+     mecânica de data-arrasta e para lembrar onde foi largada.
+     O fundo fecha ao clique, e só se o clique NASCEU nele (cliqueNasceuEm):
+     largar aqui o fim de um arrasto não pode fechar a janela. -->
+<div class="rg-fundo" id="rg-fundo" onclick="if(cliqueNasceuEm(this))fecharResumoGerencial()"></div>
+<div class="rg-janela" id="rg-janela" role="dialog" aria-label="Resumo gerencial" data-encaixa="1">
+  <div class="rg-barra" data-arrasta="rg-janela" title="arraste daqui para mover a janela">
+    <span class="rg-pega" aria-hidden="true">⣿</span>
+    <div class="rg-tit">Resumo gerencial<small id="rg-sub">-</small></div>
+    <button class="rg-x" onclick="fecharResumoGerencial()" title="Fechar (Esc)">×</button>
+  </div>
+  <div class="rg-corpo" id="rg-corpo"></div>
+  <div class="rg-rodape">
+    <span class="rg-dica">Arraste pela barra azul · Esc ou clique fora fecha</span>
+    <span class="rg-acoes">
+      <button class="rg-link" onclick="copiarResumoGerencial()" title="cola direto no Excel">Copiar para o Excel</button>
+      <button class="rg-link" onclick="imprimirResumoGerencial()" title="manda este resumo para a impressora">Imprimir</button>
+      <button class="rg-link" onclick="imprimirResumoGerencial()" title="no diálogo que abrir, escolha Salvar como PDF">PDF</button>
+    </span>
+  </div>
 </div>
 
 <div id="modais"></div>

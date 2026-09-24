@@ -187,6 +187,7 @@ function salvarNatureza(){
 function excluirNaturezaVazia(nat){
   if (!confirm('Excluir a natureza "' + nat + '"?\nEla não tem nenhum lançamento nos dois períodos.')) return;
   DB.naturezas = (DB.naturezas || []).filter(n => n.nome !== nat);
+  gerEsquecerConta(nat);
   auditar('exclusao', 'Natureza excluída', { onde: nat, de: 'natureza sem movimento', para: 'fora do plano de contas' });
   abertasComp.delete(nat);
   gravar(); render();
@@ -390,6 +391,29 @@ function linhasComparativo(){
   return linhas;
 }
 
+/* ═══ A VARIAÇÃO DE UM RESULTADO ═══
+   variacao() trabalha em MÓDULO, e para entrada e saída isso é o certo: "saída
+   subiu 8%" quer dizer que se gastou mais, e o sinal de menos é só a convenção
+   da coluna. Só que RESULTADO não é entrada nem saída · ele pode ser positivo
+   ou negativo, e o módulo mente: um resultado que foi de -18 mil para -21 mil
+   tem |B| maior que |A|, então saía como "▲ 16,7%" EM VERDE, dizendo que
+   melhorou, quando ficou pior. Aqui o melhor é sempre o maior, com sinal.
+
+   Quando o resultado troca de sinal, percentual não significa nada (de +10 mil
+   para -5 mil não são "-150%" de coisa nenhuma): a tela diz o que aconteceu,
+   por escrito. */
+function variacaoResultado(va, vb){
+  const dif = vb - va;
+  if (Math.abs(va) < 0.005 && Math.abs(vb) < 0.005) return { dif: 0, texto: '-', classe: 'badge-gray' };
+  if (Math.abs(dif) < 0.005) return { dif: 0, texto: 'igual', classe: 'badge-gray' };
+  const classe = dif > 0 ? 'badge-green' : 'badge-red';
+  if (Math.abs(va) < 0.005) return { dif, texto: 'novo', classe };
+  if (Math.abs(vb) < 0.005) return { dif, texto: 'zerou', classe };
+  if ((va > 0) !== (vb > 0)) return { dif, texto: vb > 0 ? 'virou positivo' : 'virou negativo', classe };
+  const pct = (vb / va - 1) * 100 * (va < 0 ? -1 : 1);
+  return { dif, texto: (pct >= 0 ? '▲ ' : '▼ ') + Math.abs(pct).toFixed(1).replace('.', ',') + '%', classe, pct };
+}
+
 /* Variação sempre em módulo: para saída, "+" é gastar mais. A cor é por
    sentido do negócio, não por sinal · saída que sobe é vermelha. */
 function variacao(va, vb, tipo){
@@ -415,6 +439,17 @@ const celComp = (v, extra) => v
   : `<td class="num${extra || ''}"><span style="color:var(--soft)">-</span></td>`;
 
 const selo = v => `<span class="badge var ${v.classe}">${v.texto}</span>`;
+
+/* ═══════════════ O SELO DA CLASSIFICAÇÃO GERENCIAL ═══════════════
+   A conta mostra a dela sempre que tem uma. A contraparte e o lançamento SÓ
+   quando têm etiqueta PRÓPRIA, que é quando discordam de quem está em cima ·
+   repetir a mesma palavra nos três níveis encheria a tela sem dizer nada, e o
+   Marco pediu explicitamente que isso não polua a interface.
+   Conta sem etiqueta nenhuma não ganha aviso vermelho na linha: quem cobra a
+   classificação que falta é o Resumo gerencial, num lugar só. */
+const seloGer = (g, titulo) => g
+  ? ` <span class="ger ${g}" title="${esc(titulo || rotuloGer(g))}">${g === GER_OP ? 'Oper.' : 'Não oper.'}</span>`
+  : '';
 
 /* ═══════════════ A GRADE DE COLUNAS ═══════════════
    Nome · um mês por coluna · o total do trimestre no fim de cada grupo ·
@@ -559,37 +594,44 @@ function faixaGrupo(rotulo, cols, n, bloco){
    Mesma grade da tabela de baixo. Saldo inicial de um trimestre é o do
    primeiro mês dele e o saldo apurado é o do último · somar saldo daria um
    número que não existe em lugar nenhum. */
+/* O valor de uma coluna do quadro azul. Saldo de trimestre é o do primeiro ou
+   do último mês dele · somar saldo daria um número que não existe em lugar
+   nenhum. Estava dentro de cabecalhoIndicadores; saiu para cá porque o Resumo
+   gerencial monta o MESMO quadro, e duas cópias desta conta seria o jeito mais
+   fácil de os dois quadros discordarem um do outro. */
+function ccPegar(ap, col, campo, modo){
+  if (col.tipo === 'mes') return ap[col.mk] ? ap[col.mk][campo] : 0;
+  const mks = col.mks;
+  if (modo === 'primeiro') return ap[mks[0]][campo];
+  if (modo === 'ultimo')   return ap[mks[mks.length - 1]][campo];
+  return mks.reduce((s, mk) => s + ap[mk][campo], 0);
+}
+
+/* uma linha do quadro azul, na mesma grade de colunas da tabela de baixo */
+function ccLinha(ap, cols, rot, campo, modo, tipo, opts){
+  opts = opts || {};
+  const va = ap[compA] ? ap[compA][campo] : 0, vb = ap[compB] ? ap[compB][campo] : 0;
+  const v = variacao(va, vb, tipo);
+  const cel = col => {
+    const val = ccPegar(ap, col, campo, modo);
+    const txt = opts.semRS ? String(val) : fmt(val);
+    /* cor por sentido do negócio · negativo é vermelho, sempre, por cima */
+    const cor = ehNeg(val) ? ' r' : (opts.cor ? ' ' + opts.cor : '');
+    return `<div class="cc-num${cor}${marcaPar(col)}">${txt}</div>`;
+  };
+  return `<div class="cc-linha${opts.forte ? ' forte' : ''}${opts.classe ? ' ' + opts.classe : ''}">
+    <div class="cc-rot">${rot}</div>
+    ${colsDeValor(cols).map(cel).join('')}
+    <div class="cc-dif${ehNeg(v.dif) ? ' r' : ''}">${fmtDif(v.dif, opts.semRS)}</div>
+    <div class="cc-var">${selo(v)}</div>
+  </div>`;
+}
+
 function cabecalhoIndicadores(cols){
   const ms = mesesNaTela();
   const ap = {};
   ms.forEach(mk => ap[mk] = apurar(mk));
-
-  const pegar = (col, campo, modo) => {
-    if (col.tipo === 'mes') return ap[col.mk] ? ap[col.mk][campo] : 0;
-    const mks = col.mks;
-    if (modo === 'primeiro') return ap[mks[0]][campo];
-    if (modo === 'ultimo')   return ap[mks[mks.length - 1]][campo];
-    return mks.reduce((s, mk) => s + ap[mk][campo], 0);
-  };
-
-  const linha = (rot, campo, modo, tipo, opts) => {
-    opts = opts || {};
-    const va = ap[compA] ? ap[compA][campo] : 0, vb = ap[compB] ? ap[compB][campo] : 0;
-    const v = variacao(va, vb, tipo);
-    const cel = col => {
-      const val = pegar(col, campo, modo);
-      const txt = opts.semRS ? String(val) : fmt(val);
-      /* cor por sentido do negócio · negativo é vermelho, sempre, por cima */
-      const cor = ehNeg(val) ? ' r' : (opts.cor ? ' ' + opts.cor : '');
-      return `<div class="cc-num${cor}${marcaPar(col)}">${txt}</div>`;
-    };
-    return `<div class="cc-linha${opts.forte ? ' forte' : ''}">
-      <div class="cc-rot">${rot}</div>
-      ${colsDeValor(cols).map(cel).join('')}
-      <div class="cc-dif${ehNeg(v.dif) ? ' r' : ''}">${fmtDif(v.dif, opts.semRS)}</div>
-      <div class="cc-var">${selo(v)}</div>
-    </div>`;
-  };
+  const linha = (rot, campo, modo, tipo, opts) => ccLinha(ap, cols, rot, campo, modo, tipo, opts);
 
   return `<div class="cc">
     <div class="cc-linha cc-topo">
@@ -605,12 +647,236 @@ function cabecalhoIndicadores(cols){
   </div>`;
 }
 
+/* ═══════════════ RESUMO GERENCIAL ═══════════════
+   As quatro caixas que só existem depois que o CFO classificou: ENTRADA e
+   SAÍDA (que o sistema já sabia pelo sinal do valor) cruzadas com OPERACIONAL
+   e NÃO OPERACIONAL (que só ele diz).
+
+   Os números saem de apurar(), exatamente de onde saem os da tela. Aqui não se
+   recalcula nada, só se arruma: TOTAL ENTRADAS aqui e TOTAL ENTRADAS lá
+   embaixo são o mesmo campo, então não há como divergirem.
+
+   ── POR QUE É UMA JANELA, E NÃO UM MODAL ──
+   Ela se arrasta pela barra do título (a mesma mecânica da HP-12C) e lembra
+   onde foi largada. Um resumo de diretoria se lê ao lado da linha que está
+   sendo conferida, não preso no meio da tela. Fecha no ×, no Esc e clicando
+   fora · três saídas, porque janela que só fecha num lugar irrita.
+
+   ── O DESENHO ──
+   A primeira versão empilhou tudo dentro do quadro azul, com a faixa de meses
+   repetida três vezes, e ficou ilegível. Aqui o desenho é o DA PRÓPRIA TELA de
+   acompanhamento, que o CFO já lê sem manual: os números que se decide em cima
+   ficam grandes no quadro azul, e o detalhe vem embaixo na .fam-table de
+   sempre, com as faixas ENTRADAS / SAÍDAS / RESULTADO.
+
+   A linha SEM CLASSIFICAÇÃO aparece só quando houver dinheiro nela, em âmbar.
+   Sem ela, "Operacionais + Não operacionais" não fecharia com o TOTAL, e o
+   quadro estaria mentindo em silêncio. */
+let resumoAberto = false;
+
+function abrirResumoGerencial(){
+  montarResumoGerencial();
+  document.getElementById('rg-fundo').classList.add('aberta');
+  document.getElementById('rg-janela').classList.add('aberta');
+  resumoAberto = true;
+  /* nasce centrada e alta na tela; depois, onde a pessoa tiver largado */
+  restaurarLugar('rg-janela', el => {
+    const l = el.getBoundingClientRect();
+    return { x: Math.max(8, Math.round((window.innerWidth - l.width) / 2)), y: 26 };
+  });
+}
+
+function fecharResumoGerencial(){
+  document.getElementById('rg-fundo').classList.remove('aberta');
+  document.getElementById('rg-janela').classList.remove('aberta');
+  resumoAberto = false;
+}
+
+function alternarResumoGerencial(){ resumoAberto ? fecharResumoGerencial() : abrirResumoGerencial(); }
+
+/* Esc fecha. Vai em captura e só age com a janela aberta, para não roubar o
+   Esc de quem está por cima: com um menu de botão direito aberto, o Esc dele
+   já parou o evento antes de chegar aqui. */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !resumoAberto) return;
+  if (document.getElementById('ctx-menu')) return;      // o menu fecha primeiro
+  if (document.querySelector('#modais .modal-overlay')) return;   // e o modal também
+  fecharResumoGerencial();
+});
+
+/* ── o miolo ── */
+function montarResumoGerencial(){
+  const { cols } = colunasDaTela();
+  const ms = mesesNaTela();
+  const ap = {};
+  ms.forEach(mk => ap[mk] = apurar(mk));
+  const vcols = colsDeValor(cols);
+  const nCol = vcols.length + 3;                   // nome + valores + Dif. + Var.
+  const A = ap[compA] || {}, B = ap[compB] || {};
+  const tem = campo => ms.some(mk => Math.abs(ap[mk][campo]) >= 0.005);
+
+  document.getElementById('rg-sub').textContent =
+    nomeDaAba() + ' · ' + (ms.length > 2 ? ms.length + ' meses na tela · ' : '') +
+    'diferença ' + rotuloMes(compA) + ' → ' + rotuloMes(compB);
+
+  /* ── os três números grandes, do mês de referência (o segundo do par) ── */
+  const kpi = (rot, campo, forte) => {
+    const v = variacaoResultado(A[campo] || 0, B[campo] || 0);
+    const val = B[campo] || 0;
+    return `<div class="rg-kpi${forte ? ' forte' : ''}">
+      <div class="rg-kpi-rot">${rot}</div>
+      <div class="rg-kpi-num${ehNeg(val) ? ' r' : ''}">${fmt(val)}</div>
+      <div class="rg-kpi-var">${selo(v)}<span>ante ${rotuloCurto(compA)}</span></div>
+    </div>`;
+  };
+
+  /* ── de onde vem e para onde vai, em proporção · é a leitura que o resumo
+       existe para dar: quanto da movimentação é da operação ── */
+  const barra = (rot, op, nop, nc) => {
+    const tot = Math.abs(op) + Math.abs(nop) + Math.abs(nc);
+    if (tot < 0.005)
+      return `<div class="rg-comp-linha"><span class="rg-comp-rot">${rot}</span>
+        <span class="rg-comp-vazio">sem movimento em ${rotuloCurto(compB)}</span></div>`;
+    const pct = x => (Math.abs(x) / tot) * 100;
+    const txt = x => pct(x).toFixed(1).replace('.', ',') + '%';
+    const fatia = (x, cls) => pct(x) > 0 ? `<i class="${cls}" style="width:${pct(x)}%"></i>` : '';
+    const leg = (x, cls, nome) => Math.abs(x) >= 0.005 ? `<b class="${cls}"></b>${txt(x)} ${nome}` : '';
+    return `<div class="rg-comp-linha">
+      <span class="rg-comp-rot">${rot}</span>
+      <span class="rg-comp-barra">${fatia(op, 'rg-op')}${fatia(nop, 'rg-nop')}${fatia(nc, 'rg-nc')}</span>
+      <span class="rg-comp-leg">${leg(op, 'rg-op', 'operacional')}${leg(nop, 'rg-nop', 'não operacional')}${leg(nc, 'rg-nc', 'sem classificação')}</span>
+    </div>`;
+  };
+
+  /* ── uma linha da tabela · mesma grade de colunas da tela de trás ── */
+  /* `tipo` é 'entrada' ou 'saida' (o mesmo critério da tela de trás) ou
+     'resultado', que compara com sinal · ver variacaoResultado */
+  const lin = (rot, campo, tipo, cls) => {
+    const v = tipo === 'resultado'
+      ? variacaoResultado(A[campo] || 0, B[campo] || 0)
+      : variacao(A[campo] || 0, B[campo] || 0, tipo);
+    return `<tr class="${cls || 'rg-nivel'}">
+      <td>${rot}</td>
+      ${vcols.map(c => {
+        const val = ccPegar(ap, c, campo, 'soma');
+        return `<td class="num${clsNeg(val)}">${fmt(val)}</td>`;
+      }).join('')}
+      <td class="num${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
+      <td class="num">${selo(v)}</td>
+    </tr>`;
+  };
+  const faixa = rot => `<tr class="grupo"><td colspan="${nCol}">${rot}</td></tr>`;
+
+  const corpo =
+    faixa('Entradas') +
+    lin('Operacionais', 'entOp', 'entrada') +
+    lin('Não operacionais', 'entNop', 'entrada') +
+    (tem('entSem') ? lin('Sem classificação', 'entSem', 'entrada', 'rg-nivel rg-falta-linha') : '') +
+    lin('Total de entradas', 'entradas', 'entrada', 'subtotal') +
+    faixa('Saídas') +
+    lin('Operacionais', 'saiOp', 'saida') +
+    lin('Não operacionais', 'saiNop', 'saida') +
+    (tem('saiSem') ? lin('Sem classificação', 'saiSem', 'saida', 'rg-nivel rg-falta-linha') : '') +
+    lin('Total de saídas', 'saidas', 'saida', 'subtotal') +
+    faixa('Resultado') +
+    lin('Resultado operacional', 'gerResOp', 'resultado') +
+    lin('Resultado não operacional', 'gerResNop', 'resultado') +
+    (tem('gerResSem') ? lin('Resultado sem classificação', 'gerResSem', 'resultado', 'rg-nivel rg-falta-linha') : '') +
+    lin('Resultado do mês', 'resultado', 'resultado', 'subtotal');
+
+  const faltam = contasSemClassificacao();
+  const pendencia = faltam.length
+    ? `<div class="rg-aviso">
+         <b>${faltam.length} conta${faltam.length === 1 ? '' : 's'} ainda sem classificação gerencial.</b>
+         O sistema não escolhe por você: clique com o botão direito na conta, na tela de trás, e diga
+         se ela é operacional ou não.
+         <div class="lista">${esc(faltam.slice(0, 18).join(' · '))}${faltam.length > 18 ? ' · e mais ' + (faltam.length - 18) : ''}</div>
+       </div>`
+    : `<div class="rg-ok">Todas as contas dos meses na tela estão classificadas.</div>`;
+
+  document.getElementById('rg-corpo').innerHTML = `
+    <div class="rg-so-papel" id="rg-papel"></div>
+    <div class="rg-kpis">
+      ${kpi('Resultado operacional', 'gerResOp')}
+      ${kpi('Resultado não operacional', 'gerResNop')}
+      ${kpi('Resultado do mês', 'resultado', true)}
+    </div>
+    <div class="rg-comp">
+      <div class="rg-comp-tit">Composição de ${rotuloMes(compB)}</div>
+      ${barra('Entradas', B.entOp || 0, B.entNop || 0, B.entSem || 0)}
+      ${barra('Saídas', B.saiOp || 0, B.saiNop || 0, B.saiSem || 0)}
+    </div>
+    <div class="fam-table-wrap">
+      <table class="fam-table">
+        <thead><tr>
+          <th>Movimentação</th>
+          ${vcols.map(c => `<th class="num">${rotuloColuna(c)}</th>`).join('')}
+          <th class="num">Dif. R$</th><th class="num">Var. %</th>
+        </tr></thead>
+        <tbody>${corpo}</tbody>
+      </table>
+    </div>
+    ${pendencia}`;
+}
+
+/* No papel a janela vira folha (ver o bloco imprimindo-resumo no CSS). O
+   cabeçalho com data e responsável só existe aqui: quem recebe a folha impressa
+   não tem a tela do lado para saber de quando ela é. */
+function imprimirResumoGerencial(){
+  if (!resumoAberto) abrirResumoGerencial();
+  const papel = document.getElementById('rg-papel');
+  if (papel) papel.innerHTML = cabecalhoImpressao('Resumo gerencial',
+    nomeDaAba() + ' · ' + mesesNaTela().map(rotuloCurto).join(' · ') +
+    ' · diferença ' + rotuloMes(compA) + ' → ' + rotuloMes(compB) +
+    (mesesNaTela().some(mk => DB.meses[mk].simulado) ? ' · contém mês simulado' : ''));
+  document.body.classList.add('imprimindo-resumo');
+  window.print();
+  setTimeout(() => document.body.classList.remove('imprimindo-resumo'), 600);
+}
+
+/* o mesmo resumo em texto, colável no Excel · os números vêm de apurar(), não
+   de raspar a tela, senão a cópia poderia divergir do que está à vista */
+function copiarResumoGerencial(){
+  const ms = mesesNaTela();
+  const ap = {};
+  ms.forEach(mk => ap[mk] = apurar(mk));
+  const A = ap[compA] || {}, B = ap[compB] || {};
+  const l = (rot, campo, tipo) => {
+    const v = tipo === 'resultado'
+      ? variacaoResultado(A[campo] || 0, B[campo] || 0)
+      : variacao(A[campo] || 0, B[campo] || 0, tipo);
+    return [rot, ...ms.map(mk => valorExcel(ap[mk][campo])), valorExcel(v.dif), v.texto].join('\t');
+  };
+  const linhas = [
+    ['Resumo gerencial', ...ms.map(rotuloCurto), 'Dif. R$', 'Var. %'].join('\t'),
+    'ENTRADAS',
+    l('Entradas operacionais', 'entOp', 'entrada'),
+    l('Entradas não operacionais', 'entNop', 'entrada'),
+    l('Entradas sem classificação', 'entSem', 'entrada'),
+    l('TOTAL ENTRADAS', 'entradas', 'entrada'),
+    'SAÍDAS',
+    l('Saídas operacionais', 'saiOp', 'saida'),
+    l('Saídas não operacionais', 'saiNop', 'saida'),
+    l('Saídas sem classificação', 'saiSem', 'saida'),
+    l('TOTAL SAÍDAS', 'saidas', 'saida'),
+    'RESULTADO',
+    l('Resultado operacional', 'gerResOp', 'resultado'),
+    l('Resultado não operacional', 'gerResNop', 'resultado'),
+    l('Resultado sem classificação', 'gerResSem', 'resultado'),
+    l('RESULTADO DO MÊS', 'resultado', 'resultado'),
+  ];
+  copiar(linhas.join('\n'), 'Resumo gerencial copiado. Cole no Excel com Ctrl+V.');
+}
+
 function linhaComp(l, cols){
   const v = variacao(l.va, l.vb, l.tipo);
   const aberta = abertasComp.has(l.natureza);
   const tag = l.interna ? ' <span class="badge badge-gray">entre contas da FAM</span>' : '';
+  const g = gerDaConta(l.natureza);
+  const tagGer = seloGer(g, 'Classificação gerencial desta conta: ' + rotuloGer(g)
+    + '. Os lançamentos dela herdam, menos os que tiverem etiqueta própria.');
   let h = `<tr class="linha-nat${aberta?' aberta':''}" data-ctx="natcomp" data-nat="${esc(l.natureza)}" onclick="alternarComp(this)">
-    <td><span class="seta">▶</span> <b>${esc(l.natureza)}</b>${tag}<button type="button" class="lapis" data-escreve title="Renomear esta conta" onclick="event.stopPropagation();renomearConta(this.closest('tr').dataset.nat)"></button></td>
+    <td><span class="seta">▶</span> <b>${esc(l.natureza)}</b>${tag}${tagGer}<button type="button" class="lapis" data-escreve title="Renomear esta conta" onclick="event.stopPropagation();renomearConta(this.closest('tr').dataset.nat)"></button></td>
     ${colsDeValor(cols).map(c => celComp(valorCol(c, l.vals), marcaPar(c))).join('')}
     <td class="num fix fixD${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
     <td class="num fix fixV">${selo(v)}</td>
@@ -691,7 +957,7 @@ function gavetaComp(l, cols){
   const corpo = linhas.map(x => {
     const aberta = abertasCP.has(idCP(l.natureza, x.chave));
     let t = `<tr class="cp n2${aberta?' aberta':''}" data-ctx="cpcomp" data-nat="${esc(l.natureza)}" data-cp="${esc(x.chave)}" onclick="alternarCP(this)">
-      <td class="rot"><span class="seta">▶</span> <b>${esc(x.nome)}</b><button type="button" class="lapis" data-escreve title="Renomear esta contraparte" onclick="event.stopPropagation();renomearContraparte(this.closest('tr'))"></button></td>
+      <td class="rot"><span class="seta">▶</span> <b>${esc(x.nome)}</b>${seloGer(gerDaCP(l.natureza, x.chave), 'Esta contraparte tem classificação própria: ' + rotuloGer(gerDaCP(l.natureza, x.chave)))}<button type="button" class="lapis" data-escreve title="Renomear esta contraparte" onclick="event.stopPropagation();renomearContraparte(this.closest('tr'))"></button></td>
       ${colsDeValor(cols).map(c => celComp(valorCol(c, x.vals), marcaPar(c))).join('')}
       <td class="num fix fixD${clsNeg(x.v.dif)}">${fmtDif(x.v.dif)}</td>
       <td class="num fix fixV">${selo(x.v)}</td>
@@ -763,6 +1029,11 @@ function lancamentosDaCP(nat, chave, tipo, nome, cols){
     /* que lançamento é este em cada mês · a correção da descrição anda em
        todos eles de uma vez, senão o par se desfaz na hora */
     const ids = ms.filter(mk => x.por[mk]).map(mk => mk + '|' + x.por[mk].id).join(';');
+    /* a mesma linha pode existir em vários meses · o selo só aparece quando
+       TODOS eles carregam a mesma etiqueta própria, senão ele diria de um mês
+       uma coisa que não vale para o outro, na mesma linha */
+    const gs = ms.filter(mk => x.por[mk]).map(mk => x.por[mk].ger || null);
+    const gLanc = gs.length && gs.every(z => z && z === gs[0]) ? gs[0] : null;
     const celulas = colsDeValor(cols).map(c =>
       c.tipo === 'mes' ? cel(x.por[c.mk], c.mk, x.ref) : celComp(valorCol(c, vals), ' tot')).join('');
     /* A data vem NA FRENTE do descritivo, na mesma linha. O rótulo "Data /
@@ -770,7 +1041,7 @@ function lancamentosDaCP(nat, chave, tipo, nome, cols){
        cada linha, dizer que ali tem data era repetir o óbvio. */
     return `<tr class="lanc n3" data-ctx="lancpar" data-nat="${esc(nat)}" data-cp="${esc(chave)}" data-ids="${ids}">
       <td class="rot" data-edit="desc" data-texto="${esc(x.ref.descritivo)}" title="dois cliques para corrigir a descrição aqui mesmo">
-        <span class="dia">${datas}</span> ${esc(x.ref.descritivo)}<button type="button" class="lapis" data-escreve title="Editar o lançamento inteiro" onclick="event.stopPropagation();editarLinhaLanc(this,event)"></button></td>
+        <span class="dia">${datas}</span> ${esc(x.ref.descritivo)}${seloGer(gLanc, 'Este lançamento tem classificação própria: ' + rotuloGer(gLanc))}<button type="button" class="lapis" data-escreve title="Editar o lançamento inteiro" onclick="event.stopPropagation();editarLinhaLanc(this,event)"></button></td>
       ${celulas}
       <td class="num fix fixD${clsNeg(v.dif)}">${fmtDif(v.dif)}</td>
       <td class="num fix fixV">${selo(v)}</td>

@@ -366,6 +366,9 @@ function renomearConta(nat){
       INTERNAS[i] = novo;
       REGRAS_FABRICA.forEach(r => { if (r.natureza === nat) r.natureza = novo; });
     }
+    /* a etiqueta gerencial anda junto com o nome · renomear uma conta não
+       pode desclassificá-la sem ninguém pedir */
+    gerRenomearConta(nat, novo);
     abertasComp.delete(nat); abertasComp.add(novo); abertasCP.clear();
     auditar('alteracao', 'Conta renomeada', { onde: n + ' lançamento(s)', de: nat, para: novo });
     gravar(); fecharModal(); render();
@@ -389,6 +392,7 @@ function renomearContraparte(tr){
     const ls = alvo(true);
     if (ls.every(l => l.contraparte === novo)) { fecharModal(); return ''; }
     ls.forEach(l => { l.contraparte = novo; });
+    gerRenomearCP(nat, chave, novo);
     abertasCP.clear();
     auditar('alteracao', 'Contraparte renomeada', { onde: nat + ' · ' + alvo().length + ' lançamento(s)', de: atual, para: novo });
     gravar(); fecharModal(); render();
@@ -674,6 +678,74 @@ function abrirCtx(x, y, titulo, itens, alvo){
   });
 }
 
+/* ═══════════════ CLASSIFICAÇÃO GERENCIAL, NO BOTÃO DIREITO ═══════════════
+   Duas opções, as mesmas nos três níveis. Entrada ou saída ninguém escolhe
+   aqui: o sinal do valor já resolveu isso, e é dele que saem as quatro caixas
+   do resumo. O item de cima não é botão, é o título da seção · este menu não
+   tem submenu, e inventar um só para duas opções seria mais mecanismo do que
+   a coisa merece.
+   `proprio` é a etiqueta desta linha; `herdado` é a que ela pegaria de quem
+   está em cima. Ver as duas é o que deixa claro se tirar a própria devolve a
+   linha para a conta ou a deixa sem classificação nenhuma. */
+function itensGer(proprio, herdado, aplicar){
+  const marca = g => proprio === g ? '✔️' : '🏷️';
+  const itens = [
+    { ic:'🏷️', t:'Classificação gerencial', off: true },
+    { ic: marca(GER_OP),  t:'Operacional',     faz: () => aplicar(GER_OP) },
+    { ic: marca(GER_NOP), t:'Não operacional', faz: () => aplicar(GER_NOP) },
+  ];
+  if (proprio)
+    itens.push({ ic:'↩️', t: herdado ? 'Voltar a herdar · ' + rotuloGer(herdado) : 'Tirar a classificação',
+                 faz: () => aplicar(null) });
+  else
+    itens.push({ ic:'💡', t: herdado ? 'Herdando · ' + rotuloGer(herdado) : 'Sem classificação', off: true });
+  return itens;
+}
+
+function classificarConta(nat, g){
+  if (!podeMexer()) return;
+  const antes = gerDaConta(nat);
+  if (antes === (g || null)) return;
+  gravarGer('conta', normalizar(nat), g);
+  auditar('alteracao', 'Classificação gerencial da conta',
+    { onde: nat, de: rotuloGer(antes), para: rotuloGer(g) });
+  gravar(); render();
+  flash(g ? '"' + nat + '" é ' + rotuloGer(g).toLowerCase() +
+            '. Os lançamentos dela herdam, menos os que tiverem etiqueta própria.'
+          : '"' + nat + '" ficou sem classificação gerencial.');
+}
+
+function classificarContraparte(nat, chave, nome, g){
+  if (!podeMexer()) return;
+  const antes = gerDaCP(nat, chave);
+  if (antes === (g || null)) return;
+  gravarGer('contraparte', chaveGerCP(nat, chave), g);
+  auditar('alteracao', 'Classificação gerencial da contraparte',
+    { onde: nat + ' · ' + nome, de: rotuloGer(antes), para: rotuloGer(g) });
+  gravar(); render();
+  const herda = gerDaConta(nat);
+  flash(g ? '"' + nome + '" é ' + rotuloGer(g).toLowerCase() + ' dentro de "' + nat + '".'
+          : '"' + nome + '" voltou a herdar de "' + nat + '"' +
+            (herda ? ' · ' + rotuloGer(herda).toLowerCase() : ' · que também não tem classificação') + '.');
+}
+
+/* `alvos` vem no formato [[mês, id], ...]: a linha da tela pode ser de mais de
+   um mês, e a etiqueta é do LANÇAMENTO, não da linha. Marcar a linha marca o
+   lançamento de cada mês que ela representa. */
+function classificarLancamentos(alvos, g){
+  if (!podeMexer()) return;
+  const ls = alvos.map(([mk, id]) => ((DB.meses[mk] || {}).lancamentos || []).find(z => z.id === id)).filter(Boolean);
+  if (!ls.length) return;
+  const antes = gerDoLanc(ls[0]);
+  for (const l of ls) { if (g) l.ger = g; else delete l.ger; }
+  auditar('alteracao', 'Classificação gerencial do lançamento',
+    { onde: ls[0].natureza + ' · ' + ls[0].contraparte + ' · ' + ls.length + ' lançamento(s)',
+      de: rotuloGer(antes), para: rotuloGer(g || gerDaCP(ls[0].natureza, ls[0].contraparte) || gerDaConta(ls[0].natureza)) });
+  gravar(); render();
+  flash(g ? ls.length + ' lançamento(s) como ' + rotuloGer(g).toLowerCase() + '.'
+          : ls.length + ' lançamento(s) voltaram a herdar a classificação de cima.');
+}
+
 /* ── os menus, um por tipo de linha ── */
 
 /* nível 1 · a conta, nos dois meses */
@@ -684,6 +756,8 @@ function ctxConta(tr, x, y){
   const itens = [
     { ic: aberta ? '▼' : '▶', t: aberta ? 'Recolher as contrapartes' : 'Abrir as contrapartes', faz: () => alternarComp(tr) },
     { ic:'✏️', t:'Renomear esta conta', faz: () => renomearConta(nat) },
+    '-',
+    ...itensGer(gerDaConta(nat), null, g => classificarConta(nat, g)),
     '-',
   ];
   const bloco = blocoDe(tr);
@@ -709,6 +783,8 @@ function ctxContraparte(tr, x, y){
   const itens = [
     { ic: aberta ? '▼' : '▶', t: aberta ? 'Recolher os lançamentos' : 'Abrir os lançamentos', faz: () => alternarCP(tr) },
     { ic:'✏️', t:'Renomear esta contraparte', faz: () => renomearContraparte(tr) },
+    '-',
+    ...itensGer(gerDaCP(nat, cp), gerDaConta(nat), g => classificarContraparte(nat, cp, nome, g)),
     '-',
   ];
   const bloco = blocoDe(tr);
@@ -738,6 +814,9 @@ function ctxLancamento(td, x, y){
     '-',
     { ic:'📋', t:'Copiar a linha', atalho:'p/ o Excel', faz: () => copiar(linhaExcel(l, mk)) },
     { ic:'🔢', t:'Copiar só o valor', faz: () => copiar(valorExcel(l.valor), 'Valor copiado: ' + fmt(l.valor)) },
+    '-',
+    ...itensGer(l.ger || null, gerDaCP(l.natureza, l.contraparte) || gerDaConta(l.natureza),
+                g => classificarLancamentos([[mk, id]], g)),
     '-',
     { ic:'🗑️', t:'Excluir lançamento', perigo:true, faz: () => { mesAtual = mk; excluirLancamento(id); } },
   ], tr);
@@ -769,6 +848,12 @@ function ctxLancamentoPar(tr, x, y){
       faz: () => editarCelula(tr.querySelector('td[data-edit="desc"]')) },
     ...itensEditarLinha(tr),
     '-');
+  /* a linha pode ser de mais de um mês: a etiqueta entra em todos eles */
+  const idsGer = String(tr.dataset.ids || '').split(';').filter(Boolean).map(z => z.split('|'));
+  itens.push('-', ...itensGer(
+    primeiro ? (primeiro.ger || null) : null,
+    primeiro ? (gerDaCP(primeiro.natureza, primeiro.contraparte) || gerDaConta(primeiro.natureza)) : null,
+    g => classificarLancamentos(idsGer, g)));
   itens.push('-',
     { ic:'🔢', t:'Copiar a linha', faz: () => copiarLinhaTela(tr) },
     { ic:'💡', t:'Para o valor, clique na coluna do mês', off: true });
@@ -821,6 +906,7 @@ function ctxTela(el, x, y){
     { ic:'🗓️', t:'Escolher os meses da tela', atalho:'mês a mês', faz: () => abrirMesesDaTela() },
     { ic:'📐', t:(totalTriLigado() ? 'Desligar' : 'Ligar') + ' o agrupamento por trimestre',
       atalho: totalTriLigado() ? 'ligado' : '', faz: () => alternarTotalTri() },
+    { ic:'📊', t:'Resumo gerencial', atalho:'operacional × não operacional', faz: () => abrirResumoGerencial() },
     { ic:'🧾', t:'Trilha de auditoria', faz: () => abrirAuditoria() },
     '-',
     { ic:'▼', t:'Expandir tudo', off: abertasComp.size === todas, faz: () => expandirTudo() },
@@ -876,8 +962,15 @@ const copiarContraparte = (nat, cp, nome) =>
 
 /* a linha como ela está na tela, célula por célula */
 function copiarLinhaTela(tr){
-  const txt = [...tr.children].map(td => td.textContent.replace(/\s+/g, ' ').trim()).join('\t');
-  copiar(txt, 'Linha copiada.');
+  /* O selo da classificação gerencial fica FORA da cópia: ele é um lembrete de
+     tela, e colar "Prêmios Oper." no Excel estragaria o nome da conta na
+     planilha de quem recebe. Copia-se o que a linha diz, não o que ela veste. */
+  const limpo = td => {
+    const c = td.cloneNode(true);
+    c.querySelectorAll('.ger').forEach(e => e.remove());
+    return c.textContent.replace(/\s+/g, ' ').trim();
+  };
+  copiar([...tr.children].map(limpo).join('\t'), 'Linha copiada.');
 }
 
 function copiarTabela(){

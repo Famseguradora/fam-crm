@@ -348,15 +348,122 @@ function restaurar(){
   flash('Sistema zerado. Só a planilha Matriz está carregada.');
 }
 
+/* ═══════════════ CLASSIFICAÇÃO GERENCIAL ═══════════════
+   Entrada ou saída o sistema já sabe sozinho, pelo sinal do valor. O que ele
+   NÃO pode saber é se o dinheiro é da operação ou não: isso é decisão do CFO.
+   Por decisão do Marco, nem a IA nem regra contábil nenhuma escolhe no lugar
+   dele · o sistema só HERDA o que ele já disse.
+
+   Por isso aqui existem DUAS etiquetas, não quatro: 'op' e 'nop'. As quatro
+   caixas do resumo (entrada operacional, entrada não operacional, saída
+   operacional, saída não operacional) nascem do cruzamento da etiqueta com o
+   sinal do lançamento, que já é o que manda no bloco ENTRADAS/SAÍDAS.
+
+   A etiqueta desce por herança: CONTA > CONTRAPARTE > LANÇAMENTO. Quem está
+   embaixo pode discordar de quem está em cima, e isso é o override. Quem não
+   herdou nem escolheu fica SEM CLASSIFICAÇÃO, que é um estado de verdade e não
+   um zero escondido: o resumo mostra essa linha de propósito, porque empurrar
+   o não classificado para dentro de "operacional" seria o sistema decidindo.
+
+   Onde mora: RAIZ.gerencial, ao lado de RAIZ.apelidos. É CONFIGURAÇÃO, então
+   vale na Principal e em todas as simulações de uma vez, e sobe cifrada no
+   cofre junto com o resto da RAIZ · sem tabela nova, sem migration.
+   O override do LANÇAMENTO mora no próprio lançamento (campo `ger`), porque é
+   dele que ele é, e assim viaja junto quando o mês é clonado para uma aba de
+   simulação ou sai num backup.
+
+   A chave é o nome normalizado (sem acento, minúsculo), então a máscara de
+   nomes, que só mexe em caixa, nunca perde a etiqueta. Renomear de verdade
+   também não desclassifica: quem cuida é gerRenomearConta/gerRenomearCP. */
+const GER_OP = 'op', GER_NOP = 'nop';
+const GER_ROTULO = { op: 'Operacional', nop: 'Não operacional' };
+const rotuloGer = g => GER_ROTULO[g] || 'Sem classificação';
+/* separador de controle: nunca aparece num nome digitado, então duas chaves
+   diferentes nunca colidem (a mesma ideia do idCP da tela) */
+const chaveGerCP = (nat, cp) => normalizar(nat) + '\u001f' + normalizar(cp);
+
+function gerencial(){
+  RAIZ.gerencial = RAIZ.gerencial || {};
+  RAIZ.gerencial.contas = RAIZ.gerencial.contas || {};
+  RAIZ.gerencial.contrapartes = RAIZ.gerencial.contrapartes || {};
+  return RAIZ.gerencial;
+}
+/* Leitura tolerante: sistema recém-aberto, backup antigo ou RAIZ ainda não
+   montada não têm a chave · nesse caso a resposta é "sem classificação", nunca
+   um erro. apurar() roda cedo demais para poder explodir aqui. */
+const _ger = () => ((typeof RAIZ !== 'undefined' && RAIZ) ? RAIZ.gerencial : null) || {};
+const gerDaConta = nat => (_ger().contas || {})[normalizar(nat)] || null;
+const gerDaCP = (nat, cp) => (_ger().contrapartes || {})[chaveGerCP(nat, cp)] || null;
+/* a etiqueta que VALE para o lançamento, com a herança já resolvida */
+const gerDoLanc = l => l.ger || gerDaCP(l.natureza, l.contraparte) || gerDaConta(l.natureza) || null;
+/* de onde veio a que está valendo · a tela precisa poder dizer isso, senão
+   ninguém sabe se muda ali na linha ou lá em cima, na conta */
+const origemGer = l => l.ger ? 'lancamento'
+  : gerDaCP(l.natureza, l.contraparte) ? 'contraparte'
+  : gerDaConta(l.natureza) ? 'conta' : null;
+
+/* g nulo apaga a etiqueta · a linha volta a herdar de quem está em cima */
+function gravarGer(escopo, chave, g){
+  const G = gerencial();
+  const alvo = escopo === 'conta' ? G.contas : G.contrapartes;
+  if (g) alvo[chave] = g; else delete alvo[chave];
+}
+
+/* Renomear NÃO desclassifica. Juntando duas contas, a etiqueta de quem já
+   estava lá manda: apagar a classificação do destino porque a origem veio sem
+   ela seria o sistema decidindo, que é justamente o que ele não faz. */
+function gerRenomearConta(de, para){
+  const G = gerencial(), a = normalizar(de), b = normalizar(para);
+  if (a === b) return;
+  if (G.contas[a]) { if (!G.contas[b]) G.contas[b] = G.contas[a]; delete G.contas[a]; }
+  for (const k of Object.keys(G.contrapartes)) {
+    const i = k.indexOf('\u001f');
+    if (i < 0 || k.slice(0, i) !== a) continue;
+    const nk = b + k.slice(i);
+    if (!G.contrapartes[nk]) G.contrapartes[nk] = G.contrapartes[k];
+    delete G.contrapartes[k];
+  }
+}
+function gerRenomearCP(nat, de, para){
+  const G = gerencial(), a = chaveGerCP(nat, de), b = chaveGerCP(nat, para);
+  if (a === b || !G.contrapartes[a]) return;
+  if (!G.contrapartes[b]) G.contrapartes[b] = G.contrapartes[a];
+  delete G.contrapartes[a];
+}
+/* conta que deixou de existir leva a etiqueta dela e as das contrapartes junto */
+function gerEsquecerConta(nat){
+  const G = gerencial(), a = normalizar(nat);
+  delete G.contas[a];
+  for (const k of Object.keys(G.contrapartes))
+    if (k.slice(0, k.indexOf('\u001f')) === a) delete G.contrapartes[k];
+}
+
+/* As contas que o CFO ainda não classificou, entre as que têm movimento nos
+   meses da tela · é a lista de trabalho dele, e o resumo a mostra por escrito
+   em vez de deixar o dinheiro sumido numa linha chamada "outros". */
+function contasSemClassificacao(){
+  const s = new Set();
+  for (const mk of mesesNaTela())
+    for (const l of (((DB.meses || {})[mk] || {}).lancamentos || []))
+      if (!gerDoLanc(l)) s.add(l.natureza);
+  return [...s].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+
 /* ═══════════════ APURAÇÃO · um só caminho para cada número ═══════════════ */
 function apurar(mk){
   const m = DB.meses[mk];
   if (!m) return null;
   const L = m.lancamentos;
   let entradas = 0, saidas = 0, internasE = 0, internasS = 0;
+  /* As seis caixas gerenciais saem DESTE laço, não de uma segunda varredura:
+     "entrada operacional" e "Entradas do mês" têm que ser o mesmo dinheiro,
+     contado uma vez só, senão o resumo e a tela discordam numa reunião. */
+  const ger = { entOp: 0, entNop: 0, entSem: 0, saiOp: 0, saiNop: 0, saiSem: 0 };
   const mapa = new Map();
   for (const l of L) {
     if (l.valor > 0) entradas += l.valor; else saidas += l.valor;
+    const g = gerDoLanc(l);
+    ger[(l.valor > 0 ? 'ent' : 'sai') + (g === GER_OP ? 'Op' : g === GER_NOP ? 'Nop' : 'Sem')] += l.valor;
     if (INTERNAS.includes(l.natureza)) { if (l.valor > 0) internasE += l.valor; else internasS += l.valor; }
     if (!mapa.has(l.natureza)) mapa.set(l.natureza, { natureza: l.natureza, total: 0, qtd: 0, temNeg: false });
     const n = mapa.get(l.natureza); n.total += l.valor; n.qtd++; if (l.valor < 0) n.temNeg = true;
@@ -377,6 +484,11 @@ function apurar(mk){
   return {
     mk, mes: m, simulado: !!m.simulado,
     saldoInicial: m.saldoInicial, entradas, saidas, resultado, saldoApurado,
+    ...ger,
+    /* resultado por mundo: o que a operação gerou, e o que veio de fora dela */
+    gerResOp: ger.entOp + ger.saiOp,
+    gerResNop: ger.entNop + ger.saiNop,
+    gerResSem: ger.entSem + ger.saiSem,
     saldoBancario: m.saldoFinalBancario,
     diferenca: saldoApurado - m.saldoFinalBancario,
     qtd: L.length, porNatureza, internasE, internasS,

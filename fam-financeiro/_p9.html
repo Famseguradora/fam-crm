@@ -51,7 +51,11 @@ const hpVisor = () => hp.digitando ? (hp.ent || '0') : calcFmt(hp.x, hp.casas);
    · saiu menos de 4px do lugar, foi clique; passou disso, foi arrasto, e aí o
    clique que o navegador dispara em seguida é engolido. Sem isso, mover o
    ícone abriria a calculadora toda vez. */
-const LUGARES = { hp12c: 'fam-financeiro-hp12c-lugar', 'btn-calc': 'fam-financeiro-hp12c-botao' };
+/* A janela do Resumo gerencial entra aqui: ela se arrasta pela mesma
+   mecânica e, sem a linha dela, o lugar seria gravado numa chave `undefined`
+   e ela nasceria sempre no mesmo canto. */
+const LUGARES = { hp12c: 'fam-financeiro-hp12c-lugar', 'btn-calc': 'fam-financeiro-hp12c-botao',
+                  'rg-janela': 'fam-financeiro-resumo-lugar' };
 
 function lugarGravado(id){
   let o = null;
@@ -60,15 +64,27 @@ function lugarGravado(id){
 }
 
 /* nunca deixar a peça sair da tela: o que some pela borda não volta mais,
-   porque o que se arrasta é justamente o que sumiu */
+   porque o que se arrasta é justamente o que sumiu.
+
+   ── JANELA ALTA (data-encaixa) ──
+   Para o botão da HP basta um cantinho à vista. Uma JANELA alta, não: o Resumo
+   gerencial tem as ações (copiar, imprimir, PDF) no rodapé, e arrastado para
+   baixo ele empurrava o rodapé para fora da tela · as ações sumiam e não havia
+   como trazê-las de volta, porque a janela não rola por fora.
+   Quem tem data-encaixa garante um pedaço maior sempre visível E encolhe: a
+   altura máxima passa a ser o que sobra da janela dali para baixo, então o
+   rodapé encosta na borda em vez de cair fora. */
 function porNaTela(el, x, y){
+  const encaixa = !!el.dataset.encaixa;
   const l = el.getBoundingClientRect();
   const maxX = Math.max(0, window.innerWidth - l.width);
-  const maxY = Math.max(0, window.innerHeight - Math.min(l.height, 44));
+  const maxY = Math.max(0, window.innerHeight - Math.min(l.height, encaixa ? 300 : 44));
+  const topo = Math.min(Math.max(0, y), maxY);
   el.style.left = Math.min(Math.max(0, x), maxX) + 'px';
-  el.style.top = Math.min(Math.max(0, y), maxY) + 'px';
+  el.style.top = topo + 'px';
   el.style.right = 'auto';
   el.style.bottom = 'auto';
+  if (encaixa) el.style.maxHeight = Math.max(240, window.innerHeight - topo - 10) + 'px';
 }
 
 function restaurarLugar(id, padrao){
@@ -127,7 +143,7 @@ document.addEventListener('click', e => {
 
 /* janela menor, ou tela girada: as duas peças voltam para dentro */
 window.addEventListener('resize', () => {
-  for (const id of ['hp12c', 'btn-calc']) {
+  for (const id of ['hp12c', 'btn-calc', 'rg-janela']) {
     const el = document.getElementById(id);
     if (!el || !el.style.left) continue;
     const l = el.getBoundingClientRect();
