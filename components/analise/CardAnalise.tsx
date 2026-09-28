@@ -47,8 +47,137 @@ import Atividades from './card/Atividades'
 import { SISTEMA_LOCAL, type Quem } from './card/comum'
 import { PortaDoRelatorio, SemSistemaLocal } from './PortaDoRelatorio'
 import Reanalisar from './Reanalisar'
+import ReguaDoCard, { PalcoDaRegua, type EstadoNo } from '@/components/card/ReguaDoCard'
+import { etapaDoCard, nomeArea, type PostoCentral } from '@/lib/card/secoes'
+import { fmtData } from '@/lib/utils'
+import BancadaTriagem from '@/components/triagem/BancadaTriagem'
 
-type Aba = 'geral' | 'arquivos' | 'analise' | 'relatorio' | 'ia' | 'encaminhar' | 'atividades'
+type Aba = 'triagem' | 'geral' | 'arquivos' | 'analise' | 'relatorio' | 'ia' | 'encaminhar' | 'atividades'
+
+/* CADA ABA MORA NA ÁREA DONA DELA  ·  28/09/2026
+   Antes as sete abas ficavam todas numa tela que parecia do Crédito, e a
+   Eldorado, que ainda esperava balanços, Serasa e contrato social, abria "no
+   Crédito". Agora o card abre no nó da etapa em que está, e cada nó mostra só
+   o que é dele: conferir documentos e arquivos é Cadastro e triagem; rodar a
+   análise, ler o relatório e perguntar à IA é Crédito. Visão geral (a nota da
+   equipe, o substatus), Encaminhar e Atividades são do card inteiro e
+   aparecem nas duas. */
+const ABAS_DO_POSTO: Partial<Record<PostoCentral, Aba[]>> = {
+  cadastro: ['triagem', 'geral', 'arquivos', 'encaminhar', 'atividades'],
+  credito: ['geral', 'analise', 'relatorio', 'ia', 'encaminhar', 'atividades'],
+}
+
+interface SecaoDoCard {
+  area: string
+  estado: string
+  texto: string | null
+  pendencia_texto: string | null
+  paralisa: boolean
+  paralisa_motivo: string | null
+  concluida_em: string | null
+  concluida_por: string | null
+}
+
+/* A BANCADA DE TRIAGEM DENTRO DO CARD. Com caso, é a tela do Funil inteira
+   (components/triagem/BancadaTriagem.tsx). Sem caso (pasta que chegou direto
+   no notebook, como a Eldorado), um clique cria o caso ligado a este card, com
+   o checklist que o agente já leu. Criar sozinho ao abrir seria escrever no
+   banco só porque alguém olhou. */
+function BancadaDoCard({ f, aoMudar }: { f: FilaRica; aoMudar: () => void }) {
+  const { ajudaAnalise } = usePermissoes()
+  const [abrindo, setAbrindo] = useState(false)
+  const [erro, setErro] = useState('')
+
+  if (f.caso_id) return <BancadaTriagem id={f.caso_id} embutida aoMudar={aoMudar} />
+  if (f.semEsteira) {
+    return (
+      <div className="an-bloco" style={{ maxWidth: '78ch' }}>
+        <h4>A triagem desta análise já passou</h4>
+        <p className="an-explica">Esta análise foi entregue e a pasta saiu da esteira. O cadastro da empresa está no tomador.</p>
+      </div>
+    )
+  }
+
+  const abrir = async () => {
+    setAbrindo(true); setErro('')
+    try {
+      const r = await fetch('/api/casos/da-fila', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fila_id: f.id }),
+      })
+      const j = await r.json()
+      if (!r.ok) setErro(j.erro ?? 'Não consegui abrir a bancada.')
+      else if (j.aviso) setErro(j.aviso)
+      aoMudar()
+    } catch {
+      setErro('A conexão caiu. Tente de novo.')
+    }
+    setAbrindo(false)
+  }
+
+  return (
+    <div className="an-bloco" style={{ maxWidth: '78ch' }}>
+      <h4>Bancada de triagem e cadastro</h4>
+      <p className="an-explica">
+        Este card chegou direto pela pasta, sem caso de triagem. Abra a bancada para confirmar o CNPJ, cadastrar o
+        tomador, conferir os documentos e soltar o que faltar. O checklist já vem com o que o agente leu da pasta.
+      </p>
+      {erro && <div className="an-aviso aviso">{erro}</div>}
+      <div className="an-bt-linha">
+        <button type="button" className="an-bt azul" disabled={!ajudaAnalise || abrindo} onClick={abrir}>
+          {abrindo ? 'Abrindo…' : 'Abrir a bancada de triagem'}
+        </button>
+      </div>
+      {!ajudaAnalise && <div className="an-dica">Você tem permissão só de leitura na Análise.</div>}
+    </div>
+  )
+}
+
+/* AS ÁREAS QUE TRABALHAM NO CADASTRO DO TOMADOR (Comercial, Subscrição,
+   Emissão) aparecem aqui como LEITURA: o registro delas mora no Fluxo por área
+   do tomador, com as regras de quem escreve (lib/card/secoes.ts). Copiar o
+   editor para cá seria a segunda tela escrevendo a mesma seção. */
+function AreaNoCadastro({ posto, tomadorId, secao, atual }: {
+  posto: PostoCentral; tomadorId: string | null; secao: SecaoDoCard | null; atual: PostoCentral
+}) {
+  const router = useRouter()
+  const aqui = posto === atual
+  return (
+    <div className="an-bloco" style={{ maxWidth: '80ch' }}>
+      <h4>{nomeArea(posto)}</h4>
+      {!tomadorId ? (
+        <p className="an-explica">
+          Este card ainda não tem cadastro de tomador. Ele nasce quando a triagem confirmar o CNPJ, e é lá que{' '}
+          {nomeArea(posto)} registra o trabalho dela. Até lá, o caso anda em Cadastro e triagem.
+        </p>
+      ) : posto === 'emissao' ? (
+        <p className="an-explica">
+          {aqui
+            ? 'O card chegou à Emissão: a Subscrição concluiu. As operações e as apólices estão no cadastro do tomador.'
+            : 'A Emissão é o fim da linha: o card chega aqui quando a Subscrição conclui.'}
+        </p>
+      ) : (
+        <>
+          <p className="an-explica">
+            {secao?.estado === 'concluida'
+              ? `Concluída${secao.concluida_por ? ` por ${secao.concluida_por}` : ''}${secao.concluida_em ? ` em ${fmtData(secao.concluida_em)}` : ''}.`
+              : aqui ? 'O card está nesta área agora.' : 'O card ainda não chegou aqui, ou já passou sem concluir.'}
+          </p>
+          {secao?.texto?.trim()
+            ? <div className="an-explica" style={{ whiteSpace: 'pre-wrap', color: 'inherit' }}>{secao.texto}</div>
+            : <div className="an-dica">{nomeArea(posto)} ainda não escreveu o registro oficial.</div>}
+          {secao?.pendencia_texto?.trim() && <div className="an-dica">Pendência: {secao.pendencia_texto}</div>}
+        </>
+      )}
+      {tomadorId && (
+        <div className="an-bt-linha" style={{ marginTop: 10 }}>
+          <button type="button" className="an-bt azul" onClick={() => router.push(`/tomadores/${tomadorId}?g=fluxo`)}>
+            Abrir o Fluxo por área do tomador
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 /** O Sistema de Análise responde nesta máquina? Uma pergunta só, na abertura.
  *  Serve para mostrar ou esconder os botões que dependem dele; nunca para
@@ -287,13 +416,19 @@ export default function CardAnalise({ id }: { id: string }) {
      publicada para LER a análise; cair na Visão geral obrigaria um clique a
      mais toda vez. Vindo da Mesa, continua na Visão geral, que é onde se
      decide o que fazer com a pasta. */
-  const [aba, setAba] = useState<Aba>('geral')
+  const [aba, setAba] = useState<Aba | null>(null)
   /* Uma REF, e não estado: a carga do card precisa saber se ele já escolheu uma
      aba, mas essa resposta não pode entrar nas dependências do `useCallback` —
      isso recriaria a função a cada clique e a carga rodaria de novo à toa. */
   const abaEscolhida = useRef(false)
   const [quem, setQuem] = useState<Quem>({ nome: null, authId: null, podeEscrever: !somenteLeitura, analista: editaAnalise })
   const [abertos, setAbertos] = useState(0)
+  /* ONDE O CARD ESTÁ: a central do tomador e as seções dele. Sem tomador
+     ligado (CNPJ ainda a confirmar), fica nulo e a esteira fala sozinha. */
+  const [central, setCentral] = useState<string | null>(null)
+  const [secoes, setSecoes] = useState<SecaoDoCard[]>([])
+  /** A área aberta na tela. Nula = a etapa em que o card está. */
+  const [vendo, setVendo] = useState<PostoCentral | null>(null)
 
   // `?aba=analise`: quem pediu o Refazer do Acervo chega direto no relógio.
   useEffect(() => {
@@ -302,7 +437,26 @@ export default function CardAnalise({ id }: { id: string }) {
     abaEscolhida.current = true
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAba('analise')
+    setVendo('credito')
   }, [])
+
+  const tomadorId = f?.tomador_id ?? null
+  useEffect(() => {
+    if (!tomadorId) return
+    let vivo = true
+    const supabase = createClient()
+    Promise.all([
+      supabase.from('tomadores').select('central_area').eq('id', tomadorId).maybeSingle(),
+      supabase.from('card_secoes')
+        .select('area, estado, texto, pendencia_texto, paralisa, paralisa_motivo, concluida_em, concluida_por')
+        .eq('tomador_id', tomadorId),
+    ]).then(([t, s]) => {
+      if (!vivo) return
+      setCentral((t.data?.central_area as string | null) ?? null)
+      setSecoes((s.data as SecaoDoCard[]) ?? [])
+    })
+    return () => { vivo = false }
+  }, [tomadorId])
 
   useEffect(() => {
     const supabase = createClient()
@@ -381,6 +535,8 @@ export default function CardAnalise({ id }: { id: string }) {
         setF(linha)
         setAbertos(0)
         setAba(a => (abaEscolhida.current ? a : 'relatorio'))
+        // O Relatório é do Crédito: vindo do Acervo, a tela abre nesse nó.
+        setVendo(v => v ?? 'credito')
         setCarregando(false)
         return
       }
@@ -445,6 +601,9 @@ export default function CardAnalise({ id }: { id: string }) {
   /** A análise já saiu? É o que decide se existe relatório para procurar. */
   const entregue = f.situacao === 'concluida' || fase === 'pronta'
   const ABAS: { id: Aba; txt: string; n?: number | null; alerta?: boolean; some?: boolean }[] = [
+    /* A BANCADA DA TRIAGEM (28/09/2026): a mesma tela do caso no Funil, que
+       ele pediu "no lugar certo". É a primeira aba de Cadastro e triagem. */
+    { id: 'triagem', txt: 'Triagem e cadastro' },
     { id: 'geral', txt: 'Visão geral' },
     /* AS SETE ABAS APARECEM SEMPRE. Ordem dele em 09/09/2026: "ficaremos com
        todas as opções nessa tela". Uma aba que some conforme o caminho de
@@ -469,6 +628,43 @@ export default function CardAnalise({ id }: { id: string }) {
   ]
 
   const props = { f, ficha, quem, local, recarregar: carregar }
+
+  /* A etapa e a área aberta. O card abre onde ESTÁ; a régua deixa olhar as
+     outras sem mover nada. */
+  const etapa = etapaDoCard(f.tomador_id ? central : null, fase)
+  const posto: PostoCentral = vendo ?? etapa
+  const doPosto = ABAS_DO_POSTO[posto]
+  const abasVisiveis = doPosto ? ABAS.filter(a => !a.some && doPosto.includes(a.id)) : []
+  // Sem aba escolhida (ou escolhida em outra área), abre a primeira da área.
+  const abaNaTela: Aba = aba && (!doPosto || doPosto.includes(aba)) ? aba : (doPosto?.[0] ?? 'geral')
+  const secaoDe = (p: PostoCentral) => secoes.find(s => s.area === p) ?? null
+  const estados: Partial<Record<PostoCentral, EstadoNo>> = {}
+  for (const s of secoes) {
+    estados[s.area as PostoCentral] = s.paralisa ? 'parada' : s.estado === 'concluida' ? 'feita' : null
+  }
+  /* Etapa que o caso já deixou para trás aparece como PASSOU, e não como
+     "concluída": concluir é gesto de gente, e ninguém clicou. */
+  const ordemDe = (p: PostoCentral) => (['comercial', 'cadastro', 'credito', 'subscricao', 'emissao'] as PostoCentral[]).indexOf(p)
+  const legenda = (p: PostoCentral): string => {
+    const s = secaoDe(p)
+    if (s?.paralisa) return 'paralisada'
+    if (p === etapa) return 'está aqui'
+    if (s?.estado === 'concluida') return 'concluída'
+    return ordemDe(p) < ordemDe(etapa) ? 'passou' : 'aguarda'
+  }
+  const escolher = (p: PostoCentral) => {
+    setVendo(p)
+    const lista = ABAS_DO_POSTO[p]
+    if (lista && aba && !lista.includes(aba)) setAba(null)
+  }
+  /** Um botão dentro de uma aba manda para outra (Arquivos, Relatório): se ela
+   *  é de outra área, a régua acompanha. */
+  const irParaAba = (a: string) => {
+    const alvo = a as Aba
+    abaEscolhida.current = true
+    if (!ABAS_DO_POSTO[posto]?.includes(alvo)) setVendo(ABAS_DO_POSTO.cadastro?.includes(alvo) ? 'cadastro' : 'credito')
+    setAba(alvo)
+  }
 
   return (
     <div className="an-area" style={{ padding: 'clamp(12px, 2vw, 20px) clamp(10px, 2.5vw, 28px) 30px' }}>
@@ -505,41 +701,51 @@ export default function CardAnalise({ id }: { id: string }) {
             )}
             {/* Vindo do Acervo o card abre no Relatório: o Refazer precisa estar à vista. */}
             {f.semEsteira && quem.podeEscrever && (
-              <button type="button" className="an-bt mini" onClick={() => { abaEscolhida.current = true; setAba('analise') }} title="Traz a pasta de volta de _concluidas e roda a análise de novo">Refazer a análise</button>
+              <button type="button" className="an-bt mini" onClick={() => irParaAba('analise')} title="Traz a pasta de volta de _concluidas e roda a análise de novo">Refazer a análise</button>
             )}
           </div>
         </div>
 
-        <nav className="an-card-abas" role="tablist" aria-label="O card do tomador">
-          {ABAS.filter(a => !a.some).map(a => (
-            <button key={a.id} type="button" role="tab" aria-selected={aba === a.id} className={`an-card-aba${aba === a.id ? ' on' : ''}`}
+        <ReguaDoCard atual={etapa} vendo={posto} estados={estados} legenda={legenda} aoEscolher={escolher} />
+
+        <PalcoDaRegua vendo={posto} aoEscolher={escolher}>
+        {abasVisiveis.length > 0 && (
+        <nav className="an-card-abas" role="tablist" aria-label={`O card em ${nomeArea(posto)}`}>
+          {abasVisiveis.map(a => (
+            <button key={a.id} type="button" role="tab" aria-selected={abaNaTela === a.id} className={`an-card-aba${abaNaTela === a.id ? ' on' : ''}`}
               onClick={() => { abaEscolhida.current = true; setAba(a.id) }}>
               {a.txt}{a.n ? <i>{a.n}</i> : null}{a.alerta ? <b className="ponto" /> : null}
             </button>
           ))}
         </nav>
+        )}
 
         <div className="an-card-corpo">
           {erro && <div className="alert-error" style={{ marginBottom: 12 }}>{erro}</div>}
-          {aba === 'geral' && <VisaoGeral {...props} aoIrParaAba={a => setAba(a as Aba)} />}
-          {aba === 'arquivos' && (f.semEsteira
-            ? <SemPasta aba="arquivos" chave={f.chave_local} docs={ficha?.documentos.length ?? 0} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
+          {!doPosto && <AreaNoCadastro posto={posto} tomadorId={f.tomador_id} secao={secaoDe(posto)} atual={etapa} />}
+          {doPosto && <>
+          {abaNaTela === 'triagem' && <BancadaDoCard f={f} aoMudar={carregar} />}
+          {abaNaTela === 'geral' && <VisaoGeral {...props} aoIrParaAba={irParaAba} />}
+          {abaNaTela === 'arquivos' && (f.semEsteira
+            ? <SemPasta aba="arquivos" chave={f.chave_local} docs={ficha?.documentos.length ?? 0} aoIrParaAba={irParaAba} />
             : <Arquivos {...props} aoMandar={o => mandar(o)} />)}
-          {aba === 'analise' && (f.semEsteira
-            ? <RefazerDoAcervo f={f} quem={quem} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
+          {abaNaTela === 'analise' && (f.semEsteira
+            ? <RefazerDoAcervo f={f} quem={quem} aoIrParaAba={irParaAba} />
             : <AbaAnalise {...props} aoMandar={mandar} />)}
-          {aba === 'relatorio' && (ficha
+          {abaNaTela === 'relatorio' && (ficha
             ? <RelatorioNoFluxo ficha={ficha} chave={f.chave_local || ficha.chave_local} sistemaLocal={local}
                 aoCarregar={fi => { if (fi) setFicha(fi) }} />
             : <RelatorioAPublicar f={f} quem={quem} aoMandar={mandar} />)}
-          {aba === 'ia' && <AbaIA {...props} />}
-          {aba === 'encaminhar' && (f.semEsteira
-            ? <SemPasta aba="encaminhar" chave={f.chave_local} docs={0} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
+          {abaNaTela === 'ia' && <AbaIA {...props} />}
+          {abaNaTela === 'encaminhar' && (f.semEsteira
+            ? <SemPasta aba="encaminhar" chave={f.chave_local} docs={0} aoIrParaAba={irParaAba} />
             : <Encaminhar {...props} />)}
-          {aba === 'atividades' && (f.semEsteira
-            ? <SemPasta aba="atividades" chave={f.chave_local} docs={0} aoIrParaAba={a => { abaEscolhida.current = true; setAba(a as Aba) }} />
+          {abaNaTela === 'atividades' && (f.semEsteira
+            ? <SemPasta aba="atividades" chave={f.chave_local} docs={0} aoIrParaAba={irParaAba} />
             : <Atividades {...props} />)}
+          </>}
         </div>
+        </PalcoDaRegua>
       </div>
     </div>
   )

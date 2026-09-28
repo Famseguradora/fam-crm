@@ -55,6 +55,27 @@ export function nomeArea(id: string | null | undefined): string {
   return AREAS.find(a => a.id === id)?.nome ?? String(id ?? '—')
 }
 
+/* A ESTEIRA DA ANÁLISE MOVE A ETAPA ATÉ CRÉDITO  ·  28/09/2026
+   Decisão dele: "a esteira da análise move a etapa sozinha até Crédito; daí em
+   diante é manual". Entrada e Conferência são trabalho de Cadastro e triagem;
+   Liberado, Analisando e Pronta são do Crédito. O gatilho
+   `fam_fila_move_etapa` (supabase-migration-etapa-pela-esteira.sql) grava isso
+   em `tomadores.central_area` com a MESMA tabela; mudar aqui é mudar lá. */
+export function areaDaFase(fase: string | null | undefined): 'cadastro' | 'credito' | null {
+  if (fase === 'entrada' || fase === 'conferencia') return 'cadastro'
+  if (fase === 'liberado' || fase === 'analisando' || fase === 'pronta') return 'credito'
+  return null
+}
+
+/** Onde o card está. Vale a central gravada, exceto quando ela nunca saiu de
+ *  Comercial (ou está vazia) e a esteira já sabe mais: é o caso da Eldorado,
+ *  e de todo card de antes do gatilho. Sem tomador ligado, só a esteira fala. */
+export function etapaDoCard(central: string | null | undefined, fase: string | null | undefined): PostoCentral {
+  const daFila = areaDaFase(fase)
+  if ((!central || central === 'comercial') && daFila) return daFila
+  return (REGUA as string[]).includes(central ?? '') ? (central as PostoCentral) : 'comercial'
+}
+
 export function proximaArea(id: AreaId): PostoCentral {
   const i = ORDEM.indexOf(id)
   if (i < 0) return 'emissao'

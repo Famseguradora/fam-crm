@@ -33,6 +33,7 @@ import {
   type AreaId, type PostoCentral, type Secao, type EventoCard, type ItemCatalogo,
   type Quem, type DadosDoCard,
 } from '@/lib/card/secoes'
+import ReguaDoCard from '@/components/card/ReguaDoCard'
 
 interface OperacaoDoCard {
   id: string
@@ -47,6 +48,10 @@ interface Props {
   tomadorId: string
   cnpj: string | null
   centralInicial: string | null
+  /** Onde a régua desenha o card: a central, corrigida pela esteira da análise
+   *  (etapaDoCard). Só VISUAL: quem escreve o oficial continua sendo decidido
+   *  pela central gravada, que é a mesma que a RLS confere. */
+  etapa?: PostoCentral
   operacoes: OperacaoDoCard[]
   /** a análise vigente publicada no CRM, quando existe */
   analise: { recomendacao: string | null; data_analise: string | null; limite: number | null; limiteAnulado: boolean } | null
@@ -78,7 +83,7 @@ const num = (v: number | string | null | undefined): number => {
 }
 
 
-export default function SecoesDoCard({ tomadorId, cnpj, centralInicial, operacoes, analise, onMudou }: Props) {
+export default function SecoesDoCard({ tomadorId, cnpj, centralInicial, etapa, operacoes, analise, onMudou }: Props) {
   const [secoes, setSecoes] = useState<Secao[]>([])
   const [eventos, setEventos] = useState<EventoCard[]>([])
   const [catalogo, setCatalogo] = useState<ItemCatalogo[]>([])
@@ -326,6 +331,9 @@ export default function SecoesDoCard({ tomadorId, cnpj, centralInicial, operacoe
 
   const eu = quem ?? { nome: '', areas: [] as AreaId[], diretoria: false, podeEscrever: false }
   const pedidosAbertos = eventos.filter(e => e.tipo === 'pedido' && !e.resolvido_em)
+  // A etapa calculada vale enquanto ninguém moveu a central nesta tela; depois
+  // de um Concluir aqui, a central nova manda até a página recarregar.
+  const naRegua: PostoCentral = etapa && central === ((centralInicial as PostoCentral) || 'comercial') ? etapa : central
 
   return (
     <div>
@@ -337,23 +345,23 @@ export default function SecoesDoCard({ tomadorId, cnpj, centralInicial, operacoe
           Onde o card está
           <span className="dir">a central é de uma área por vez</span>
         </div>
-        <div className="cs-esteira">
-          {REGUA.map(posto => {
-            const eh = central === posto
+        {/* A mesma régua do card da Análise (28/09/2026): um desenho só para
+            "onde o card está", em toda a vida do tomador. O clique leva à seção. */}
+        <ReguaDoCard
+          atual={naRegua}
+          estados={Object.fromEntries(REGUA.map(posto => {
             const s = secoes.find(x => x.area === posto)
-            const feita = posto === 'emissao'
-              ? operacoes.some(o => o.status === 'Emitido')
-              : s?.estado === 'concluida'
-            return (
-              <div key={posto} className={`cs-eta ${eh ? 'central' : feita ? 'feita' : ''}`}>
-                <div className="en">{nomeArea(posto)}</div>
-                <div className="es">
-                  {eh ? 'com a central' : feita ? (posto === 'emissao' ? 'já emitiu' : 'concluída') : 'aguarda'}
-                </div>
-              </div>
-            )
-          })}
-        </div>
+            const feita = posto === 'emissao' ? operacoes.some(o => o.status === 'Emitido') : s?.estado === 'concluida'
+            return [posto, s?.paralisa ? 'parada' : feita ? 'feita' : null]
+          }))}
+          legenda={posto => {
+            const s = secoes.find(x => x.area === posto)
+            if (naRegua === posto) return central === posto ? 'com a central' : 'está aqui'
+            if (posto === 'emissao') return operacoes.some(o => o.status === 'Emitido') ? 'já emitiu' : 'aguarda'
+            return s?.estado === 'concluida' ? 'concluída' : 'aguarda'
+          }}
+          aoEscolher={posto => document.getElementById(`cs-secao-${posto}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+        />
 
         {parada && (
           <div className="cs-aviso alerta" style={{ marginBottom: 0 }}>
@@ -388,7 +396,7 @@ export default function SecoesDoCard({ tomadorId, cnpj, centralInicial, operacoe
           const valor = texto[s.id] ?? (oficial ? (s.texto ?? '') : (s.rascunho ?? s.texto ?? ''))
 
           return (
-            <div key={s.id} className={`cs-secao ${comCentral ? 'tem-central' : ''} ${s.paralisa ? 'parada' : ''}`}>
+            <div key={s.id} id={`cs-secao-${area.id}`} className={`cs-secao ${comCentral ? 'tem-central' : ''} ${s.paralisa ? 'parada' : ''}`}>
               <button type="button" className="cs-secao-cab"
                 onClick={() => setAbertas(a => ({ ...a, [s.id]: !aberta }))}>
                 <span style={{ fontSize: 16 }}>{area.icone}</span>

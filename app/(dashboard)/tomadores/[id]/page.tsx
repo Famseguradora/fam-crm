@@ -55,7 +55,7 @@ import {
 // O fluxo por área entrou em 08/09/2026: é a tela "mesa" do protótipo, com as
 // cinco seções nascendo juntas dentro do card. Ver components/tomador/SecoesDoCard.
 import SecoesDoCard from '@/components/tomador/SecoesDoCard'
-import { nomeArea } from '@/lib/card/secoes'
+import { nomeArea, etapaDoCard } from '@/lib/card/secoes'
 
 type Gaveta = 'visao' | 'fluxo' | 'cadastro' | 'operacoes' | 'analise' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos' | 'linha'
 
@@ -85,6 +85,16 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
   const [gaveta, setGaveta] = useState<Gaveta>('visao')
+  /** A fase da pasta na esteira; com ela a régua diz onde o card está mesmo
+   *  quando `central_area` ainda não acompanhou (lib/card/secoes.ts, etapaDoCard). */
+  const [faseDaFila, setFaseDaFila] = useState<string | null>(null)
+  // `?g=fluxo`: o card da Análise manda para cá quem clicou numa área que
+  // trabalha no cadastro (Comercial, Subscrição, Emissão). 28/09/2026.
+  useEffect(() => {
+    const g = new URLSearchParams(window.location.search).get('g')
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (g === 'fluxo') setGaveta('fluxo')
+  }, [])
   // O editor do organograma (sócios, diretores, PDF, Excel): o mesmo de sempre,
   // aberto daqui de dentro. Ele pediu em 30/08 que voltasse para o tomador.
   const [editorOrg, setEditorOrg] = useState(false)
@@ -136,16 +146,22 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
       .select('id', { count: 'exact', head: true }).eq('holding_id', t.id).eq('ativo', true)
     setNEmpresasDoGrupo(nGrupo ?? 0)
 
-    const [{ data: ops }, { data: socs }] = await Promise.all([
+    const [{ data: ops }, { data: socs }, { data: pasta }] = await Promise.all([
       supabase.from('operacoes')
         .select('*, corretora:corretoras(id,razao_social,nome_fantasia), produto:produtos(id,nome)')
         .eq('tomador_id', id).eq('ativo', true)
         .order('lmg', { ascending: false }),
       supabase.from('socios')
         .select('*').eq('tomador_id', id).eq('ativo', true).order('ordem'),
+      // A pasta mais recente na esteira: é dela que sai a etapa (mesma escolha
+      // da carga do gatilho fam_fila_move_etapa: viva antes de arquivada).
+      supabase.from('analise_fila').select('fase').eq('tomador_id', id)
+        .order('arquivada', { ascending: true }).order('atualizado_em', { ascending: false })
+        .limit(1).maybeSingle(),
     ])
     setOperacoes((ops as Operacao[]) ?? [])
     setSocios((socs as Socio[]) ?? [])
+    setFaseDaFila((pasta?.fase as string | null) ?? null)
 
     // A análise vem depois e sozinha: ela pode não existir, e a falta dela não
     // pode impedir a ficha de aparecer. Quando este tomador é uma SPE sem
@@ -401,7 +417,7 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
   const ITENS: { g: Gaveta; nome: string; ico: React.ReactNode; meta?: string; badge?: string }[] = [
     { g: 'visao', nome: 'Visão geral', ico: <IcoVisao /> },
     // A esteira do card: onde ele está e quem escreve o quê agora.
-    { g: 'fluxo', nome: 'Fluxo por área', ico: <IcoCheck />, meta: nomeArea(tomador.central_area ?? 'comercial') },
+    { g: 'fluxo', nome: 'Fluxo por área', ico: <IcoCheck />, meta: nomeArea(etapaDoCard(tomador.central_area, faseDaFila)) },
     // A edição do cadastro mora AQUI desde 30/08/2026, e não mais no modal da
     // lista: ordem dele, "tudo deve ser feito na tela quando clicar na linha".
     { g: 'cadastro', nome: 'Cadastro', ico: <IcoCarteira /> },
@@ -648,6 +664,7 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
             tomadorId={tomador.id}
             cnpj={tomador.cnpj}
             centralInicial={tomador.central_area}
+            etapa={etapaDoCard(tomador.central_area, faseDaFila)}
             operacoes={operacoes.map(o => ({
               id: o.id, modalidade: o.modalidade, status: o.status,
               lmg: o.lmg, taxa: o.taxa, voto_subscricao: o.voto_subscricao ?? null,
