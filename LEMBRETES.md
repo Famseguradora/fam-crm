@@ -3,6 +3,33 @@
 Esta lista aparece sozinha no começo de toda sessão do Claude Code.
 Pode editar à mão. Item entregue **sai da lista**, não fica marcado acumulando.
 
+## PENDENTE DA ENTREGA DO CARD, MESA E FUNIL (28/09/2026)
+
+Entregue e no GitHub: e078845 (régua do card e bancada de triagem), 6f26cdf (Carrossel do
+Funil e triagem na Mesa), 0740ba1 (Mesa sem pasta, "Aprovar com Ressalvas"). O que ficou:
+
+- [ ] **Autorizar a migration da etapa** (`supabase-migration-etapa-pela-esteira.sql`). O gatilho
+      move a etapa do card sozinho até Crédito, e a carga acerta 47 tomadores parados em Comercial
+      (42 vão para Crédito, 5 para Cadastro e triagem). O modo automático recusou aplicar em produção.
+      Sem ela as telas mostram certo (corrigem pela esteira), mas o banco, o filtro de área e quem
+      escreve o oficial continuam lendo "Comercial".
+- [ ] **Pacote do motor**: guardar a análise anterior antes de refazer · chave com hora · CNPJ
+      subindo ao CRM · refazer que dá a partida sozinho · card buscando a vigente pelo CNPJ.
+- [ ] **KPI "LMG emitido" do Funil** (R$ 254,69 mi) soma o LMG cru, sem o teto de 80 mi. Conferir
+      contra a tela de Operações antes de mudar (é número que a diretoria conhece).
+- [ ] **Emissão no Carrossel**: o cartão mostra 30 apólices e o prêmio emitido, mas a lista de
+      empresas vem vazia (ninguém move card para Emissão). Decidir: listar quem tem apólice emitida?
+- [ ] **Conferência na Mesa**: juntar com "Triagem e cadastro" ou manter separada?
+- [ ] **Casos velhos em triagem**: #17 Biribeira e #19 (10/09, sem pasta) apareceram na Mesa.
+      Ficam ou saem?
+- [ ] **Aprovar definitivo**: testado só o caminho do "Tirar da Mesa". Clicar uma vez num caso
+      real e conferir o registro na linha do tempo do tomador.
+- [ ] **Página do caso pelo Funil** (/comercial/<id>) ainda sem a régua em cima.
+- [ ] **Rascunhos fora do commit**: `app/(dashboard)/esteira/`, `app/preview-torre/`,
+      `components/esteira/`, `lib/esteira/`, `propostas/`. Ficam, entram ou saem?
+- [ ] Limpeza: CSS morto `.cs-esteira`/`.cs-eta` em `app/globals.css`.
+- [ ] Conferir o deploy na Vercel dos três commits (o `gh` não está instalado nesta máquina).
+
 ## FALTA VOCÊ: ligar o Outlook ao CRM para o arrastar funcionar (23/09/2026)
 
 O **Outlook clássico** já funciona: arrasta e vira caso. O **Novo Outlook** não entrega o
