@@ -255,8 +255,89 @@ export const COLUNAS_MESA = `
 
    Só a Mesa esconde. O GET da esteira continua mandando a fila inteira, porque a
    automação do agente lê de lá. */
-export function naMesa(f: { fora_do_disco_em?: string | null }) {
-  return !f.fora_do_disco_em
+export function naMesa(f: { fora_do_disco_em?: string | null; coluna_id?: string | null }) {
+  /* 28/09/2026: "manter os cards que eu quiser". Card que ELE pôs numa coluna
+     (botão "Mudar o substatus") fica mesmo com a pasta na rede: a escolha dele
+     segura o card, e não o disco. Para sair, "Tirar da Mesa" no card. */
+  return !f.fora_do_disco_em || !!f.coluna_id
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   A MESA SEM PASTA  ·  28/09/2026
+
+   Pedido dele, com a coluna "Aprovar com Ressalvas": trazer para a Mesa os
+   cards aprovados com ressalva "sem eu ter que trazer a pasta do tomador para
+   dentro do meu notebook". Das 67 vigentes com ressalva, só 10 tinham pasta.
+
+   Uma análise do ACERVO entra na Mesa por dois caminhos:
+     · a REGRA de uma coluna (`analise_colunas.regra`) casa com ela;
+     · alguém a pôs numa coluna à mão (`analises.mesa_coluna_id`).
+   E sai por dois: "Tirar da Mesa" (`fora_da_mesa_em`, vai para o Acervo) e
+   "Aprovar definitivo" (`aprovado_definitivo_em`, idem, com quem e quando).
+   A recomendação da análise nunca é reescrita.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export interface RegraColuna { recomendacao_contem?: string | null }
+
+/** A análise do acervo, do jeito que a Mesa precisa dela. */
+export interface AnaliseDaMesa {
+  id: string
+  chave_local: string | null
+  cnpj: string | null
+  razao_social: string | null
+  nome_curto: string | null
+  tomador_id: string | null
+  corretora: string | null
+  data_analise: string | null
+  recomendacao: string | null
+  mesa_coluna_id: string | null
+  fora_da_mesa_em: string | null
+  aprovado_definitivo_em: string | null
+}
+
+export const COLUNAS_ANALISE_MESA =
+  'id, chave_local, cnpj, razao_social, nome_curto, tomador_id, corretora, data_analise, recomendacao, mesa_coluna_id, fora_da_mesa_em, aprovado_definitivo_em'
+
+const semAcentoMin = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+
+/** A regra casa com esta recomendação? Sem acento e sem caixa: o acervo
+ *  escreve "Aprovar com ressalvas", "Aprovado Com ressalvas" e "Com ressalvas". */
+export function casaRegra(regra: RegraColuna | null | undefined, recomendacao: string | null | undefined): boolean {
+  const termo = regra?.recomendacao_contem?.trim()
+  if (!termo || !recomendacao) return false
+  return semAcentoMin(recomendacao).includes(semAcentoMin(termo))
+}
+
+/** Em qual coluna a análise do acervo mora, ou nula se não está na Mesa. A
+ *  escolha à mão vence a regra; saída (tirada ou aprovada) vence tudo. */
+export function colunaDaAnalise(a: AnaliseDaMesa, colunas: ColunaMesa[]): string | null {
+  if (a.fora_da_mesa_em || a.aprovado_definitivo_em) return null
+  if (a.mesa_coluna_id && colunas.some(c => c.id === a.mesa_coluna_id)) return a.mesa_coluna_id
+  return colunas.find(c => casaRegra(c.regra, a.recomendacao))?.id ?? null
+}
+
+/** A análise virando ficha de card (a mesma conta do `fichaVirandoFila` do
+ *  CardAnalise): sem pasta, sem documentos, e a bandeira `semEsteira` faz o
+ *  card explicar por quê. */
+export function analiseVirandoFicha(a: AnaliseDaMesa, colunaId: string): FilaRica {
+  const quando = a.data_analise ? `${a.data_analise}T12:00:00.000Z` : new Date(0).toISOString()
+  return {
+    semEsteira: true,
+    id: a.id, caso_id: null, analise_id: a.id, tomador_id: a.tomador_id,
+    cnpj: a.cnpj, cnpj_confiavel: !!a.cnpj, razao_social: a.razao_social, chave_local: a.chave_local,
+    pasta: a.nome_curto || a.razao_social || a.id,
+    situacao: 'concluida', motivo: null, etapa: null, etapa_texto: null, etapa_em: null,
+    documentos: 0, documentos_faltando: [], hash_documentos: null, trava_maquina: null, trava_em: null,
+    ordem: null, ordem_por: null, ordem_em: null, ordem_dados: null, erro: null,
+    criado_em: quando, criado_por: null, concluido_em: quando, atualizado_em: quando,
+    chave: (a.cnpj && a.cnpj.length === 14 ? a.cnpj : '') || a.chave_local,
+    fase: 'pronta', nome: a.nome_curto || a.razao_social, corretora: a.corretora, produto: null,
+    docs: null, cadastro: null, arquivos: null, biblioteca: null, linha: [], parado_desde: null,
+    analise_chave: a.chave_local, substatus: a.recomendacao, substatus_por: null, substatus_em: null,
+    coluna_id: colunaId,
+    instrucao: null, modo: null, arquivos_fora: [], arquivos_fora_em: null, arquivada: true,
+    sincronizado_em: null, ultima_ordem_resultado: null, ultima_ordem_em: null,
+  }
 }
 
 /** O retrato da esteira que o agente grava em `analise_estado` (id = 'esteira'). */
@@ -636,6 +717,8 @@ export interface ColunaMesa {
   cor: string
   ordem: number
   arquivada: boolean
+  /** Puxa análises do acervo (28/09/2026). Nula = coluna manual. */
+  regra?: RegraColuna | null
 }
 
 /** As cinco do código, para a Mesa desenhar mesmo sem a tabela (migration

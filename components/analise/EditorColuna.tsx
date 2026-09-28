@@ -36,6 +36,9 @@ export default function EditorColuna({ coluna, colunas, aoFechar, aoSalvar }: {
   const nova = !coluna
   const [titulo, setTitulo] = useState(coluna?.titulo ?? '')
   const [cor, setCor] = useState(coluna?.cor ?? CORES[4])
+  /* A REGRA (28/09/2026): a coluna puxa do Acervo, sozinha, as análises cuja
+     recomendação contém este termo. Vazio = coluna manual, como sempre foi. */
+  const [termo, setTermo] = useState(coluna?.regra?.recomendacao_contem ?? '')
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState('')
 
@@ -63,14 +66,16 @@ export default function EditorColuna({ coluna, colunas, aoFechar, aoSalvar }: {
         quem = data?.nome ?? user.email ?? null
       }
     }
+    // Coluna do sistema não ganha regra: ela já tem a fase.
+    const regra = coluna?.fase ? undefined : (termo.trim() ? { recomendacao_contem: termo.trim().slice(0, 60) } : null)
     const { error } = nova
       /* A coluna nova entra no FIM do quadro: é onde o Trello põe, e é onde a
          pessoa acabou de clicar. */
       ? await supabase.from('analise_colunas').insert({
-          titulo: t, cor, criado_por: quem,
+          titulo: t, cor, criado_por: quem, regra,
           ordem: (colunas.at(-1)?.ordem ?? 50) + 10,
         })
-      : await supabase.from('analise_colunas').update({ titulo: t, cor, atualizado_em: agora }).eq('id', coluna!.id)
+      : await supabase.from('analise_colunas').update({ titulo: t, cor, atualizado_em: agora, ...(regra !== undefined ? { regra } : {}) }).eq('id', coluna!.id)
     setOcupado(false)
     if (error) { setErro(error.message); return }
     aoSalvar()
@@ -145,6 +150,19 @@ export default function EditorColuna({ coluna, colunas, aoFechar, aoSalvar }: {
                 ))}
               </div>
             </div>
+
+            {!coluna?.fase && (
+              <div className="an-campo">
+                <label htmlFor="col-regra">Puxar do Acervo (opcional)</label>
+                <input id="col-regra" type="text" value={termo} maxLength={60}
+                  placeholder='Ex.: ressalva  ·  a recomendação da análise contém este termo'
+                  onChange={(e) => setTermo(e.target.value)} />
+                <div className="an-dica" style={{ marginTop: 6 }}>
+                  Com um termo, a coluna traz sozinha as análises vigentes cuja recomendação o contém,
+                  sem precisar da pasta no computador. Vazio, o card só entra quando alguém escolhe.
+                </div>
+              </div>
+            )}
 
             {!nova && (
               <div className="an-campo">

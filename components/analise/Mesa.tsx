@@ -39,6 +39,7 @@ import {
   COLUNAS_MESA, nomeDaFicha, diasParado, iniciaisDe, corDoNome, desde, corta,
   agruparPorEmpresa, nomeDoGrupo, naMesa, type GrupoEmpresa,
   colunasVisiveis, colunaDoCard, type ColunaMesa,
+  COLUNAS_ANALISE_MESA, colunaDaAnalise, analiseVirandoFicha, type AnaliseDaMesa,
   ordenarPor, prioridadeDoGrupo, renumerar, mover, ORDENS_COLUNA, ehOrdemColuna, type OrdemColuna,
   type FilaRica, type EstadoEsteira, type Encaminhamento,
 } from '@/lib/analise/mesa'
@@ -86,6 +87,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
      aparece pela pasta; os demais (sem pasta ainda, ou com a pasta fora deste
      computador) aparecem aqui como caso, para nenhum pedido sumir na mudança. */
   const [casosTriagem, setCasosTriagem] = useState<CasoTriagem[]>([])
+  const [analisesMesa, setAnalisesMesa] = useState<AnaliseDaMesa[]>([])
   const [estado, setEstado] = useState<EstadoEsteira | null>(null)
   const [estadoEm, setEstadoEm] = useState<string | null>(null)
   const [acervo, setAcervo] = useState<{ total: number; revisadas: number } | null>(null)
@@ -168,7 +170,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
 
   const carregar = useCallback(async (vivo = { atual: true }) => {
     const supabase = createClient()
-    const [f, e, a, r, enc, cmd, feito, cols, ca] = await Promise.all([
+    const [f, e, a, r, enc, cmd, feito, cols, ca, an] = await Promise.all([
       supabase.from('analise_fila').select(COLUNAS_MESA).order('atualizado_em', { ascending: false }).limit(300),
       supabase.from('analise_estado').select('dados, atualizado_em').eq('id', 'esteira').maybeSingle(),
       supabase.from('analises').select('id', { count: 'exact', head: true }).eq('vigente', true),
@@ -176,13 +178,15 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
       supabase.from('analise_encaminhamentos').select('*').eq('estado', 'aberto').order('criado_em', { ascending: false }).limit(200),
       supabase.from('analise_comandos').select('comando, criado_em, aceito_em').eq('comando', 'varrer').is('feito_em', null).order('criado_em', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('analise_comandos').select('feito_em, resultado').eq('comando', 'varrer').not('feito_em', 'is', null).order('feito_em', { ascending: false }).limit(1).maybeSingle(),
-      supabase.from('analise_colunas').select('id, titulo, fase, dica, cor, ordem, arquivada').order('ordem'),
+      supabase.from('analise_colunas').select('id, titulo, fase, dica, cor, ordem, arquivada, regra').order('ordem'),
       // A mesma consulta da antiga coluna do Funil: os casos ABERTOS.
       supabase.from('casos')
         .select('id, numero, assunto, cnpj, razao_social, corretora_texto, tomador_id, analise_fila_id, criado_em')
         .in('etapa', ['comercial', 'triagem'])
         .order('criado_em', { ascending: false })
         .limit(500),
+      // O acervo que pode entrar na Mesa sem pasta (28/09/2026): as vigentes.
+      supabase.from('analises').select(COLUNAS_ANALISE_MESA).eq('vigente', true).limit(1000),
     ])
     if (!vivo.atual) return
     if (f.error) setErro(f.error.message)
@@ -202,6 +206,8 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     // Sem a tabela (migration atrasada) a Mesa segue com as cinco do código.
     if (!cols.error) setColunasBanco((cols.data ?? []) as ColunaMesa[])
     setCasosTriagem((ca.data ?? []) as CasoTriagem[])
+    // Sem as colunas novas (migration atrasada), segue sem o acervo, sem cair.
+    if (!an.error) setAnalisesMesa((an.data ?? []) as AnaliseDaMesa[])
     setAgora(Date.now())
     setCarregando(false)
   }, [])
@@ -220,6 +226,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analise_comandos' }, () => carregar(vivo))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analise_colunas' }, () => carregar(vivo))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'casos' }, () => carregar(vivo))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'analises' }, () => carregar(vivo))
       .subscribe()
     const t = setInterval(() => carregar(vivo), 20000)
     return () => { vivo.atual = false; clearInterval(t); supabase.removeChannel(canal) }
@@ -244,22 +251,59 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
   const semSinal = !estadoEm || agora - new Date(estadoEm).getTime() > 5 * 60 * 1000
   const revPct = acervo?.total ? Math.round((acervo.revisadas / acervo.total) * 100) : 0
 
+  const colunas = useMemo(() => colunasVisiveis(colunasBanco), [colunasBanco])
+
+  /* O ACERVO NA MESA (28/09/2026): a análise sem pasta no disco entra quando
+     uma coluna a puxa pela regra, ou quando alguém a pôs numa coluna. A que
+     já tem pasta na Mesa aparece pela pasta, e não duas vezes. */
+  const doAcervo = useMemo(() => {
+    const comPasta = new Set(fila.flatMap(f => [f.analise_id, f.analise_chave].filter(Boolean) as string[]))
+    /* A empresa que tem pasta andando na Mesa (reanálise, triagem) é mostrada
+       pela pasta: juntar o acervo a ela puxaria o card para a coluna da análise
+       antiga, e o trabalho de hoje sumiria do quadro. */
+    const empresaNaMesa = new Set(fila.flatMap(f => [f.tomador_id, f.cnpj && f.cnpj.length === 14 ? f.cnpj : null].filter(Boolean) as string[]))
+    const r: FilaRica[] = []
+    for (const a of analisesMesa) {
+      if (comPasta.has(a.id) || (a.chave_local && comPasta.has(a.chave_local))) continue
+      if ((a.tomador_id && empresaNaMesa.has(a.tomador_id)) || (a.cnpj && empresaNaMesa.has(a.cnpj))) continue
+      const col = colunaDaAnalise(a, colunas)
+      if (col) r.push(analiseVirandoFicha(a, col))
+    }
+    return r
+  }, [analisesMesa, fila, colunas])
+
+  /** A análise de uma pasta, para a regra da coluna valer também para ela. */
+  const analiseDaPasta = useMemo(() => {
+    const m = new Map<string, AnaliseDaMesa>()
+    for (const a of analisesMesa) { m.set(a.id, a); if (a.chave_local) m.set(a.chave_local, a) }
+    return m
+  }, [analisesMesa])
+
   const fichas = useMemo(() => {
     const q = busca.trim().toLowerCase()
+    const todas = [...fila, ...doAcervo]
     const lista = q
-      ? fila.filter(f => [nomeDaFicha(f), f.cnpj, f.corretora, f.produto, f.pasta].filter(Boolean).join(' ').toLowerCase().includes(q))
-      : fila
+      ? todas.filter(f => [nomeDaFicha(f), f.cnpj, f.corretora, f.produto, f.pasta].filter(Boolean).join(' ').toLowerCase().includes(q))
+      : todas
     // A ordem é a de quem olha: o mais parado primeiro. Compara a data do
     // último evento (texto ISO), sem relógio: a conta de dias fica para o cartão.
     const ref = (x: FilaRica) => String(x.parado_desde || x.atualizado_em || x.criado_em || '')
     return [...lista].sort((a, b) => ref(a).localeCompare(ref(b)))
-  }, [fila, busca])
+  }, [fila, doAcervo, busca])
 
   const faseDa = (f: FilaRica): Fase => (f.fase as Fase) || faseDe(f.situacao, f.cadastro?.status)
 
-  const colunas = useMemo(() => colunasVisiveis(colunasBanco), [colunasBanco])
-  /** A coluna onde o card mora: a escolhida por alguém, senão a da fase. */
-  const colunaDa = (f: FilaRica) => colunaDoCard(f, faseDa(f), colunas)
+  /** A coluna onde o card mora: a escolhida por alguém; senão, para a pasta
+   *  já PRONTA, a coluna cuja regra casa com a análise dela ("Aprovar com
+   *  Ressalvas"); senão, a da fase. */
+  const colunaDa = (f: FilaRica) => {
+    if (!f.coluna_id && !f.semEsteira && faseDa(f) === 'pronta') {
+      const a = (f.analise_id && analiseDaPasta.get(f.analise_id)) || (f.analise_chave && analiseDaPasta.get(f.analise_chave)) || null
+      const regra = a ? colunaDaAnalise({ ...a, mesa_coluna_id: null }, colunas) : null
+      if (regra) return colunaDoCard({ coluna_id: regra }, faseDa(f), colunas)
+    }
+    return colunaDoCard(f, faseDa(f), colunas)
+  }
   /** O prazo só vale em coluna do sistema. Numa coluna dele, como
    *  "Interrompido", o card está parado DE PROPÓSITO, e acender o vermelho
    *  seria cobrar o que ele mesmo mandou esperar. */
@@ -533,7 +577,9 @@ Nada do que já foi salvo se perde.`)) return
             )}
           </div>
         )}
-        {medidor(f)}
+        {/* Card do acervo (sem pasta): não tem documento para contar nem dia
+            parado, e as duas linhas leriam como pendência que não existe. */}
+        {!f.semEsteira && medidor(f)}
         {f.situacao === 'em_andamento' && (
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 11.5, color: '#1e4080', fontWeight: 700 }}>{f.etapa_texto || 'Trabalhando…'}</div>
@@ -542,7 +588,9 @@ Nada do que já foi salvo se perde.`)) return
         )}
         {chips(f)}
         {ultimo?.txt && <div className="an-fi-ult" title={ultimo.txt}>{corta(ultimo.txt, 46)}</div>}
-        {pe(f)}
+        {f.semEsteira
+          ? <div className="an-fi-ult">{f.substatus ?? 'Análise'} · sem pasta no computador</div>
+          : pe(f)}
       </button>
     )
   }

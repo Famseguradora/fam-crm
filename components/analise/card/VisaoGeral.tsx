@@ -49,7 +49,7 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
   useEffect(() => {
     if (!subAberto) return
     let vivo = true
-    createClient().from('analise_colunas').select('id, titulo, fase, dica, cor, ordem, arquivada').order('ordem')
+    createClient().from('analise_colunas').select('id, titulo, fase, dica, cor, ordem, arquivada, regra').order('ordem')
       .then(({ data, error }) => { if (vivo) setColunas(colunasVisiveis(error ? null : (data as ColunaMesa[]))) })
     return () => { vivo = false }
   }, [subAberto])
@@ -83,6 +83,19 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
        respondeu; ela não é gravável, então vale como "o sistema decide". */
     const coluna = colunaEscolhida && !colunaEscolhida.startsWith('fase:') ? colunaEscolhida : null
     const mudou = coluna !== (f.coluna_id ?? null)
+    /* CARD SEM PASTA (28/09/2026): a análise do acervo não tem linha na
+       esteira, então a coluna escolhida mora nela (`analises.mesa_coluna_id`).
+       Escolher uma coluna também a devolve à Mesa, se tinha sido tirada. */
+    if (f.semEsteira && f.analise_id) {
+      const { error } = await supabase.from('analises').update({
+        mesa_coluna_id: coluna, mesa_por: coluna ? quem.nome : null, mesa_em: coluna ? agora : null,
+        ...(coluna ? { fora_da_mesa_em: null, fora_da_mesa_por: null } : {}),
+      }).eq('id', f.analise_id)
+      setSalvando(false)
+      if (error) { setErroSub(error.message); return }
+      setSubAberto(false); await recarregar()
+      return
+    }
     const { error } = await supabase.from('analise_fila').update({
       substatus: t || null, substatus_por: quem.nome, substatus_em: agora,
       ...(mudou ? { coluna_id: coluna, coluna_por: coluna ? quem.nome : null, coluna_em: coluna ? agora : null } : {}),

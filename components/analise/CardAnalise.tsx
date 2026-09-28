@@ -33,7 +33,7 @@ import { usePermissoes } from '@/lib/context/permissoes-context'
 import { maskCNPJ } from '@/lib/utils'
 import { fichaPorId, fichaDaAnalise, semMarcador, type FichaAnalise } from '@/lib/analise/ficha'
 import { faseDe, nomeDaFase, SITUACAO, type Ordem } from '@/lib/analise/esteira'
-import { COLUNAS_FILA, nomeDaFicha, iniciaisDe, corDoNome, type FilaRica } from '@/lib/analise/mesa'
+import { COLUNAS_FILA, nomeDaFicha, iniciaisDe, corDoNome, COLUNAS_ANALISE_MESA, casaRegra, type FilaRica, type AnaliseDaMesa } from '@/lib/analise/mesa'
 import { IcoVoltar } from '@/components/tomador/icones'
 import BarraAnalises, { useContagensBarra } from './BarraAnalises'
 import EstiloAnalises from './Estilo'
@@ -76,6 +76,77 @@ interface SecaoDoCard {
   paralisa_motivo: string | null
   concluida_em: string | null
   concluida_por: string | null
+}
+
+/* AS DUAS SAÍDAS DA MESA  ·  28/09/2026
+   "Aprovar definitivo": a ressalva virou aprovação. Grava quem e quando em
+   `analises.aprovado_definitivo_*`, e o card sai da coluna para o Acervo. A
+   recomendação da análise NÃO muda: o relatório é a foto do dia.
+   "Tirar da Mesa": o card vai para o Acervo sem decisão nenhuma. Quem tem
+   pasta no disco volta à coluna da fase até a pasta ir para a rede.
+   Grava quem pode editar a análise (a RLS de `analises` é a trava). */
+function SaidasDaMesa({ f, analiseId, quem, aoMudar }: { f: FilaRica; analiseId: string | null; quem: Quem; aoMudar: () => void }) {
+  const router = useRouter()
+  const [a, setA] = useState<AnaliseDaMesa | null>(null)
+  const [mandando, setMandando] = useState(false)
+  const [erro, setErro] = useState('')
+
+
+  useEffect(() => {
+    if (!analiseId) return
+    let vivo = true
+    createClient().from('analises').select(COLUNAS_ANALISE_MESA).eq('id', analiseId).maybeSingle()
+      .then(({ data }) => { if (vivo) setA((data as AnaliseDaMesa | null) ?? null) })
+    return () => { vivo = false }
+  }, [analiseId])
+
+  if (!quem.analista) return null
+  const ressalva = casaRegra({ recomendacao_contem: 'ressalva' }, a?.recomendacao)
+  const naMesaPorMim = f.semEsteira ? !!a && !a.fora_da_mesa_em && !a.aprovado_definitivo_em : !!f.coluna_id
+
+  const gravar = async (tipo: 'aprovar' | 'tirar') => {
+    if (tipo === 'aprovar' && !window.confirm(`Aprovar definitivo ${nomeDaFicha(f)}?\n\nA análise recomendava "${a?.recomendacao}". Fica gravado quem aprovou e quando, e o card vai para o Acervo.`)) return
+    setMandando(true); setErro('')
+    const supabase = createClient()
+    const agora = new Date().toISOString()
+    const nome = quem.nome ?? 'alguém'
+    if (analiseId) {
+      const { data, error } = await supabase.from('analises').update(tipo === 'aprovar'
+        ? { aprovado_definitivo_em: agora, aprovado_definitivo_por: nome, mesa_coluna_id: null }
+        : { fora_da_mesa_em: agora, fora_da_mesa_por: nome, mesa_coluna_id: null },
+      ).eq('id', analiseId).select('id')
+      if (error || !data?.length) { setErro(error?.message ?? 'Sem permissão para mudar esta análise.'); setMandando(false); return }
+    }
+    // A pasta que ele tinha segurado numa coluna solta junto.
+    if (!f.semEsteira && f.coluna_id) await supabase.from('analise_fila').update({ coluna_id: null, coluna_por: null, coluna_em: null }).eq('id', f.id)
+    if (tipo === 'aprovar' && f.tomador_id) {
+      await supabase.from('card_eventos').insert({
+        tomador_id: f.tomador_id, tipo: 'evento', area: 'credito', autor_nome: nome,
+        texto: `Aprovado definitivo por ${nome}. A análise${a?.data_analise ? ` de ${fmtData(a.data_analise)}` : ''} recomendava "${a?.recomendacao}".`,
+      })
+    }
+    setMandando(false)
+    if (tipo === 'tirar') { router.push('/analises'); return }
+    aoMudar()
+    setA(x => (x ? { ...x, aprovado_definitivo_em: agora } : x))
+  }
+
+  if (a?.aprovado_definitivo_em) {
+    return <span className="an-tag pronta" title="A ressalva virou aprovação definitiva">Aprovado definitivo</span>
+  }
+  return (
+    <>
+      {ressalva && (
+        <button type="button" className="an-bt mini azul" disabled={mandando} onClick={() => gravar('aprovar')}
+          title="A ressalva foi atendida: grava a aprovação definitiva e manda o card para o Acervo">Aprovar definitivo</button>
+      )}
+      {(naMesaPorMim || ressalva) && (
+        <button type="button" className="an-bt mini" disabled={mandando} onClick={() => gravar('tirar')}
+          title="Tira o card da Mesa e manda para o Acervo. Nada é apagado.">Tirar da Mesa</button>
+      )}
+      {erro && <span style={{ fontSize: 12, color: '#a02020' }}>{erro}</span>}
+    </>
+  )
 }
 
 /* A BANCADA DE TRIAGEM DENTRO DO CARD. Com caso, é a tela do Funil inteira
@@ -696,6 +767,7 @@ export default function CardAnalise({ id }: { id: string }) {
             <span className="an-tag">{nomeDaFase(fase)}</span>
             {f.substatus && <span className="an-tag sub" title={`Substatus escrito por ${f.substatus_por ?? 'Marco'}`}>📌 {f.substatus}</span>}
             {semMarcador(f.corretora || ficha?.corretora) && <span style={{ fontSize: 13, color: '#6080a0' }}>{semMarcador(f.corretora || ficha?.corretora)}</span>}
+            <SaidasDaMesa f={f} analiseId={f.analise_id ?? ficha?.id ?? null} quem={quem} aoMudar={carregar} />
             {f.tomador_id && (
               <button type="button" className="an-bt mini" onClick={() => router.push(`/tomadores/${f.tomador_id}`)} title="O cadastro deste tomador no CRM, com as operações">Cadastro no CRM</button>
             )}
