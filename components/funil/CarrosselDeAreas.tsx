@@ -58,6 +58,10 @@ const PAPEL: Record<PostoCentral, string> = {
 const lmgNoFunil = (ops: OperacaoNoCarrossel[]) =>
   ops.reduce((s, o) => s + (mundoDa(o.status) === 'funil' ? lmgFam(o) : 0), 0)
 
+/** O LMG já emitido: só o mundo emitida, capado. */
+const lmgEmitido = (ops: OperacaoNoCarrossel[]) =>
+  ops.reduce((s, o) => s + (mundoDa(o.status) === 'emitida' ? lmgFam(o) : 0), 0)
+
 /** O prêmio de um mundo só: o previsto do funil, ou o das apólices emitidas. */
 const premioDe = (ops: OperacaoNoCarrossel[], mundo: 'funil' | 'emitida') =>
   ops.reduce((s, o) => s + (mundoDa(o.status) === mundo ? o.premio : 0), 0)
@@ -70,10 +74,11 @@ export default function CarrosselDeAreas({ porArea, emitido, responsaveis, corDa
   corDaEtapa: (status: string | null) => string
   aoAbrir: (tomadorId: string) => void
 }) {
-  /* Abre na área que tem mais empresas vivas: é onde o trabalho está. */
+  /* Abre na área que tem mais empresas vivas: é onde o trabalho está. A
+     Emissão não conta: a lista dela é o realizado, não trabalho andando. */
   const [atual, setAtual] = useState(() => {
     let melhor = 0
-    REGUA.forEach((p, i) => { if ((porArea[p]?.length ?? 0) > (porArea[REGUA[melhor]]?.length ?? 0)) melhor = i })
+    REGUA.forEach((p, i) => { if (p !== 'emissao' && (porArea[p]?.length ?? 0) > (porArea[REGUA[melhor]]?.length ?? 0)) melhor = i })
     return melhor
   })
   const [estreito, setEstreito] = useState(false)
@@ -187,7 +192,9 @@ export default function CarrosselDeAreas({ porArea, emitido, responsaveis, corDa
       </div>
 
       {empresas.length === 0 ? (
-        <div style={{ ...texto.apoio, padding: '14px 4px' }}>Nenhuma empresa com operação está nesta área agora.</div>
+        <div style={{ ...texto.apoio, padding: '14px 4px' }}>
+          {posto === 'emissao' ? 'Nenhuma empresa com apólice emitida nos filtros de agora.' : 'Nenhuma empresa com operação está nesta área agora.'}
+        </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(260px, 100%), 1fr))', gap: 10 }}>
           {empresas.map(emp => {
@@ -206,8 +213,18 @@ export default function CarrosselDeAreas({ porArea, emitido, responsaveis, corDa
                 }}>
                 <div style={{ ...texto.titulo, lineHeight: 1.3 }}>{emp.nome}</div>
                 <div style={{ ...texto.apoio, marginTop: 2 }}>
-                  {noFunil} no funil · <b style={{ color: cor.texto }}>{fmtMoeda(lmg)}</b>
-                  {emitidas > 0 && <> · {emitidas} {emitidas === 1 ? 'emitida' : 'emitidas'}</>}
+                  {posto === 'emissao' ? (
+                    // Na Emissão a manchete é o realizado; o funil vem depois, se houver.
+                    <>
+                      {emitidas} {emitidas === 1 ? 'emitida' : 'emitidas'} · <b style={{ color: cor.texto }}>{fmtMoeda(lmgEmitido(emp.ops))}</b>
+                      {noFunil > 0 && <> · {noFunil} no funil</>}
+                    </>
+                  ) : (
+                    <>
+                      {noFunil} no funil · <b style={{ color: cor.texto }}>{fmtMoeda(lmg)}</b>
+                      {emitidas > 0 && <> · {emitidas} {emitidas === 1 ? 'emitida' : 'emitidas'}</>}
+                    </>
+                  )}
                 </div>
                 {(premio > 0 || premioEmitido > 0) && (
                   <div style={{ ...texto.apoio, marginTop: 2 }}>

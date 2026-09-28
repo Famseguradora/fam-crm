@@ -511,7 +511,8 @@ export default function FluxoPage() {
       empresas: empresasVivas.size,
       vivas: vivas.length,
       mortas: vistas.length - vivas.length,
-      lmg: emitidas.reduce((s, o) => s + num(o.lmg), 0),
+      // Capado em 80 mi, como o KPI de emitidas da tela de Operações.
+      lmg: emitidas.reduce((s, o) => s + lmgFam(o), 0),
       premio: emitidas.reduce((s, o) => s + num(o.premio_previsto), 0),
       apolices: emitidas.length,
     }
@@ -542,14 +543,23 @@ export default function FluxoPage() {
   /** As empresas de cada área, no formato do carrossel. */
   const empresasPorArea = useMemo(() => {
     const r: Record<string, EmpresaNoCarrossel[]> = {}
+    const emissao: EmpresaNoCarrossel[] = []
     for (const e of empresasVistas) {
       const resumo = resumoDe(e.id)
-      ;(r[areaDe(e.id)] ??= []).push({
+      const empresa: EmpresaNoCarrossel = {
         id: e.id, nome: e.nome,
         ops: e.ops.map(o => ({ id: o.id, modalidade: o.modalidade, status: o.status, lmg: num(o.lmg), premio: num(o.premio_previsto) })),
         trava: resumo?.trava ?? null, paralisado: !!resumo?.paralisado,
-      })
+      }
+      const area = areaDe(e.id)
+      /* A EMISSÃO É O REALIZADO (28/09/2026): ninguém move card para lá, então
+         ela lista quem tem apólice emitida, a mesma base do KPI. A empresa com
+         operação nova andando aparece também na área dela: são mundos que não
+         se somam, e cada lista conta o seu. */
+      if (area === 'emissao' || e.ops.some(o => mundoDa(o.status) === 'emitida')) emissao.push(empresa)
+      if (area !== 'emissao') (r[area] ??= []).push(empresa)
     }
+    r.emissao = emissao
     return r
   }, [empresasVistas, resumoDe, areaDe])
 
