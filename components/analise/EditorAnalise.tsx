@@ -38,6 +38,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { fmtMoeda } from '@/lib/utils'
 import type { FichaAnalise } from '@/lib/analise/ficha'
+import EditorComplementares from './EditorComplementares'
 
 // ── o que se escreve, e como ────────────────────────────────────────────────
 
@@ -389,6 +390,8 @@ export default function EditorAnalise({ ficha, aoSalvar }: {
           </div>
         </section>
       ))}
+
+      <EditorComplementares ficha={ficha} aoSalvar={aoSalvar} />
     </div>
   )
 }

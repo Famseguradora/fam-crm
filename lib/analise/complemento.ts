@@ -186,7 +186,7 @@ export function normalizarResultado(cru: unknown): ResultadoComplemento {
         periodo: txt(d.periodo, 60) || null,
         assinado: bool(d.assinado),
         consistencia: um(d.consistencia, ['ok', 'atencao', 'problema'] as const, 'atencao'),
-        observacao: txt(d.observacao, 600),
+        observacao: txt(d.observacao, 2000),
       }
     }).filter(d => d.arquivo),
     pendencias: lst(r.pendencias),

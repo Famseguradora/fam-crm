@@ -26,6 +26,7 @@ import {
   linhaDoTempo, comparavel, variacao, indices, comparacaoPrincipal,
   type Complemento, type ColunaTempo, type Veredito, type Indices,
 } from '@/lib/analise/complemento'
+import { htmlDoComplemento } from '@/lib/analise/pdf-complemento'
 import { Bloco } from '@/components/analise/Relatorio'
 import { GradeCartoes, CartaoNumero, Moldura, Aviso } from '@/components/painel/Painel'
 import { cor, raio, texto, botaoCheio, botaoVazado } from '@/lib/ui/painel'
@@ -266,12 +267,31 @@ function UmComplemento({ c, ficha, podeMexer, aoMudar }: {
     if (data?.signedUrl) window.open(data.signedUrl, '_blank', 'noopener')
   }
 
-  const acoes = podeMexer && (
-    <span style={{ display: 'inline-flex', gap: 6 }}>
-      {c.estado !== 'lendo' && (
+  /* EXPORTAR EM PDF (28/09/2026): o documento vai por e-mail à Subscrição.
+     Imprime por um quadro escondido; "Salvar como PDF" no destino. */
+  const exportarPdf = () => {
+    const q = document.createElement('iframe')
+    q.setAttribute('aria-hidden', 'true')
+    q.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
+    q.onload = () => {
+      q.contentWindow?.focus()
+      q.contentWindow?.print()
+      setTimeout(() => q.remove(), 60_000)
+    }
+    q.srcdoc = htmlDoComplemento(c, ficha)
+    document.body.appendChild(q)
+  }
+
+  const acoes = (
+    <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+      {c.estado === 'pronta' && c.resultado && (
+        <button type="button" style={{ ...botaoCheio, padding: '5px 10px', fontSize: 12 }} onClick={exportarPdf}
+          title="Abre a impressão com o documento pronto. Escolha Salvar como PDF no destino.">Exportar PDF</button>
+      )}
+      {podeMexer && c.estado !== 'lendo' && (
         <button type="button" style={{ ...botaoVazado, padding: '5px 10px', fontSize: 12 }} onClick={refazer}>Ler de novo</button>
       )}
-      <button type="button" style={{ ...botaoVazado, padding: '5px 10px', fontSize: 12 }} onClick={apagar}>Apagar</button>
+      {podeMexer && <button type="button" style={{ ...botaoVazado, padding: '5px 10px', fontSize: 12 }} onClick={apagar}>Apagar</button>}
     </span>
   )
 
