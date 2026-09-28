@@ -31,6 +31,8 @@ import { SecaoResseguro, SecaoScore, SecaoEmpresa } from '@/components/analise/R
 import { PortaDoRelatorio, SemSistemaLocal } from '@/components/analise/PortaDoRelatorio'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import Complementos from '@/components/analise/Complementos'
+import OQueMudou from '@/components/analise/OQueMudou'
+import ParecerComplementar from '@/components/analise/ParecerComplementar'
 
 /* A ORDEM DAS SEÇÕES É A DO RELATÓRIO DELE, e não a de quando cada uma foi
    construída: quem abre isto está lendo uma análise de crédito, e a leitura
@@ -207,7 +209,22 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
         <div className="mt-painel">
           {editando && <EditorAnalise ficha={ficha} aoSalvar={reler} />}
 
-          {!editando && secao === 'analise' && <SecaoAnalise ficha={ficha} />}
+          {/* O COMPARATIVO MORA COLADO NA DECISÃO, e não numa aba própria
+              (24/09/2026). Ele só existe quando há versão anterior do mesmo
+              CNPJ, e um item de menu que às vezes abre vazio é pior que um
+              bloco que aparece quando tem o que dizer. Quem lê a decisão de
+              hoje precisa ver, no mesmo rolar, o que ela mudou em relação à
+              que estava valendo. */}
+          {!editando && secao === 'analise' && (
+            <>
+              {/* Dentro do card quem mostra é o RelatorioNoFluxo, acima dos três modos. */}
+              {!semCabecalho && <ParecerComplementar analiseId={ficha.id} />}
+              <SecaoAnalise ficha={ficha} />
+              <div style={{ marginTop: 16 }}>
+                <OQueMudou analiseId={ficha.id} cnpj={ficha.cnpj} />
+              </div>
+            </>
+          )}
           {!editando && secao === 'complemento' && <Complementos ficha={ficha} />}
           {!editando && secao === 'tres' && <SecaoTresCs ficha={ficha} />}
           {!editando && secao === 'serasa' && <SecaoSerasa ficha={ficha} />}

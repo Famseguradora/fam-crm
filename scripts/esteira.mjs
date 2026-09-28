@@ -185,6 +185,54 @@ function pastaDentroDaRaiz(pasta) {
   return dir
 }
 
+/* OS DOCUMENTOS NOVOS DE UMA REANÁLISE (24/09/2026)
+   ---------------------------------------------------------------------------
+   Ele sobe o documento no CRM e ele tem que chegar DENTRO da pasta antes de o
+   motor rodar. Até aqui a tela mandava, com todas as letras, "cole na pasta,
+   dentro de _concluidas no notebook".
+
+   Baixa para o TEMP e não para a pasta: quem copia para dentro da análise é o
+   `fila.mjs refazer()`, que sabe desarquivar de `_concluidas` primeiro e
+   precisa dos arquivos lá ANTES da triagem, para o hash nascer com eles. O
+   TEMP também é fora do OneDrive, pela mesma razão do complemento (download
+   grande no OneDrive morre com WinError 32).
+
+   Arquivo que não baixa NÃO é engolido: volta em `falhas`, e a ordem falha.
+   Reanálise sem o documento que a justifica repete a decisão anterior. */
+async function baixarDocumentosDaOrdem(o, documentos) {
+  const nomeSeguro = (n) => path.basename(String(n ?? 'documento')).replace(/[\\/:*?"<>|]/g, '_')
+  const destino = path.join(os.tmpdir(), 'fam-reanalise', String(o.id))
+  fs.mkdirSync(destino, { recursive: true })
+  const caminhos = []
+  const falhas = []
+  for (const d of documentos) {
+    const nome = nomeSeguro(d?.nome)
+    if (!d?.url) { falhas.push(`${nome}: o CRM não assinou o link`); continue }
+    /* TRÊS TENTATIVAS ANTES DE DESISTIR. A ordem que falha é apagada pelo
+       `ordem-falhou`, e com ela vai o dossiê inteiro: ele teria que escrever
+       o motivo e subir os documentos de novo por causa de uma queda de rede
+       de dois segundos. O pedido continua registrado em `analise_reanalises`
+       de qualquer jeito, mas refazê-lo é trabalho dele. */
+    let ultimo = ''
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      try {
+        const resp = await fetch(d.url)
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const alvo = path.join(destino, nome)
+        fs.writeFileSync(alvo, Buffer.from(await resp.arrayBuffer()))
+        caminhos.push(alvo)
+        ultimo = ''
+        break
+      } catch (e) {
+        ultimo = e.message
+        if (tentativa < 3) await new Promise(r => setTimeout(r, tentativa * 2000))
+      }
+    }
+    if (ultimo) falhas.push(`${nome}: ${ultimo} (3 tentativas)`)
+  }
+  return { caminhos, falhas, destino }
+}
+
 // ── 2. materializar: o caso do CRM vira pasta no disco ──────────────────────
 /* Este é o passo que faltava para a análise COMEÇAR dentro do CRM. O e-mail
    entrou pela Caixa, virou caso, a Triagem conferiu, e os documentos estão no
@@ -744,12 +792,36 @@ async function executarOrdens(ordens) {
       }
 
       if (o.ordem === 'refazer') {
+        /* REANÁLISE COM MEMÓRIA (24/09/2026): o dossiê da análise anterior e
+           os documentos novos que ele subiu no CRM. Os dois são opcionais, e
+           sem eles este refazer é exatamente o de sempre. */
+        const dossie = String(dados.dossie || '')
+        const documentos = Array.isArray(dados.documentos) ? dados.documentos : []
+        let novos = []
+        if (documentos.length) {
+          const baixados = await baixarDocumentosDaOrdem(o, documentos)
+          if (baixados.falhas.length) {
+            /* Parar aqui é deliberado: a pasta ainda não se mexeu, e a ordem
+               continua de pé para a próxima rodada. Refazer sem o documento é
+               que não dá. */
+            console.error('    documentos da reanálise:', baixados.falhas.join(' · '))
+            await falhou(`nao consegui trazer ${baixados.falhas.length} documento(s) do pedido: ${baixados.falhas.join(' · ')}. Nao refiz: a analise rodaria sem eles. O que voce escreveu e os documentos continuam guardados no CRM: e so clicar em Reanalisar de novo.`)
+            continue
+          }
+          novos = baixados.caminhos
+          console.log(`    ${novos.length} documento(s) novo(s) baixado(s) do CRM.`)
+        }
+        const op = { instrucao: instrucoes, escopo: dados.escopo || 'completa', ...(dossie ? { dossie } : {}), ...(novos.length ? { novos } : {}) }
+        const contou = (r) => {
+          const entraram = r?.do_pedido?.length ? ` Entraram ${r.do_pedido.length} documento(s) novo(s).` : ''
+          return `De volta à fila para refazer.${entraram}${dossie ? ' O analista recebeu a análise anterior inteira.' : ''}`
+        }
         if (local) {
-          const r = await servidor('/api/refazer/' + encodeURIComponent(o.pasta), { instrucao: instrucoes, escopo: dados.escopo || 'completa' })
-          await (r.ok ? feito('De volta à fila para refazer.') : falhou(r.erro || r.motivo || 'o servidor recusou'))
+          const r = await servidor('/api/refazer/' + encodeURIComponent(o.pasta), op)
+          await (r.ok ? feito(contou(r)) : falhou(r.erro || r.motivo || 'o servidor recusou'))
         } else {
-          const r = Fila?.refazer?.(o.pasta, { instrucao: instrucoes, escopo: dados.escopo || 'completa' })
-          await (r?.ok === false ? falhou(r.motivo || 'não consegui refazer') : feito('De volta à fila para refazer.'))
+          const r = Fila?.refazer?.(o.pasta, op)
+          await (r?.ok === false ? falhou(r.motivo || 'não consegui refazer') : feito(contou(r)))
         }
         await sincronizar()
         continue
@@ -868,11 +940,20 @@ async function liberarPergunta(o, dados) {
    agente ENTREGA o comando para ele colar; ligado, sobe o Claude ele mesmo. */
 async function iniciarSemServidor(o, instrucoes, modo, feito, falhou) {
   if (instrucoes) {
-    /* NÃO ENGOLIR ESTA FALHA. Rodar a análise achando que a ordem chegou é
-       pior do que não rodar: o relatório sai sem o que ele mandou observar, e
-       ninguém descobre. É a mesma regra do `/api/analisar` do servidor. */
+    /* O DOSSIÊ DA REANÁLISE GANHA DO RECADO CURTO (24/09/2026). Refazer grava
+       no `_instrucoes.txt` a análise anterior inteira; o `instrucao` da linha
+       guarda o mesmo motivo em resumo, e ele chega aqui na ordem de iniciar
+       que vem depois. Sobrescrever apagaria justamente o que faz a reanálise
+       valer, e o motivo já está dentro do dossiê, no bloco 1. */
     try {
-      fs.writeFileSync(path.join(pastaDentroDaRaiz(o.pasta), '_instrucoes.txt'), `[ordem dada pelo CRM, ${new Date().toLocaleString('pt-BR')}]\nO QUE OBSERVAR NESTA ANALISE:\n${instrucoes}\n`, 'utf8')
+      const arquivo = path.join(pastaDentroDaRaiz(o.pasta), '_instrucoes.txt')
+      const jaTemDossie = fs.existsSync(arquivo)
+        && /^\[REANÁLISE pedida por/.test(fs.readFileSync(arquivo, 'utf8').slice(0, 200))
+      if (jaTemDossie) {
+        console.log('    _instrucoes.txt já tem o dossiê da reanálise: mantido.')
+      } else {
+        fs.writeFileSync(arquivo, `[ordem dada pelo CRM, ${new Date().toLocaleString('pt-BR')}]\nO QUE OBSERVAR NESTA ANALISE:\n${instrucoes}\n`, 'utf8')
+      }
     } catch (e) {
       console.error('    _instrucoes.txt:', e.message)
       await falhou(`nao consegui gravar o que voce mandou observar (${e.message}). Nao comecei: a analise rodaria sem a sua ordem.`)

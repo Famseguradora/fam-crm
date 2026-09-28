@@ -46,6 +46,7 @@ import Encaminhar from './card/Encaminhar'
 import Atividades from './card/Atividades'
 import { SISTEMA_LOCAL, type Quem } from './card/comum'
 import { PortaDoRelatorio, SemSistemaLocal } from './PortaDoRelatorio'
+import Reanalisar from './Reanalisar'
 
 type Aba = 'geral' | 'arquivos' | 'analise' | 'relatorio' | 'ia' | 'encaminhar' | 'atividades'
 
@@ -121,74 +122,23 @@ function SemPasta({ aba, chave, docs, aoIrParaAba }: {
    "Tinha um botão de refazer análise dentro de cada análise", na Obrascon. O
    Refazer da aba Análise só existia para pasta com linha na esteira, e as
    análises de antes de 08/09 nunca tiveram. Aqui ele volta, e dá a mesma ordem:
-   a rota cria a linha que faltava e o notebook traz a pasta de _concluidas. */
-function RefazerDoAcervo({ f, quem, aoIrParaAba }: { f: FilaRica; quem: Quem; aoIrParaAba: (a: string) => void }) {
-  const router = useRouter()
-  const [instrucao, setInstrucao] = useState('')
-  const [modo, setModo] = useState('')
-  const [mandando, setMandando] = useState<'' | 'completa' | 'parcial'>('')
-  const [erro, setErro] = useState('')
-  const [outraFila, setOutraFila] = useState<string | null>(null)
-  const nome = nomeDaFicha(f)
+   a rota cria a linha que faltava e o notebook traz a pasta de _concluidas.
 
-  const pedir = async (escopo: 'completa' | 'parcial') => {
-    if (!f.analise_id || mandando) return
-    if (!window.confirm(`Refazer a análise de ${nome}?\n\nO notebook traz a pasta "${f.pasta}" de volta de _concluidas para a fila, junta o que estiver nela e roda de novo. A análise atual continua valendo até a nova ser publicada.`)) return
-    setMandando(escopo); setErro(''); setOutraFila(null)
-    try {
-      const r = await fetch('/api/esteira/refazer-acervo', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ analise_id: f.analise_id, escopo, instrucao, modo }),
-      })
-      const j = await r.json().catch(() => ({}))
-      if (r.ok && j.fila_id) { router.push(`/analises/mesa/${j.fila_id}?aba=analise`); return }
-      setErro(j.erro ?? 'Não consegui.')
-      if (j.fila_id) setOutraFila(j.fila_id)
-    } catch {
-      setErro('A conexão caiu. Tente de novo.')
-    }
-    setMandando('')
-  }
+   EM 24/09/2026 ELE VIROU REANÁLISE. O bloco antigo mandava, com todas as
+   letras, "cole o documento na pasta, dentro de _concluidas no notebook": o
+   CRM não tinha por onde receber documento novo, e a análise anterior não ia
+   junto para quem reanalisava. Agora o pedido é um só (motivo + documentos +
+   a análise anterior inteira), e quem o monta é `Reanalisar`. */
+function RefazerDoAcervo({ f, quem, aoIrParaAba }: { f: FilaRica; quem: Quem; aoIrParaAba: (a: string) => void }) {
+  const nome = nomeDaFicha(f)
 
   return (
     <div className="an-bloco" style={{ maxWidth: '80ch' }}>
-      <h4>Refazer a análise</h4>
-      <p className="an-explica">
-        Chegou documento novo? Cole na pasta <b>{f.pasta}</b>, dentro de <b>_concluidas</b> no notebook, e peça aqui.
-        O notebook traz a pasta de volta para a fila, junta o que chegou e roda a análise de novo.
-        Você acompanha pelo relógio no card, e a análise atual continua valendo até a nova ser publicada.
-      </p>
-      {quem.podeEscrever ? (
-        <>
-          <div className="an-campo">
-            <label htmlFor="rf-modo">Como rodar</label>
-            <select id="rf-modo" value={modo} onChange={e => setModo(e.target.value)}>
-              <option value="">Completa, no modelo forte (o de sempre)</option>
-              <option value="rapida">Rápida, no modelo veloz</option>
-            </select>
-          </div>
-          <div className="an-campo">
-            <label htmlFor="rf-instrucao">O que mudou e o que observar</label>
-            <textarea id="rf-instrucao" value={instrucao} onChange={e => setInstrucao(e.target.value)} maxLength={2000}
-              placeholder="Opcional. Ex.: chegaram as contas anuais 2025 da controladora espanhola; use o consolidado do grupo." />
-          </div>
-          {erro && <div className="an-aviso erro"><span>⛔</span><span>{erro}</span></div>}
-          <div className="an-bt-linha">
-            <button type="button" className="an-bt grande ouro" disabled={!f.analise_id || !!mandando} onClick={() => pedir('completa')}>
-              {mandando === 'completa' ? 'Mandando…' : 'Refazer a análise'}
-            </button>
-            {outraFila && <button type="button" className="an-bt" onClick={() => router.push(`/analises/mesa/${outraFila}?aba=analise`)}>Abrir o card dessa pasta</button>}
-            <span className="an-bt-nota">Do zero. Quem executa é o notebook do analista.</span>
-          </div>
-          <div className="an-bt-linha" style={{ marginTop: 6 }}>
-            <button type="button" className="an-bt mini" disabled={!f.analise_id || !!mandando} onClick={() => pedir('parcial')}>
-              {mandando === 'parcial' ? 'Mandando…' : 'Refazer só as partes relacionadas'}
-            </button>
-            <span className="an-bt-nota">Reaproveita a leitura dos documentos. Score, limite, rating e conclusão são sempre recalculados.</span>
-          </div>
-        </>
+      <h4>Reanalisar</h4>
+      {f.analise_id ? (
+        <Reanalisar analiseId={f.analise_id} pasta={f.pasta} nome={nome} podeEscrever={quem.podeEscrever} />
       ) : (
-        <div className="an-dica">Você tem permissão só de leitura: quem refaz é um analista.</div>
+        <div className="an-dica">Esta pasta ainda não tem análise publicada para reanalisar.</div>
       )}
       <div className="an-bt-linha" style={{ marginTop: 10 }}>
         <button type="button" className="an-bt" onClick={() => aoIrParaAba('relatorio')}>Abrir o Relatório</button>

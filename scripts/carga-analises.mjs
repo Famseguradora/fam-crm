@@ -490,6 +490,13 @@ function doisLados(rev, ger, noTemplate, noMotor = noTemplate) {
   return vale(b) ? b : null
 }
 
+/** O parecer complementar (a determinacao da Diretoria), limpo de marcacao. */
+function determinacao(o) {
+  const d = o?.determinacao
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return null
+  return limpoFundo(d)
+}
+
 /** Limpa marcacao HTML de todo texto de um objeto ou array, ate o fundo. */
 function limpoFundo(v, nivel = 0) {
   if (nivel > 6) return null
@@ -729,6 +736,8 @@ function montar(a, avisos) {
       base_df: semTags(doisLados(rev, ger, 'baseDF', 'base_demonstracoes') || '') || null,
       base_df_obs: semTags(doisLados(rev, ger, 'baseDFObs', 'base_demonstracoes_obs') || '') || null,
       unidade: semTags(doisLados(rev, ger, 'unidade') || '') || null,
+      // Da GERADA primeiro: o template (v13) não conhece este bloco e o perde ao salvar a revisada.
+      determinacao: determinacao(ger) ?? determinacao(rev),
     },
     exercicios: exercicios(rev, ger),
     documentos: documentosLidos(a),
@@ -1288,6 +1297,35 @@ async function principal() {
   // a tela nao teria como levar ate a analise de que ele fala.
   const idPorChave = new Map(gravadas.map(g => [g.chave_local, g.id]))
   for (const [chave, d] of protegidas) idPorChave.set(chave, d.id)
+
+  /* A TRILHA DA REANALISE SE FECHA AQUI (24/09/2026)
+     -------------------------------------------------------------------------
+     Quando ele manda reanalisar pelo CRM, nasce uma linha em
+     `analise_reanalises` com o motivo, os documentos e o dossie que foi para o
+     analista. O pedido so termina quando a analise nova chega ao banco, e quem
+     traz a analise nova e esta carga. Fechar aqui e o que permite a tela dizer,
+     meses depois, "esta decisao foi revista em tal dia, porque...".
+
+     A base NAO pode ser a propria analise nova: publicar duas vezes a mesma
+     analise (acontece, o `--so` existe para isso) fecharia o pedido apontando
+     para ela mesma. */
+  let reanalisesFechadas = 0
+  for (const m of paraGravar) {
+    const id = idPorChave.get(m.linha.chave_local)
+    if (!id || !m.linha.vigente || !m.linha.cnpj) continue
+    const { data, error } = await sb
+      .from('analise_reanalises')
+      .update({ analise_nova_id: id, estado: 'concluida', concluido_em: new Date().toISOString() })
+      .eq('cnpj', m.linha.cnpj)
+      .in('estado', ['pedida', 'rodando'])
+      .neq('analise_base_id', id)
+      .select('id')
+    // Tabela ainda sem migration nao derruba a carga: e o padrao do projeto
+    // para coluna nova que o banco nao tem (ver a memoria da IA Gestor).
+    if (error) { if (!/does not exist|schema cache/i.test(error.message)) falhas.push(`reanalises de ${m.linha.cnpj}: ${error.message}`); continue }
+    reanalisesFechadas += data?.length ?? 0
+  }
+  if (reanalisesFechadas) console.log(`pedidos de reanalise fechados: ${reanalisesFechadas}`)
 
   const exLinhas = []
   for (const m of paraGravar) {

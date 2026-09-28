@@ -86,6 +86,26 @@ export async function GET(req: NextRequest) {
     .order('ordem_em', { ascending: true })
     .limit(20)
 
+  /* OS DOCUMENTOS NOVOS DE UMA REANÁLISE (24/09/2026). Ele sobe o documento no
+     CRM e o agente precisa colocá-lo DENTRO da pasta antes de o motor rodar:
+     é isso que acaba com o "cole na pasta, dentro de _concluidas no notebook".
+     O agente não fala com o Storage, então a URL assinada sai daqui.
+
+     UMA HORA, e não os 15 minutos do complemento: o agente busca as ordens em
+     rodadas, e uma ordem dada enquanto o notebook estava fechado só é lida na
+     volta. Link vencido antes de ser usado vira ordem falhada, e ordem falhada
+     apaga o dossiê. Documento que não assinar viaja sem `url`, e o agente diz
+     qual faltou em vez de rodar sem ele. */
+  for (const o of ordens ?? []) {
+    const dados = (o.ordem_dados ?? {}) as { documentos?: { nome?: string; storage_path?: string }[] }
+    if (!Array.isArray(dados.documentos) || !dados.documentos.length) continue
+    for (const d of dados.documentos) {
+      if (!d?.storage_path) continue
+      const { data: assinada } = await sb.storage.from('fam-anexos').createSignedUrl(d.storage_path, 3600)
+      if (assinada?.signedUrl) (d as { url?: string }).url = assinada.signedUrl
+    }
+  }
+
   /* AS PASTAS QUE AINDA NÃO EXISTEM NO DISCO. Uma análise nascida de um caso da
      Triagem tem os documentos no Storage do CRM, e não numa pasta do OneDrive.
      Alguém precisa materializar isso, e esse alguém é o agente: é ele que está

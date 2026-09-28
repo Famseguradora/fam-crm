@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "outDir": "../.tmp-reanalise",
+    "rootDir": "..",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "jsx": "react-jsx",
+    "plugins": []
+  },
+  "include": ["../lib/analise/comparativo.ts", "../lib/analise/dossie-anterior.ts"],
+  "exclude": []
+}

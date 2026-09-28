@@ -176,3 +176,6 @@ ligar-outlook.log
 # — mais do que o codigo novo da arvore inteira — e escondiam o que importava.
 propostas/**/.next/
 propostas/**/node_modules/
+
+# A saida compilada do ensaio da reanalise (npm run reanalise:test)
+.tmp-reanalise/

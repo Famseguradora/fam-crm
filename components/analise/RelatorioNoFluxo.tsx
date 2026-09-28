@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react'
 import type { FichaAnalise } from '@/lib/analise/ficha'
 import RelatorioCompleto from './RelatorioCompleto'
 import RelatorioLeitura from './RelatorioLeitura'
+import ParecerComplementar from './ParecerComplementar'
 import { linkRelatorio } from './card/comum'
 import { createClient } from '@/lib/supabase/client'
 import { dataCurta } from '@/lib/analise/mesa'
@@ -103,6 +104,10 @@ export default function RelatorioNoFluxo({
           </a>
         )}
       </div>
+
+      {/* Nos três modos: o relatório oficial não mostra a determinação, e é
+          daqui que ele baixa o parecer para mandar à Subscrição. */}
+      <ParecerComplementar analiseId={ficha.id} />
 
       {modo === 'integral' && temEditar ? (
         <div className="an-relatorio-integral">

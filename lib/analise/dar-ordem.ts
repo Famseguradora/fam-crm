@@ -56,6 +56,22 @@ export async function darOrdem(
   const escopo = String(dados.escopo ?? '').trim() === 'parcial' ? 'parcial' : 'completa'
   const motivo = String(dados.motivo ?? '').trim().slice(0, 500)
 
+  /* O DOSSIÊ DA ANÁLISE ANTERIOR (24/09/2026) não cabe em `instrucao`, e não
+     deveria mesmo: aquele campo é o recado dele, de 2.000 caracteres, e é o que
+     a Mesa mostra. O dossiê é a análise anterior INTEIRA (decisão, pontos de
+     atenção, conclusão, condições, números), montada pelo CRM para o analista
+     não reanalisar no escuro. Viaja só em `ordem_dados`, e o agente do notebook
+     o grava no `_instrucoes.txt` da pasta.
+     O teto de 100 mil caracteres é folga sobre o maior dossiê medido (12 mil):
+     está aqui para impedir que um campo corrompido no acervo vire uma ordem que
+     o agente não consegue ler. */
+  const dossie = String(dados.dossie ?? '').slice(0, 100_000)
+  /* Os documentos que ele subiu no pedido, para o agente baixá-los do Storage
+     PARA DENTRO da pasta antes de rodar. É isto que acaba com o "cole na pasta
+     _concluidas no notebook". */
+  const documentos = Array.isArray(dados.documentos) ? dados.documentos.slice(0, 20) : []
+  const reanalise_id = String(dados.reanalise_id ?? '').trim() || null
+
   /* PAUSAR E RETOMAR MUDAM A SITUAÇÃO NA HORA, e não esperam a máquina: são
      decisões que valem sozinhas. Já `iniciar` e `parar` dependem do motor, e a
      situação só muda quando ele responder. LIBERAR A ANÁLISE PARADA NUMA
@@ -67,6 +83,9 @@ export async function darOrdem(
     ordem, ordem_em: new Date().toISOString(), ordem_por: nome,
     ordem_dados: {
       instrucao: instrucao || null, modo: modo || null, escopo, motivo: motivo || null,
+      ...(dossie ? { dossie } : {}),
+      ...(documentos.length ? { documentos } : {}),
+      ...(reanalise_id ? { reanalise_id } : {}),
       ...(liberar ? { liberar: true, resposta: resposta || null } : {}),
     },
     ultima_ordem_resultado: null, ultima_ordem_em: null,

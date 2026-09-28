@@ -14,36 +14,29 @@
 //  `refazer` do card: o agente do notebook traz a pasta de _concluidas, junta o
 //  que chegou e devolve para a fila. Nenhum caminho novo no notebook.
 //
-//  As travas:
-//    · linha que já existe (pela análise, pela chave ou pela pasta) é
-//      reaproveitada, nunca duplicada (`pasta` é UNIQUE);
-//    · outra pasta da MESMA empresa andando na esteira recusa: seriam duas
-//      análises do mesmo CNPJ rodando juntas;
-//    · a ordem que não grava apaga a linha que acabou de nascer.
+//  As travas de achar-ou-criar a linha saíram daqui em 24/09/2026 para
+//  `lib/analise/linha-da-fila.ts`, porque a Reanálise (`/api/analise/reanalisar`)
+//  precisa exatamente das mesmas. Elas continuam sendo: linha que já existe é
+//  reaproveitada e nunca duplicada; outra pasta da MESMA empresa andando recusa;
+//  a ordem que não grava apaga a linha que acabou de nascer.
+//
+//  ESTA ROTA CONTINUA SENDO A PORTA SIMPLES (refazer sem documento novo). Com
+//  documento novo e motivo escrito, quem atende é `/api/analise/reanalisar`,
+//  que leva junto o dossiê da análise anterior.
 //  Sessão + RLS (`fam_pode_escrever`): quem só lê, só lê.
 // ============================================================================
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { darOrdem } from '@/lib/analise/dar-ordem'
 import { recusarOutraOrigem } from '@/lib/seguranca/mesma-origem'
+import {
+  acharOuCriarLinha, desfazerLinha, estaRefazendo, COLUNAS_ANALISE_PARA_FILA,
+  type AnaliseParaFila,
+} from '@/lib/analise/linha-da-fila'
 
 export const runtime = 'nodejs'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const digitos = (v: unknown) => String(v ?? '').replace(/\D/g, '')
-
-type Linha = {
-  id: string; pasta: string; situacao: string; ordem: string | null
-  ultima_ordem_resultado?: string | null; ultima_ordem_em?: string | null; sincronizado_em?: string | null
-}
-const COLUNAS_LINHA = 'id, pasta, situacao, ordem, ultima_ordem_resultado, ultima_ordem_em, sincronizado_em'
-
-/* O notebook já aceitou um refazer e a sincronização ainda não trouxe a pasta
-   de volta: a linha continua "concluída" e sem ordem por alguns segundos. Um
-   segundo clique nessa janela gravaria outro refazer em cima do primeiro. */
-const refazendo = (l: Linha) =>
-  /^De volta à fila para refazer/.test(l.ultima_ordem_resultado ?? '') &&
-  !!l.ultima_ordem_em && (!l.sincronizado_em || l.ultima_ordem_em > l.sincronizado_em)
 
 export async function POST(req: NextRequest) {
   const recusa = recusarOutraOrigem(req)
@@ -62,85 +55,26 @@ export async function POST(req: NextRequest) {
 
   const { data: a } = await supabase
     .from('analises')
-    .select('id, chave_local, cnpj, razao_social, nome_curto, tomador_id, corretora, pasta')
+    .select(COLUNAS_ANALISE_PARA_FILA)
     .eq('id', analiseId)
     .maybeSingle()
   if (!a) return NextResponse.json({ erro: 'Análise não encontrada.' }, { status: 404 })
 
-  const pasta = String(a.pasta ?? '').trim()
-  if (!pasta || /[\\/:*?"<>|]/.test(pasta)) {
-    return NextResponse.json({ erro: 'Esta análise não guardou o nome da pasta no notebook, então não sei qual pasta trazer de volta.' }, { status: 422 })
+  const r = await acharOuCriarLinha(
+    supabase, a as unknown as AnaliseParaFila, nome,
+    `Trazida do Acervo por ${nome} para refazer.`,
+  )
+  if (!r.ok) {
+    return NextResponse.json({ erro: r.erro, ...(r.fila_id ? { fila_id: r.fila_id } : {}) }, { status: r.status })
   }
-  const cnpj = digitos(a.cnpj)
-
-  /* Três perguntas separadas, e não um `or()`: nome de pasta com vírgula
-     ("Obrascon Huarte Lain, do Brasil") quebra a sintaxe do filtro. */
-  const achar = async (): Promise<Linha | null> => {
-    const chaves: [string, string | null][] = [['analise_id', a.id], ['analise_chave', a.chave_local], ['pasta', pasta]]
-    for (const [coluna, valor] of chaves) {
-      if (!valor) continue
-      const { data } = await supabase
-        .from('analise_fila').select(COLUNAS_LINHA)
-        .eq(coluna, valor).order('atualizado_em', { ascending: false }).limit(1)
-      if (data?.[0]) return data[0] as Linha
-    }
-    return null
-  }
-
-  let linha = await achar()
-
-  if (!linha && cnpj.length === 14) {
-    const { data: outra } = await supabase
-      .from('analise_fila').select('id, pasta')
-      .eq('cnpj', cnpj).neq('situacao', 'concluida').is('fora_do_disco_em', null)
-      .limit(1)
-    if (outra?.[0]) {
-      return NextResponse.json({
-        erro: `Esta empresa já tem uma pasta andando na esteira ("${outra[0].pasta}"). Refaça por lá, para não rodar duas análises do mesmo CNPJ.`,
-        fila_id: outra[0].id,
-      }, { status: 409 })
-    }
-  }
-
-  let criada = false
-  if (!linha) {
-    const { data, error } = await supabase
-      .from('analise_fila')
-      .insert({
-        pasta,
-        situacao: 'concluida',
-        fase: 'pronta',
-        analise_id: a.id,
-        analise_chave: a.chave_local,
-        chave_local: a.chave_local,
-        cnpj: cnpj.length === 14 ? cnpj : null,
-        cnpj_confiavel: cnpj.length === 14,
-        razao_social: a.razao_social,
-        nome: a.nome_curto || a.razao_social,
-        tomador_id: a.tomador_id,
-        corretora: a.corretora,
-        motivo: `Trazida do Acervo por ${nome} para refazer.`,
-        criado_por: nome,
-      })
-      .select(COLUNAS_LINHA)
-    if (error) {
-      // O agente pode ter criado a mesma pasta entre a pergunta e aqui.
-      if (error.code === '23505') linha = await achar()
-      if (!linha) return NextResponse.json({ erro: error.message }, { status: 500 })
-    } else if (!data?.length) {
-      return NextResponse.json({ erro: 'Você tem permissão só de leitura no CRM.' }, { status: 403 })
-    } else {
-      linha = data[0] as Linha
-      criada = true
-    }
-  }
+  const { linha, criada } = r
 
   // Já na esteira e fora de "concluída": o botão certo é o do card dela.
-  if (linha.situacao !== 'concluida' || linha.ordem || refazendo(linha)) {
+  if (linha.situacao !== 'concluida' || linha.ordem || estaRefazendo(linha)) {
     return NextResponse.json({ ok: true, fila_id: linha.id, ja_na_esteira: true })
   }
 
-  const r = await darOrdem(supabase, {
+  const ordem = await darOrdem(supabase, {
     id: linha.id,
     ordem: 'refazer',
     dados: {
@@ -150,9 +84,9 @@ export async function POST(req: NextRequest) {
     },
     nome,
   })
-  if (!r.ok) {
-    if (criada) await supabase.from('analise_fila').delete().eq('id', linha.id).is('sincronizado_em', null)
-    return NextResponse.json({ erro: r.erro }, { status: r.status })
+  if (!ordem.ok) {
+    if (criada) await desfazerLinha(supabase, linha.id)
+    return NextResponse.json({ erro: ordem.erro }, { status: ordem.status })
   }
   return NextResponse.json({ ok: true, fila_id: linha.id, criada })
 }

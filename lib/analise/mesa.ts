@@ -509,10 +509,24 @@ export function agruparPorEmpresa(
      sem a primeira e a última se conhecerem. */
   const pai = Array.from({ length: n }, (_, i) => i)
   const acha = (i: number): number => (pai[i] === i ? i : (pai[i] = acha(pai[i])))
-  const une = (a: number, b: number) => { const x = acha(a), y = acha(b); if (x !== y) pai[x] = y }
+  /* O CNPJ É DO GRUPO, não do par (28/09/2026). Alphaville S.A. casou por
+     palpite com "Alphaville Desenvolvimento" (sem CNPJ), e esta com a
+     "…Imobiliario Ltda" (outro CNPJ): cada par passava, e o card juntou duas
+     empresas. Nenhuma união pode deixar um grupo com dois CNPJs. */
+  const cnpjDoGrupo = fila.map(f => f.cnpj || null) as (string | null)[]
+  const une = (a: number, b: number): boolean => {
+    const x = acha(a), y = acha(b)
+    if (x === y) return true
+    const cx = cnpjDoGrupo[x], cy = cnpjDoGrupo[y]
+    if (cx && cy && cx !== cy) return false
+    pai[x] = y
+    cnpjDoGrupo[y] = cy || cx
+    return true
+  }
 
   const cru = fila.map(f => nomeCru(f.nome || f.razao_social || f.pasta))
   const porPalpite = new Set<number>()
+  const palpites: { i: number; j: number; peso: number }[] = []
 
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
@@ -520,22 +534,25 @@ export function agruparPorEmpresa(
 
       // ── PROVA ──────────────────────────────────────────────────────────
       if (a.cnpj && b.cnpj && a.cnpj === b.cnpj) { une(i, j); continue }
+      if (a.cnpj && b.cnpj && a.cnpj !== b.cnpj) continue
       if (a.tomador_id && b.tomador_id && a.tomador_id === b.tomador_id) { une(i, j); continue }
       if (cru[i] && cru[i] === cru[j]) { une(i, j); continue }
 
       // ── PALPITE ────────────────────────────────────────────────────────
-      // CNPJ diferente é prova de que NÃO são a mesma: nem tenta o palpite.
-      if (a.cnpj && b.cnpj && a.cnpj !== b.cnpj) continue
       const [curto, longo] = cru[i].length <= cru[j].length ? [cru[i], cru[j]] : [cru[j], cru[i]]
       if (curto.length < 5) continue
       if (GENERICAS.has(curto.split(' ')[0])) continue
       // Começo em limite de palavra: "renova" casa com "renova energia",
       // e não com "renovacao".
-      if (longo === curto || longo.startsWith(curto + ' ')) {
-        une(i, j)
-        porPalpite.add(i); porPalpite.add(j)
-      }
+      if (longo === curto || longo.startsWith(curto + ' ')) palpites.push({ i, j, peso: curto.length })
     }
+  }
+
+  // O palpite mais específico casa primeiro: "Alphaville Desenvolvimento" vai
+  // para a "…Imobiliario Ltda" antes que "Alphaville" (a S.A.) a puxe.
+  palpites.sort((x, y) => y.peso - x.peso)
+  for (const { i, j } of palpites) {
+    if (une(i, j)) { porPalpite.add(i); porPalpite.add(j) }
   }
 
   const grupos = new Map<number, number[]>()
