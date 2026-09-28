@@ -13,12 +13,6 @@ Funil e triagem na Mesa), 0740ba1 (Mesa sem pasta, "Aprovar com Ressalvas"). O q
       (42 vão para Crédito, 5 para Cadastro e triagem). O modo automático recusou aplicar em produção.
       Sem ela as telas mostram certo (corrigem pela esteira), mas o banco, o filtro de área e quem
       escreve o oficial continuam lendo "Comercial".
-- [ ] **Pacote do motor**: guardar a análise anterior antes de refazer · chave com hora · CNPJ
-      subindo ao CRM · refazer que dá a partida sozinho · card buscando a vigente pelo CNPJ.
-- [ ] **KPI "LMG emitido" do Funil** (R$ 254,69 mi) soma o LMG cru, sem o teto de 80 mi. Conferir
-      contra a tela de Operações antes de mudar (é número que a diretoria conhece).
-- [ ] **Emissão no Carrossel**: o cartão mostra 30 apólices e o prêmio emitido, mas a lista de
-      empresas vem vazia (ninguém move card para Emissão). Decidir: listar quem tem apólice emitida?
 - [ ] **Conferência na Mesa**: juntar com "Triagem e cadastro" ou manter separada?
 - [ ] **Casos velhos em triagem**: #17 Biribeira e #19 (10/09, sem pasta) apareceram na Mesa.
       Ficam ou saem?
@@ -28,7 +22,10 @@ Funil e triagem na Mesa), 0740ba1 (Mesa sem pasta, "Aprovar com Ressalvas"). O q
 - [ ] **Rascunhos fora do commit**: `app/(dashboard)/esteira/`, `app/preview-torre/`,
       `components/esteira/`, `lib/esteira/`, `propostas/`. Ficam, entram ou saem?
 - [ ] Limpeza: CSS morto `.cs-esteira`/`.cs-eta` em `app/globals.css`.
-- [ ] Conferir o deploy na Vercel dos três commits (o `gh` não está instalado nesta máquina).
+- [ ] Conferir o deploy na Vercel dos commits de 28/09 (o `gh` não está instalado nesta máquina).
+- [ ] **Motor, pacote de 28/09 fora do git**: `fila.mjs`, `registro.mjs`, `arquivos.mjs`, `historico.mjs`
+      e `visao.mjs` do `_sistema` alterados (cópias `*.bak-antes-versoes-20260928`). Reiniciar o 7311 e
+      o agente da esteira para valer; conferir no primeiro refazer real.
 
 ## FALTA VOCÊ: ligar o Outlook ao CRM para o arrastar funcionar (23/09/2026)
 
