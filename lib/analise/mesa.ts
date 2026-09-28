@@ -275,6 +275,10 @@ export function naMesa(f: { fora_do_disco_em?: string | null; coluna_id?: string
    E sai por dois: "Tirar da Mesa" (`fora_da_mesa_em`, vai para o Acervo) e
    "Aprovar definitivo" (`aprovado_definitivo_em`, idem, com quem e quando).
    A recomendação da análise nunca é reescrita.
+
+   Correção dele, 28/09/2026: a regra só puxa a análise que ELE já leu e
+   editou (`revisada`). A que está "a revisar" fica na coluna Pronta, com ou
+   sem pasta, até ele abrir, conferir e salvar.
    ══════════════════════════════════════════════════════════════════════════ */
 
 export interface RegraColuna { recomendacao_contem?: string | null }
@@ -290,13 +294,14 @@ export interface AnaliseDaMesa {
   corretora: string | null
   data_analise: string | null
   recomendacao: string | null
+  revisada: boolean | null
   mesa_coluna_id: string | null
   fora_da_mesa_em: string | null
   aprovado_definitivo_em: string | null
 }
 
 export const COLUNAS_ANALISE_MESA =
-  'id, chave_local, cnpj, razao_social, nome_curto, tomador_id, corretora, data_analise, recomendacao, mesa_coluna_id, fora_da_mesa_em, aprovado_definitivo_em'
+  'id, chave_local, cnpj, razao_social, nome_curto, tomador_id, corretora, data_analise, recomendacao, revisada, mesa_coluna_id, fora_da_mesa_em, aprovado_definitivo_em'
 
 const semAcentoMin = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
@@ -309,11 +314,22 @@ export function casaRegra(regra: RegraColuna | null | undefined, recomendacao: s
 }
 
 /** Em qual coluna a análise do acervo mora, ou nula se não está na Mesa. A
- *  escolha à mão vence a regra; saída (tirada ou aprovada) vence tudo. */
+ *  escolha à mão vence tudo menos a saída (tirada ou aprovada); a que está
+ *  "a revisar" fica na Pronta; só a revisada segue a regra da coluna. */
 export function colunaDaAnalise(a: AnaliseDaMesa, colunas: ColunaMesa[]): string | null {
   if (a.fora_da_mesa_em || a.aprovado_definitivo_em) return null
   if (a.mesa_coluna_id && colunas.some(c => c.id === a.mesa_coluna_id)) return a.mesa_coluna_id
+  if (!a.revisada) return colunas.find(c => c.fase === 'pronta')?.id ?? null
   return colunas.find(c => casaRegra(c.regra, a.recomendacao))?.id ?? null
+}
+
+/** A análise está na Mesa? É a pergunta do Acervo, que mostra só o que NÃO
+ *  está (pedido dele, 28/09/2026: "a revisar" mora na Mesa, não no Acervo).
+ *  Na Mesa pela pasta no disco, ou pela coluna (à mão, "a revisar" ou regra).
+ *  `pastas` são os `analise_id`/`chave_local` da fila que passam em `naMesa`. */
+export function analiseEstaNaMesa(a: AnaliseDaMesa, colunas: ColunaMesa[], pastas: Set<string>): boolean {
+  if (pastas.has(a.id) || (a.chave_local && pastas.has(a.chave_local))) return true
+  return colunaDaAnalise(a, colunas) !== null
 }
 
 /** A análise virando ficha de card (a mesma conta do `fichaVirandoFila` do

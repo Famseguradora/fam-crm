@@ -32,6 +32,7 @@ import { createClient } from '@/lib/supabase/client'
 import { fmtMoeda, fmtData, maskCNPJ, semEntidadesHtml } from '@/lib/utils'
 import { fmtScore } from '@/components/analise/Relatorio'
 import { semMarcador } from '@/lib/analise/ficha'
+import { analiseEstaNaMesa, colunasVisiveis, naMesa, type ColunaMesa } from '@/lib/analise/mesa'
 import { PortaDoRelatorio, SemSistemaLocal } from '@/components/analise/PortaDoRelatorio'
 
 interface LinhaAcervo {
@@ -59,13 +60,16 @@ interface LinhaAcervo {
   limite_recomendado_motivo: string | null
   tomador_id: string | null
   serasa_score: number | null
+  mesa_coluna_id: string | null
+  fora_da_mesa_em: string | null
+  aprovado_definitivo_em: string | null
 }
 
 const COLUNAS = `
   id, chave_local, cnpj, razao_social, nome_curto, corretora, grupo, data_analise, versao,
   vigente, revisada, score_final, classe, porte, rating_cod, rating_txt,
   nivel_risco, recomendacao, limite_recomendado_num, limite_recomendado_motivo,
-  tomador_id, serasa_score
+  tomador_id, serasa_score, mesa_coluna_id, fora_da_mesa_em, aprovado_definitivo_em
 `
 
 const num = (v: number | string | null): number | null => {
@@ -120,7 +124,9 @@ const diasDe = (iso: string): number =>
 
 export default function Acervo() {
   const router = useRouter()
-  const [linhas, setLinhas] = useState<LinhaAcervo[]>([])
+  const [todas, setTodas] = useState<LinhaAcervo[]>([])
+  const [colunasMesa, setColunasMesa] = useState<ColunaMesa[]>([])
+  const [pastasNaMesa, setPastasNaMesa] = useState<Set<string>>(new Set())
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
 
@@ -137,15 +143,31 @@ export default function Acervo() {
 
   const carregar = useCallback(async (vivo = { atual: true }) => {
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from('analises').select(COLUNAS)
-      .order('data_analise', { ascending: false })
-      .limit(1000)
+    const [{ data, error }, cols, fila] = await Promise.all([
+      supabase.from('analises').select(COLUNAS)
+        .order('data_analise', { ascending: false })
+        .limit(1000),
+      // O que está na Mesa não aparece aqui: as colunas e as pastas dizem o quê.
+      supabase.from('analise_colunas').select('id, titulo, fase, dica, cor, ordem, arquivada, regra').order('ordem'),
+      supabase.from('analise_fila').select('analise_id, chave_local, fora_do_disco_em, coluna_id').limit(1000),
+    ])
     if (!vivo.atual) return
     if (error) setErro(error.message)
-    setLinhas((data ?? []) as unknown as LinhaAcervo[])
+    setTodas((data ?? []) as unknown as LinhaAcervo[])
+    setColunasMesa(colunasVisiveis(cols.error ? null : (cols.data ?? []) as ColunaMesa[]))
+    setPastasNaMesa(new Set(((fila.data ?? []) as { analise_id: string | null; chave_local: string | null; fora_do_disco_em: string | null; coluna_id: string | null }[])
+      .filter(naMesa)
+      .flatMap(f => [f.analise_id, f.chave_local].filter(Boolean) as string[])))
     setCarregando(false)
   }, [])
+
+  /* O ACERVO É O QUE NÃO ESTÁ NA MESA (28/09/2026). A vigente "a revisar"
+     mora na Mesa, na Pronta, até ele ler e editar; depois segue o substatus
+     do card ou a recomendação. A histórica é registro e fica sempre aqui. */
+  const linhas = useMemo(
+    () => todas.filter(l => !l.vigente || !analiseEstaNaMesa(l, colunasMesa, pastasNaMesa)),
+    [todas, colunasMesa, pastasNaMesa])
+  const naMesaN = todas.length - linhas.length
 
   useEffect(() => {
     const vivo = { atual: true }
@@ -256,6 +278,12 @@ export default function Acervo() {
       {/* ── o resumo ── */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
         <span className="badge badge-blue">{contagem.vigentes} vigentes</span>
+        {naMesaN > 0 && (
+          <span className="badge badge-yellow"
+            title="Análises vigentes que estão na Mesa: as que você ainda não revisou (coluna Pronta) e as que estão numa coluna pelo substatus.">
+            {naMesaN} na Mesa
+          </span>
+        )}
         {contagem.semTomador > 0 && (
           <button type="button" className={`badge ${soSemTomador ? 'badge-red' : 'badge-orange'}`}
             style={{ border: 'none', cursor: 'pointer' }}
@@ -275,7 +303,9 @@ export default function Acervo() {
           { id: 'todas' as Foco, rot: 'Todas', n: abas.todas },
           { id: 'precisam' as Foco, rot: 'Precisam de você', n: abas.precisam },
           { id: 'analisadas' as Foco, rot: 'Já analisadas', n: abas.analisadas },
-        ]).map(a => (
+          // "Precisam de você" agora mora na Mesa: a aba só aparece se sobrar
+          // alguma histórica a revisar (com "só as vigentes" desligado).
+        ]).filter(a => a.id !== 'precisam' || a.n > 0 || foco === 'precisam').map(a => (
           <button key={a.id} type="button" onClick={() => setFoco(a.id)}
             aria-pressed={foco === a.id}
             style={{

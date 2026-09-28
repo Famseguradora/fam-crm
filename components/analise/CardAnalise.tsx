@@ -102,6 +102,8 @@ function SaidasDaMesa({ f, analiseId, quem, aoMudar }: { f: FilaRica; analiseId:
 
   if (!quem.analista) return null
   const ressalva = casaRegra({ recomendacao_contem: 'ressalva' }, a?.recomendacao)
+  /* Só aprova definitivo o que ele já leu e editou: "a revisar" fica na Pronta. */
+  const podeAprovar = ressalva && !!a?.revisada
   const naMesaPorMim = f.semEsteira ? !!a && !a.fora_da_mesa_em && !a.aprovado_definitivo_em : !!f.coluna_id
 
   const gravar = async (tipo: 'aprovar' | 'tirar') => {
@@ -136,7 +138,7 @@ function SaidasDaMesa({ f, analiseId, quem, aoMudar }: { f: FilaRica; analiseId:
   }
   return (
     <>
-      {ressalva && (
+      {podeAprovar && (
         <button type="button" className="an-bt mini azul" disabled={mandando} onClick={() => gravar('aprovar')}
           title="A ressalva foi atendida: grava a aprovação definitiva e manda o card para o Acervo">Aprovar definitivo</button>
       )}
