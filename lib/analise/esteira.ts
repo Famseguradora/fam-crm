@@ -118,7 +118,10 @@ export const andamentoDaEtapa = (etapa: string | null) => {
    (linha antiga, anterior à Mesa) e para a régua ser uma só nos dois lados.
    ══════════════════════════════════════════════════════════════════════════ */
 export const FASES = [
-  { id: 'entrada', titulo: 'Entrada', dica: 'Chegou, ainda não passou pela análise documental', cor: '#8a95a3' },
+  /* "Entrada" virou "Triagem e cadastro" em 28/09/2026, quando a coluna de
+     triagem saiu do Funil e veio para a Mesa. O id continua `entrada`: é ele
+     que o motor grava em `fase`. */
+  { id: 'entrada', titulo: 'Triagem e cadastro', dica: 'Chegou: confirmar o CNPJ, cadastrar o tomador e conferir os documentos', cor: '#8a95a3' },
   { id: 'conferencia', titulo: 'Conferência', dica: 'Documentos lidos, falta documento ou uma decisão sua', cor: '#a8760f' },
   { id: 'liberado', titulo: 'Liberado', dica: 'Cadastro em ordem, pode analisar', cor: '#2c5aa0' },
   { id: 'analisando', titulo: 'Analisando', dica: 'Rodando agora', cor: '#1e4080' },

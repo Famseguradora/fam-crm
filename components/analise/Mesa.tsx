@@ -49,6 +49,13 @@ import NovoPedido from '@/components/comercial/NovoPedido'
 
 type Layout = 'kanban' | 'tabela' | 'galeria'
 
+/** Um caso aberto (Comercial ou Triagem), como a antiga coluna do Funil lia. */
+interface CasoTriagem {
+  id: string; numero: number; assunto: string
+  cnpj: string | null; razao_social: string | null; corretora_texto: string | null
+  tomador_id: string | null; analise_fila_id: string | null; criado_em: string
+}
+
 /** Uma análise rodando agora, do jeito que o notebook a escreve em
  *  `analise_estado`. É o que o painel de missão desenha. */
 type Execucao = NonNullable<EstadoEsteira['execucao']>['execucoes'][number]
@@ -73,6 +80,12 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
   const { ajudaAnalise } = usePermissoes()
   const somenteLeitura = !ajudaAnalise
   const [fila, setFila] = useState<FilaRica[]>([])
+  /* OS CASOS EM TRIAGEM  ·  28/09/2026. A coluna "Triagem / Cadastro" saiu do
+     Funil e veio para cá (ordem dele: "o funil mostra as áreas de forma geral;
+     a Mesa mostra quem está na esteira"). O caso que já tem pasta na Mesa
+     aparece pela pasta; os demais (sem pasta ainda, ou com a pasta fora deste
+     computador) aparecem aqui como caso, para nenhum pedido sumir na mudança. */
+  const [casosTriagem, setCasosTriagem] = useState<CasoTriagem[]>([])
   const [estado, setEstado] = useState<EstadoEsteira | null>(null)
   const [estadoEm, setEstadoEm] = useState<string | null>(null)
   const [acervo, setAcervo] = useState<{ total: number; revisadas: number } | null>(null)
@@ -155,7 +168,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
 
   const carregar = useCallback(async (vivo = { atual: true }) => {
     const supabase = createClient()
-    const [f, e, a, r, enc, cmd, feito, cols] = await Promise.all([
+    const [f, e, a, r, enc, cmd, feito, cols, ca] = await Promise.all([
       supabase.from('analise_fila').select(COLUNAS_MESA).order('atualizado_em', { ascending: false }).limit(300),
       supabase.from('analise_estado').select('dados, atualizado_em').eq('id', 'esteira').maybeSingle(),
       supabase.from('analises').select('id', { count: 'exact', head: true }).eq('vigente', true),
@@ -164,6 +177,12 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
       supabase.from('analise_comandos').select('comando, criado_em, aceito_em').eq('comando', 'varrer').is('feito_em', null).order('criado_em', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('analise_comandos').select('feito_em, resultado').eq('comando', 'varrer').not('feito_em', 'is', null).order('feito_em', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('analise_colunas').select('id, titulo, fase, dica, cor, ordem, arquivada').order('ordem'),
+      // A mesma consulta da antiga coluna do Funil: os casos ABERTOS.
+      supabase.from('casos')
+        .select('id, numero, assunto, cnpj, razao_social, corretora_texto, tomador_id, analise_fila_id, criado_em')
+        .in('etapa', ['comercial', 'triagem'])
+        .order('criado_em', { ascending: false })
+        .limit(500),
     ])
     if (!vivo.atual) return
     if (f.error) setErro(f.error.message)
@@ -182,6 +201,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     setUltimoVarrer(feito.data ?? null)
     // Sem a tabela (migration atrasada) a Mesa segue com as cinco do código.
     if (!cols.error) setColunasBanco((cols.data ?? []) as ColunaMesa[])
+    setCasosTriagem((ca.data ?? []) as CasoTriagem[])
     setAgora(Date.now())
     setCarregando(false)
   }, [])
@@ -199,6 +219,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analise_estado' }, () => carregar(vivo))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analise_comandos' }, () => carregar(vivo))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analise_colunas' }, () => carregar(vivo))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'casos' }, () => carregar(vivo))
       .subscribe()
     const t = setInterval(() => carregar(vivo), 20000)
     return () => { vivo.atual = false; clearInterval(t); supabase.removeChannel(canal) }
@@ -257,6 +278,17 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
      A regra mora em lib/analise/mesa.ts, e não aqui, porque o Acervo e a
      Gestão vão precisar da mesma conta. */
   const grupos = useMemo(() => agruparPorEmpresa(fichas, faseDa), [fichas])
+
+  /** Os casos em triagem que o quadro ainda não mostra por uma pasta. */
+  const casosSoltos = useMemo(() => {
+    const vistos = new Set(fila.flatMap(f => [f.id, f.caso_id].filter(Boolean) as string[]))
+    const q = busca.trim().toLowerCase()
+    return casosTriagem.filter(c => {
+      if (vistos.has(c.id) || (c.analise_fila_id && vistos.has(c.analise_fila_id))) return false
+      if (!q) return true
+      return [c.razao_social, c.assunto, c.cnpj, c.corretora_texto, `#${c.numero}`].filter(Boolean).join(' ').toLowerCase().includes(q)
+    })
+  }, [casosTriagem, fila, busca])
 
   /* A FAIXA CONTA O QUE O QUADRO DESENHA (09/09/2026).
      Ele abriu a Mesa com "Esperando sua ordem: 6" em cima de um quadro com
@@ -515,6 +547,37 @@ Nada do que já foi salvo se perde.`)) return
     )
   }
 
+  /** O cartão de um caso em triagem que ainda não tem pasta neste computador.
+   *  Abre o card da pasta quando ela existe (mesmo fora do disco), senão a
+   *  bancada de triagem do caso. */
+  const fichaDoCaso = (c: CasoTriagem, corCol: string | null) => {
+    const nome = c.razao_social || c.assunto
+    const temCnpj = (c.cnpj ?? '').replace(/\D/g, '').length === 14
+    return (
+      <button key={`caso-${c.id}`} type="button" className="an-ficha" style={{ ['--cor' as string]: corCol ?? '#8a95a3' }}
+        onClick={() => router.push(c.analise_fila_id ? `/analises/mesa/${c.analise_fila_id}` : `/comercial/${c.id}`)}
+        title={`Caso #${c.numero} · ${c.assunto}`}>
+        <div className="an-fi-cab">
+          <span className="an-selo" style={{ ['--cor' as string]: corDoNome(nome) }}>{iniciaisDe(nome)}</span>
+          <div className="an-fi-nome">
+            <b>{nome}</b>
+            <small>{temCnpj ? maskCNPJ(c.cnpj ?? '') : 'CNPJ a confirmar'}</small>
+          </div>
+        </div>
+        {/* O que falta para o pedido andar: o selo do antigo cartão do Funil. */}
+        <span className="an-chip" style={{
+          marginTop: 6, display: 'inline-block',
+          background: c.tomador_id ? '#e6f4ec' : temCnpj ? '#fdf4dd' : '#fbe9e9',
+          color: c.tomador_id ? '#1a7a4c' : temCnpj ? '#8a6410' : '#a02020',
+        }}>{!temCnpj ? 'falta o CNPJ' : !c.tomador_id ? 'falta cadastrar' : 'pronto para a análise'}</span>
+        <div className="an-fi-ult">
+          Caso #{c.numero} · {c.analise_fila_id ? 'pasta fora deste computador' : 'ainda sem pasta na esteira'}
+        </div>
+        {c.corretora_texto && <div className="an-fi-ult" title={c.corretora_texto}>{corta(c.corretora_texto, 46)}</div>}
+      </button>
+    )
+  }
+
   // ── os três olhares ─────────────────────────────────────────────────────
   const kanban = () => {
     return (
@@ -534,6 +597,7 @@ Nada do que já foi salvo se perde.`)) return
              ordenada por data, a posição que se vê não é a que se grava. */
           const podeArrastar = !somenteLeitura && das.length > 1 && naFila
           const menu = menuAberto === col.id
+          const soltos = col.fase === 'entrada' ? casosSoltos : []
           return (
             <section key={col.id} className="an-col" aria-label={col.titulo}>
               <div className="an-col-cab" title={col.dica ?? 'Coluna sua: o card entra pelo botão "Mudar o substatus" do card'}>
@@ -542,7 +606,7 @@ Nada do que já foi salvo se perde.`)) return
                     'Pronta' eu consigo ordenar"). Fica com cara de título. */}
                 <button type="button" className="an-col-nome" onClick={() => setMenuAberto(menu ? null : col.id)}
                   aria-expanded={menu} aria-label={`Ordenar a coluna ${col.titulo}`}>{col.titulo}</button>
-                <i>{das.length}</i>
+                <i>{das.length + soltos.length}</i>
                 {!naFila && (
                   <span className="an-col-ord" title={`Ordenada por: ${ORDENS_COLUNA.find(o => o.id === modo)?.rotulo}`}>
                     {ORDENS_COLUNA.find(o => o.id === modo)?.curto}
@@ -635,11 +699,12 @@ Nada do que já foi salvo se perde.`)) return
                     )}
                   </div>
                 )
-              }) : (
+              }) : !soltos.length && (
                 <div className="an-col-vazia">
                   {col.dica ?? 'Vazia. Escolha esta coluna no botão "Mudar o substatus", dentro do card.'}
                 </div>
               )}
+              {soltos.map(c => fichaDoCaso(c, col.cor))}
             </section>
           )
         })}

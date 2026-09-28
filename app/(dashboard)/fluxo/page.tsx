@@ -34,13 +34,15 @@ export const dynamic = 'force-dynamic'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { fmtMoeda, maskCNPJ, validarCNPJ } from '@/lib/utils'
+import { fmtMoeda, maskCNPJ } from '@/lib/utils'
 // A regra do card mora num lugar só: a Mesa e este funil importam daqui, para
 // que "travado" no cartão e "travado" na seção nunca discordem.
 import {
-  REGUA, ESPERAM_SUBSCRICAO, nomeArea, resumoDoCard,
+  REGUA, ESPERAM_SUBSCRICAO, nomeArea, resumoDoCard, etapaDoCard,
   type PostoCentral, type Secao, type ItemCatalogo, type DadosDoCard,
 } from '@/lib/card/secoes'
+import CarrosselDeAreas, { type EmpresaNoCarrossel } from '@/components/funil/CarrosselDeAreas'
+import { lmgFam, mundoDa } from '@/lib/ia/regras-operacao'
 
 // ── as peças de dado ────────────────────────────────────────────────────────
 
@@ -155,7 +157,7 @@ const MORTAS = new Set(['Perdido', 'Recusado'])
 // "areas" entrou em 08/09/2026. As outras três colunam por STATUS da operação;
 // esta coluna por ÁREA responsável, e é a única onde o cartão se arrasta.
 // Decisão dele: arrastar muda a área responsável, nunca o status da operação.
-type Modo = 'kanban' | 'galeria' | 'lista' | 'areas'
+type Modo = 'carrossel' | 'kanban' | 'galeria' | 'lista' | 'areas'
 
 type ColunaLista = 'empresa' | 'corretora' | 'produto' | 'etapa' | 'lmg' | 'taxa' | 'entrada'
 type Direcao = 'asc' | 'desc'
@@ -191,7 +193,34 @@ export default function FluxoPage() {
   const [erro, setErro] = useState('')
   const [busca, setBusca] = useState('')
   const [soVivas, setSoVivas] = useState(false)
-  const [modo, setModo] = useState<Modo>('kanban')
+  /* O CARROSSEL É O OLHAR PADRÃO desde 28/09/2026 ("esse modelo é o padrão
+     de visualização"); Kanban, Galeria, Lista e Áreas continuam ao lado. */
+  const [modo, setModo] = useState<Modo>('carrossel')
+  /* A fase da pasta mais recente de cada tomador na esteira, e quem responde
+     por cada área. Com a fase, a área da empresa sai de `etapaDoCard`: a mesma
+     régua do card da Análise e da tela do tomador. */
+  const [faseDoTomador, setFaseDoTomador] = useState<Map<string, string>>(new Map())
+  const [responsaveis, setResponsaveis] = useState<Record<string, string[]>>({})
+  useEffect(() => {
+    const supabase = createClient()
+    Promise.all([
+      supabase.from('analise_fila').select('tomador_id, fase, arquivada, atualizado_em')
+        .not('tomador_id', 'is', null).order('atualizado_em', { ascending: false }).limit(1000),
+      supabase.from('usuarios').select('nome, areas').eq('status', 'ativo'),
+    ]).then(([f, u]) => {
+      // Viva antes de arquivada, e a mais recente: a escolha do gatilho da etapa.
+      const linhas = ((f.data ?? []) as { tomador_id: string; fase: string | null; arquivada: boolean }[])
+        .sort((a, b) => Number(a.arquivada) - Number(b.arquivada))
+      const mapa = new Map<string, string>()
+      for (const l of linhas) if (l.fase && !mapa.has(l.tomador_id)) mapa.set(l.tomador_id, l.fase)
+      setFaseDoTomador(mapa)
+      const porArea: Record<string, string[]> = {}
+      for (const p of (u.data ?? []) as { nome: string; areas: string[] | null }[]) {
+        for (const a of p.areas ?? []) (porArea[a] ??= []).push(p.nome)
+      }
+      setResponsaveis(porArea)
+    })
+  }, [])
   // O card por área: as seções, o catálogo de documentos e os nomes de arquivo
   // que o checklist do Cadastro lê. Mesma regra da Mesa, vinda de lib/card/secoes.
   const [secoes, setSecoes] = useState<Map<string, Secao[]>>(new Map())
@@ -203,7 +232,6 @@ export default function FluxoPage() {
   const [direcao, setDirecao] = useState<Direcao>('desc')
   // A primeira coluna do funil: os pedidos que ainda não são operação.
   const [casos, setCasos] = useState<Caso[]>([])
-  const [abrindo, setAbrindo] = useState(false)
   // Quando cada operacao entrou na etapa atual (id -> data ISO).
   const [entrouNaEtapa, setEntrouNaEtapa] = useState<Map<string, string>>(new Map())
   // Os filtros da barra. Vazio = tudo, e e o estado normal.
@@ -218,8 +246,6 @@ export default function FluxoPage() {
   // 7 colunas; em vez de esconder etapa a forca, deixamos fechar a que nao
   // interessa hoje, e o contador continua a vista.
   const [fechadas, setFechadas] = useState<Set<string>>(new Set())
-  const [cnpjNovo, setCnpjNovo] = useState('')
-  const [criando, setCriando] = useState(false)
 
   /* O GOSTO DELE FICA NO NAVEGADOR, e nao no banco: densidade e coluna fechada
      sao preferencia de quem esta olhando agora, nao dado da empresa. Leitura
@@ -508,6 +534,25 @@ export default function FluxoPage() {
     return [...mapa.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
   }, [vistas, nomeDoTomador])
 
+  /** Em que área a empresa está: a central gravada, corrigida pela esteira. */
+  const areaDe = useCallback(
+    (tomadorId: string) => etapaDoCard(tomadores.get(tomadorId)?.central_area, faseDoTomador.get(tomadorId)),
+    [tomadores, faseDoTomador])
+
+  /** As empresas de cada área, no formato do carrossel. */
+  const empresasPorArea = useMemo(() => {
+    const r: Record<string, EmpresaNoCarrossel[]> = {}
+    for (const e of empresasVistas) {
+      const resumo = resumoDe(e.id)
+      ;(r[areaDe(e.id)] ??= []).push({
+        id: e.id, nome: e.nome,
+        ops: e.ops.map(o => ({ id: o.id, modalidade: o.modalidade, status: o.status, lmg: num(o.lmg), premio: num(o.premio_previsto) })),
+        trava: resumo?.trava ?? null, paralisado: !!resumo?.paralisado,
+      })
+    }
+    return r
+  }, [empresasVistas, resumoDe, areaDe])
+
   /** A cor da etapa, para a Galeria e a Lista pintarem igual ao Kanban. Etapa
    *  que saiu da régua fica cinza, e não colorida de mentira. */
   const corDaEtapa = useCallback(
@@ -556,29 +601,6 @@ export default function FluxoPage() {
     return casos.filter(c =>
       chave(`${c.razao_social ?? ''} ${c.assunto} ${c.cnpj ?? ''} ${c.corretora_texto ?? ''}`).includes(q))
   }, [casos, busca])
-
-  /* ABRIR PELO CNPJ, sem e-mail nenhum. O pedido que chega por telefone ou por
-     WhatsApp entrava no CRM por caminho nenhum: ou virava .msg forçado, ou ia
-     para fora do sistema. Agora entra por aqui, e cai na mesma tela de Triagem
-     do caso que veio de e-mail. */
-  async function abrirPorCnpj() {
-    const digitos = cnpjNovo.replace(/\D/g, '')
-    if (!validarCNPJ(digitos)) { setErro('CNPJ inválido: confira os dígitos.'); return }
-    setCriando(true); setErro('')
-    try {
-      const r = await fetch('/api/casos/novo', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ cnpj: digitos }),
-      })
-      const j = await r.json()
-      if (!r.ok) { setErro(j.erro ?? 'Não consegui abrir o cadastro.'); setCriando(false); return }
-      router.push(`/comercial/${j.caso.id}`)
-    } catch {
-      setErro('A conexão caiu. Tente de novo.')
-      setCriando(false)
-    }
-  }
 
   return (
     <div style={{ padding: '4px 0 26px' }}>
@@ -736,6 +758,7 @@ export default function FluxoPage() {
             borderRadius: 8, padding: 2, gap: 2, marginLeft: 6,
           }}>
             {([
+              { m: 'carrossel', rotulo: 'Carrossel', dica: 'As áreas em leque: escolha uma e veja as empresas que estão nela' },
               { m: 'kanban', rotulo: 'Kanban', dica: 'A fila inteira de uma vez, por etapa' },
               { m: 'galeria', rotulo: 'Galeria', dica: 'O cartão grande, para bater o olho e entender o caso' },
               { m: 'lista', rotulo: 'Lista', dica: 'Uma linha por operação, para varrer e comparar' },
@@ -760,6 +783,18 @@ export default function FluxoPage() {
             {carregando ? 'carregando…' : `${kpis.vivas} vivas · ${kpis.mortas} recusadas ou perdidas`}
           </span>
         </div>
+
+        {/* ══════════ CARROSSEL ══════════ */}
+        {modo === 'carrossel' && (carregando
+          ? <div style={{ fontSize: 13, color: 'var(--soft)' }}>Carregando as áreas…</div>
+          : <CarrosselDeAreas
+              porArea={empresasPorArea}
+              emitido={{ apolices: kpis.apolices, premio: kpis.premio }}
+              responsaveis={responsaveis}
+              corDaEtapa={corDaEtapa}
+              aoAbrir={id => router.push(`/tomadores/${id}`)}
+            />
+        )}
 
         {/* ══════════ GALERIA ══════════ */}
         {modo === 'galeria' && (
@@ -874,8 +909,7 @@ export default function FluxoPage() {
               gap: 10, overflowX: 'auto', paddingBottom: 6,
             }}>
               {REGUA.map(posto => {
-                const daArea = empresasVistas.filter(
-                  e => ((tomadores.get(e.id)?.central_area as PostoCentral) ?? 'comercial') === posto)
+                const daArea = empresasVistas.filter(e => areaDe(e.id) === posto)
                 return (
                   <div key={posto}
                     onDragOver={ev => { ev.preventDefault(); setSoltandoEm(posto) }}
@@ -908,7 +942,8 @@ export default function FluxoPage() {
                       <div style={{ fontSize: 11.5, color: '#8fa3b8', padding: '6px 2px' }}>vazio</div>
                     ) : daArea.map(emp => {
                       const r = resumoDe(emp.id)
-                      const lmg = emp.ops.reduce((s, o) => s + num(o.lmg), 0)
+                      // Só o mundo funil, capado: emitida e recusada não se somam aqui.
+                      const lmg = emp.ops.reduce((s, o) => s + (mundoDa(o.status) === 'funil' ? lmgFam(o) : 0), 0)
                       return (
                         <div key={emp.id}
                           draggable
@@ -926,7 +961,11 @@ export default function FluxoPage() {
                             {emp.nome}
                           </div>
                           <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 3 }}>
-                            {emp.ops.length} {emp.ops.length === 1 ? 'operação' : 'operações'} · <b style={{ color: '#1a2a3a' }}>{brlCurto(lmg)}</b>
+                            {emp.ops.length} {emp.ops.length === 1 ? 'operação' : 'operações'} · <b style={{ color: '#1a2a3a' }}>{brlCurto(lmg)}</b> no funil
+                            {(() => {
+                              const premio = emp.ops.reduce((s, o) => s + (mundoDa(o.status) === 'funil' ? num(o.premio_previsto) : 0), 0)
+                              return premio > 0 ? <> · prêmio <b style={{ color: '#8a6410' }}>{brlCurto(premio)}</b></> : null
+                            })()}
                           </div>
                           {r?.paralisado ? (
                             <div style={{ fontSize: 11, color: '#a05010', marginTop: 4, fontWeight: 700 }}>⏸ {r.trava}</div>
@@ -945,100 +984,29 @@ export default function FluxoPage() {
           </>
         )}
 
+        {/* Para onde foi a antiga coluna zero: quem procurar a triagem aqui
+            acha o caminho, com a conta do que está lá. */}
+        {modo === 'kanban' && (
+          <button type="button" className="btn-clear" onClick={() => router.push('/analises')}
+            style={{ marginBottom: 10, fontSize: 12.5 }}>
+            Triagem e cadastro ({casosVistos.length}) agora fica em Análise › Mesa →
+          </button>
+        )}
+
         {/* ══════════ KANBAN ══════════ */}
         <div style={{
           display: modo === 'kanban' ? 'grid' : 'none',
           /* Coluna fechada vira uma faixa fina em vez de sumir. A pesquisa
              recomenda no maximo 5 a 7 colunas; esconder etapa a forca faria
              trabalho sumir da vista, entao ela encolhe e continua contando. */
-          gridTemplateColumns: `minmax(178px, 1fr) ${etapas
+          gridTemplateColumns: `${etapas
             .map(et => (fechadas.has(et.nome) ? '46px' : 'minmax(178px, 1fr)'))
             .join(' ') || 'minmax(178px, 1fr)'}`,
           gap: 10, overflowX: 'auto', paddingBottom: 6,
         }}>
-          {/* ══ A COLUNA ZERO · TRIAGEM E CADASTRO ══════════════════════════
-              O funil começava na primeira etapa da OPERAÇÃO, mas o trabalho
-              começa antes disso: alguém recebeu um pedido e ainda não sabe de
-              quem é. Essa parte morava numa tela à parte (/comercial), e era
-              justamente o "primeiro passo confuso". Agora é a coluna 1 daqui.
-
-              Ela não vem de `status_fluxo_operacao` porque não é etapa de
-              operação: a operação ainda não existe. É a antessala do funil. */}
-          <div style={{
-            background: '#eaf1fb', border: '1px dashed #b8cbe8', borderRadius: 10,
-            padding: 9, minHeight: 120,
-          }}>
-            <h4 style={{
-              fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.7px',
-              color: '#1a3560', fontWeight: 700, display: 'flex',
-              justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px', gap: 6,
-            }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: '#1e4080' }} />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>Triagem / Cadastro</span>
-              </span>
-              <span style={{
-                background: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 11,
-                border: '1px solid var(--border)', flexShrink: 0,
-              }}>{casosVistos.length}</span>
-            </h4>
-
-            {abrindo ? (
-              <div style={{
-                background: '#fff', border: '1px solid #1e4080', borderRadius: 9,
-                padding: 9, marginBottom: 8,
-              }}>
-                <input
-                  className="fam-input" autoFocus value={maskCNPJ(cnpjNovo)}
-                  onChange={e => setCnpjNovo(e.target.value.replace(/\D/g, '').slice(0, 14))}
-                  onKeyDown={e => { if (e.key === 'Enter' && !criando) abrirPorCnpj() }}
-                  placeholder="00.000.000/0000-00" inputMode="numeric"
-                  style={{ fontSize: 12.5, padding: '5px 8px', marginBottom: 7 }}
-                />
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button
-                    className="btn-primary" onClick={abrirPorCnpj}
-                    disabled={criando || cnpjNovo.replace(/\D/g, '').length !== 14}
-                    style={{ fontSize: 12, padding: '5px 10px' }}
-                  >
-                    {criando ? 'Buscando…' : 'Buscar na Receita'}
-                  </button>
-                  <button
-                    className="btn-clear" onClick={() => { setAbrindo(false); setCnpjNovo('') }}
-                    style={{ fontSize: 12, padding: '5px 8px' }}
-                  >
-                    cancelar
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={() => setAbrindo(true)}
-                style={{
-                  width: '100%', background: '#fff', border: '1px dashed #1e4080',
-                  color: '#1e4080', borderRadius: 9, padding: '8px 6px', fontSize: 12,
-                  fontWeight: 600, cursor: 'pointer', marginBottom: 8,
-                }}
-              >
-                ＋ Novo pelo CNPJ
-              </button>
-            )}
-
-            {casosVistos.length === 0 ? (
-              <div style={{ fontSize: 11.5, color: '#8fa3b8', padding: '6px 2px' }}>
-                nada esperando triagem
-              </div>
-            ) : (
-              casosVistos.map(c => (
-                <CartaoCaso
-                  key={c.id}
-                  caso={c}
-                  onAbrir={() => router.push(`/comercial/${c.id}`)}
-                />
-              ))
-            )}
-          </div>
-
+          {/* A COLUNA ZERO (Triagem / Cadastro) saiu daqui em 28/09/2026 e foi para
+              Análise › Mesa, na coluna "Triagem e cadastro". O funil mostra as áreas
+              de forma geral; a Mesa mostra quem está na esteira. */}
           {etapas.map(et => {
             const doCol = porEtapa(et.nome)
             const fechada = fechadas.has(et.nome)
@@ -1135,11 +1103,12 @@ export default function FluxoPage() {
                       modalidade={o.modalidade}
                       lmg={num(o.lmg)}
                       taxa={num(o.taxa)}
+                      premio={num(o.premio_previsto)}
                       cor={et.cor ?? '#3070c8'}
                       morta={MORTAS.has(o.status ?? '')}
                       podeAbrir={!!o.tomador_id}
                       onAbrir={() => o.tomador_id && router.push(`/tomadores/${o.tomador_id}`)}
-                      area={resumoDe(o.tomador_id)?.area}
+                      area={o.tomador_id ? nomeArea(areaDe(o.tomador_id)) : undefined}
                       trava={resumoDe(o.tomador_id)?.trava}
                       paralisado={resumoDe(o.tomador_id)?.paralisado}
                       dias={MORTAS.has(o.status ?? '') ? null : diasParada(o)}
@@ -1166,7 +1135,7 @@ export default function FluxoPage() {
         )}
       </section>
 
-      <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 12, lineHeight: 1.6, maxWidth: '92ch' }}>
+      <div style={{ fontSize: 11.5, color: 'var(--soft)', marginTop: 12, lineHeight: 1.6 }}>
         As colunas são as etapas de <b>status_fluxo_operacao</b>, a mesma régua da tela de Operações:
         etapa nova é uma linha naquela tabela, sem mexer nesta tela. Todo mundo no CRM enxerga este
         funil; quem escreve continua sendo quem tem perfil para isso.
@@ -1320,50 +1289,14 @@ function Meta({ rotulo, valor, forte }: { rotulo: string; valor: string; forte?:
   )
 }
 
-/** O cartão da coluna zero. É mais magro que o das operações de propósito: aqui
- *  ainda não há LMG nem taxa — há uma empresa que talvez nem tenha nome ainda.
- *  O que ele precisa dizer é só uma coisa: o que falta para este pedido andar. */
-function CartaoCaso({ caso, onAbrir }: { caso: Caso; onAbrir: () => void }) {
-  const temCnpj = (caso.cnpj ?? '').replace(/\D/g, '').length === 14
-  const cadastrado = !!caso.tomador_id
-  const falta = !temCnpj ? 'falta o CNPJ' : !cadastrado ? 'falta cadastrar' : 'pronto para a análise'
-
-  return (
-    <div
-      onClick={onAbrir}
-      style={{
-        background: '#fff', border: '1px solid var(--border)', borderLeft: '3px solid #1e4080',
-        borderRadius: 9, padding: '8px 9px', marginBottom: 7, cursor: 'pointer',
-      }}
-    >
-      <div style={{
-        fontSize: 12.5, fontWeight: 700, color: '#0a1628', lineHeight: 1.3,
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-      }}>
-        {caso.razao_social || caso.assunto}
-      </div>
-      <div style={{ fontSize: 11, color: 'var(--soft)', marginTop: 2 }}>
-        {temCnpj ? maskCNPJ(caso.cnpj ?? '') : `caso #${caso.numero}`}
-        {caso.corretora_texto ? ` · ${caso.corretora_texto}` : ''}
-      </div>
-      <div style={{
-        fontSize: 10.5, marginTop: 5, display: 'inline-block', padding: '1px 7px',
-        borderRadius: 9, fontWeight: 600,
-        background: cadastrado ? '#e6f4ec' : temCnpj ? '#fdf4dd' : '#fbe9e9',
-        color: cadastrado ? '#1a7a4c' : temCnpj ? '#8a6410' : '#a02020',
-      }}>
-        {falta}
-      </div>
-    </div>
-  )
-}
-
-function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbrir, onAbrir, area, trava, paralisado, dias, compacto, exato }: {
+function Cartao({ empresa, corretora, modalidade, lmg, taxa, premio = 0, cor, morta, podeAbrir, onAbrir, area, trava, paralisado, dias, compacto, exato }: {
   empresa: string
   corretora: string
   modalidade: string | null
   lmg: number
   taxa: number
+  /** o prêmio previsto; só aparece quando existe */
+  premio?: number
   cor: string
   morta: boolean
   podeAbrir: boolean
@@ -1425,7 +1358,10 @@ function Cartao({ empresa, corretora, modalidade, lmg, taxa, cor, morta, podeAbr
         fontSize: compacto ? 11 : 11.5, color: 'var(--soft)', marginTop: 3,
         display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
       }}>
-        <span><b style={{ color: '#1a2a3a' }}>{brlCurto(lmg)}</b> · {pct(taxa)}</span>
+        <span>
+          <b style={{ color: '#1a2a3a' }}>{brlCurto(lmg)}</b> · {pct(taxa)}
+          {premio > 0 && <> · prêmio <b style={{ color: '#8a6410' }}>{brlCurto(premio)}</b></>}
+        </span>
 
         {/* A ETIQUETA DE IDADE. É o "card aging" da pesquisa: três degraus, e
             não um cronômetro. A pergunta que ela responde é "está parado

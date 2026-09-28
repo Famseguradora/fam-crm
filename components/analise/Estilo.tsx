@@ -222,9 +222,9 @@ export default function EstiloAnalises() {
 .an-col-mexer { margin-left:4px; border:none; background:none; color:#6080a0; font-size:15px; line-height:1; cursor:pointer; padding:0 4px; border-radius:6px; }
 .an-col-mexer:hover { background:#fff; color:#0a1628; }
 /* Ordenar a coluna (23/09/2026): o nome é o botão, com cara de título. */
-.an-col-nome { border:none; background:none; padding:0; font:inherit; font-size:13px; font-weight:700; color:#0a1628; cursor:pointer; text-align:left; }
+.an-col-nome { border:none; background:none; padding:0; font:inherit; font-size:13px; font-weight:700; color:#0a1628; cursor:pointer; text-align:left; white-space:nowrap; flex:none; }
 .an-col-nome:hover { text-decoration:underline; text-decoration-color:#8ba3c0; text-underline-offset:3px; }
-.an-col-ord { font-size:11px; color:#6080a0; margin-left:2px; }
+.an-col-ord { font-size:11px; color:#6080a0; margin-left:2px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .an-col-menu { background:#fff; border:1px solid #dbe6f3; border-radius:9px; padding:4px; margin:0 0 9px; display:flex; flex-direction:column; }
 .an-col-menu-tit { font-size:11px; color:#8ba3c0; padding:4px 8px 2px; }
 .an-col-menu button { display:flex; align-items:center; gap:6px; border:none; background:none; font:inherit; font-size:12.5px; color:#26374a; text-align:left; padding:6px 8px; border-radius:6px; cursor:pointer; }
@@ -242,7 +242,8 @@ export default function EstiloAnalises() {
 .an-col-op .pt { width:9px; height:9px; border-radius:50%; flex:none; }
 .an-col-op small { display:block; font-size:11.5px; color:#6080a0; font-weight:400; }
 .an-col { background:#eaf0f8; border:1px solid #dbe6f3; border-radius:13px; padding:10px; min-height:140px; }
-.an-col-cab { display:flex; align-items:center; gap:8px; padding:2px 4px 10px; }
+.an-col-cab { display:flex; align-items:center; gap:6px; padding:2px 4px 10px; min-width:0; }
+.an-col-cab i { flex:none; }
 .an-col-cab b { font-size:13px; color:#0a1628; }
 .an-col-cab i { font-style:normal; font-size:11.5px; font-weight:700; color:#26374a; background:#fff; border-radius:10px; padding:1px 8px; }
 .an-col-cab .pt { width:8px; height:8px; border-radius:50%; flex:none; }
