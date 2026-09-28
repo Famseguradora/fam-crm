@@ -1032,7 +1032,10 @@ function versionar(montadas) {
       m.linha.vigente = i === lista.length - 1
       // Duas analises da mesma empresa no MESMO dia nao e versao: e duplicata.
       // Quem decide qual vale e ele, nao a carga.
-      if (i < lista.length - 1
+      // A reanalise do mesmo dia NAO e duplicata (28/09/2026): o motor da a ela
+      // a chave "<cnpj>-<data>-HHMM", com a hora do refazer, e ela e a nova.
+      const vigenteRefeita = /\d{4}-\d{2}-\d{2}-\d{4}$/.test(String(lista[lista.length - 1].linha.chave_local))
+      if (i < lista.length - 1 && !vigenteRefeita
         && m.linha.data_analise === lista[lista.length - 1].linha.data_analise) {
         m.duplicataDe = lista[lista.length - 1].linha.chave_local
       }

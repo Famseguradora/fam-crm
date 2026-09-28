@@ -421,7 +421,13 @@ export async function POST(req: NextRequest) {
       const anteriores = [...(Array.isArray(p.pastas_anteriores) ? p.pastas_anteriores : []), p.pasta_anterior]
         .map((x) => texto(x, 400))
         .filter((x): x is string => !!x && x !== pasta)
-      const cnpjDaPasta = digitos(p.cnpj).length === 14
+      /* O CNPJ LIDO SEM CONFIRMAÇÃO (28/09/2026). O agente passou a mandar o
+         CNPJ que a triagem leu mesmo quando o nome não é confiável (Alphaville
+         Desenvolvimento ficava sem CNPJ no CRM). Esse CNPJ aparece no card, mas
+         não costura nada sozinho: pode ser o de uma coligada (SAE LD Marília).
+         `undefined` é o agente antigo, que só mandava o confirmado. */
+      const cnpjFirme = p.cnpj_confiavel !== false
+      const cnpjDaPasta = digitos(p.cnpj).length === 14 && cnpjFirme
         ? digitos(p.cnpj)
         : digitos(String(p.analise_chave ?? p.chave_local ?? '').slice(0, 14))
       for (const anterior of [...new Set(anteriores)]) {
@@ -476,14 +482,16 @@ export async function POST(req: NextRequest) {
       const chave = texto(p.chave_local)
       const chaveTomador = texto(p.chave, 120)
       if (razao) doDisco.razao_social = razao
-      if (cnpjDoDisco.length === 14) doDisco.cnpj = cnpjDoDisco
       if (chave) doDisco.chave_local = chave
       if (chaveTomador) doDisco.chave = chaveTomador
 
       const { data: existe } = await sb
         .from('analise_fila')
-        .select('id, situacao, analise_id, tomador_id, cnpj, substatus, substatus_em')
+        .select('id, situacao, analise_id, tomador_id, cnpj, cnpj_confiavel, substatus, substatus_em')
         .eq('pasta', pasta).maybeSingle()
+
+      // O CNPJ sem confirmação só entra onde não havia nenhum: nunca troca um.
+      if (cnpjDoDisco.length === 14 && (cnpjFirme || !digitos(existe?.cnpj))) doDisco.cnpj = cnpjDoDisco
 
       /* O SUBSTATUS tem dois donos e uma regra: vale o mais novo. O do motor
          (escrito no cockpit) só sobe quando o CRM não tem um mais recente. */
@@ -503,7 +511,8 @@ export async function POST(req: NextRequest) {
         if (a?.id) doDisco.analise_id = a.id
       }
       const cnpjFinal = cnpjDoDisco.length === 14 ? cnpjDoDisco : digitos(existe?.cnpj)
-      if (cnpjFinal.length === 14 && !existe?.tomador_id) {
+      const soLido = cnpjFinal === cnpjDoDisco && !cnpjFirme && !existe?.cnpj_confiavel
+      if (cnpjFinal.length === 14 && !soLido && !existe?.tomador_id) {
         const { data: t } = await sb.from('tomadores').select('id').eq('cnpj', cnpjFinal).limit(2)
         if (t?.length === 1) doDisco.tomador_id = t[0].id
       }

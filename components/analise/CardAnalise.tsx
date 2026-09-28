@@ -32,6 +32,7 @@ import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { maskCNPJ } from '@/lib/utils'
 import { fichaPorId, fichaDaAnalise, semMarcador, type FichaAnalise } from '@/lib/analise/ficha'
+import { soDigitos } from '@/lib/analise/local'
 import { faseDe, nomeDaFase, SITUACAO, type Ordem } from '@/lib/analise/esteira'
 import { COLUNAS_FILA, nomeDaFicha, iniciaisDe, corDoNome, COLUNAS_ANALISE_MESA, casaRegra, type FilaRica, type AnaliseDaMesa } from '@/lib/analise/mesa'
 import { IcoVoltar } from '@/components/tomador/icones'
@@ -617,8 +618,13 @@ export default function CardAnalise({ id }: { id: string }) {
 
     setF(linha)
     if (linha) {
-      // O resultado: pela ligação direta quando existe, senão pelo tomador/CNPJ.
-      const fi = linha.analise_id ? await fichaPorId(linha.analise_id) : await fichaDaAnalise(linha.tomador_id, linha.cnpj)
+      /* O RESULTADO É A VIGENTE DO CNPJ (28/09/2026). O ponteiro `analise_id`
+         ficava na versão velha depois da reanálise (Alphaville, Obrascon,
+         Globalx, Usiblend, NC, Setra), e o card mostrava a análise de antes.
+         Com CNPJ confirmado, vale a vigente; o ponteiro é só o plano B. */
+      const cnpjFirme = (linha.cnpj_confiavel || !!linha.tomador_id) && soDigitos(linha.cnpj).length === 14
+      const vigente = cnpjFirme ? await fichaDaAnalise(null, linha.cnpj) : null
+      const fi = vigente ?? (linha.analise_id ? await fichaPorId(linha.analise_id) : await fichaDaAnalise(linha.tomador_id, linha.cnpj))
       setFicha(fi)
       const { count } = await supabase.from('analise_encaminhamentos').select('id', { count: 'exact', head: true }).eq('fila_id', linha.id).eq('estado', 'aberto')
       setAbertos(count ?? 0)

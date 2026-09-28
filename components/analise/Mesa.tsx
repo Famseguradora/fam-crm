@@ -275,9 +275,23 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
   /** A análise de uma pasta, para a regra da coluna valer também para ela. */
   const analiseDaPasta = useMemo(() => {
     const m = new Map<string, AnaliseDaMesa>()
-    for (const a of analisesMesa) { m.set(a.id, a); if (a.chave_local) m.set(a.chave_local, a) }
+    for (const a of analisesMesa) {
+      m.set(a.id, a)
+      if (a.chave_local) m.set(a.chave_local, a)
+      if (a.cnpj && a.cnpj.length === 14) m.set(`cnpj:${a.cnpj}`, a)
+    }
     return m
   }, [analisesMesa])
+
+  /** A análise que vale para a pasta: a vigente do CNPJ confirmado (o ponteiro
+   *  fica velho na reanálise); senão o ponteiro e a chave, como antes. */
+  const analiseDe = (f: FilaRica): AnaliseDaMesa | null => {
+    const cnpjFirme = (f.cnpj_confiavel || !!f.tomador_id) && f.cnpj?.length === 14
+    return (cnpjFirme && analiseDaPasta.get(`cnpj:${f.cnpj}`))
+      || (f.analise_id && analiseDaPasta.get(f.analise_id))
+      || (f.analise_chave && analiseDaPasta.get(f.analise_chave))
+      || null
+  }
 
   const fichas = useMemo(() => {
     const q = busca.trim().toLowerCase()
@@ -298,7 +312,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
    *  Ressalvas"); senão, a da fase. */
   const colunaDa = (f: FilaRica) => {
     if (!f.coluna_id && !f.semEsteira && faseDa(f) === 'pronta') {
-      const a = (f.analise_id && analiseDaPasta.get(f.analise_id)) || (f.analise_chave && analiseDaPasta.get(f.analise_chave)) || null
+      const a = analiseDe(f)
       const regra = a ? colunaDaAnalise({ ...a, mesa_coluna_id: null }, colunas) : null
       if (regra) return colunaDoCard({ coluna_id: regra }, faseDa(f), colunas)
     }

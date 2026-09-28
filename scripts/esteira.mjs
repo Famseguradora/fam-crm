@@ -352,7 +352,12 @@ async function retratoDoDisco() {
     const a = p.a || {}
     const pg = (V.paginas || {})[p.chave] || {}
     const ident = p.ident || {}
+    /* O CNPJ lido sobe mesmo com o nome ainda não confiável (28/09/2026): a
+       Alphaville Desenvolvimento tinha o CNPJ na pasta e o CRM ficava sem ele.
+       Sobe com `cnpj_confiavel` falso, e a rota não costura nada com ele. */
+    const cnpjLido = digitos(ident.cnpj)
     const cnpj = digitos(p.confiavel ? ident.cnpj : '') || digitos(String(p.chave || '').length >= 14 ? p.chave : '')
+      || (cnpjLido.length === 14 ? cnpjLido : '')
 
     // A lista de arquivos e o retrato do bibliotecário: por pasta viva ou por
     // retrato guardado, exatamente como o card do cockpit lê.
@@ -816,12 +821,25 @@ async function executarOrdens(ordens) {
           const entraram = r?.do_pedido?.length ? ` Entraram ${r.do_pedido.length} documento(s) novo(s).` : ''
           return `De volta à fila para refazer.${entraram}${dossie ? ' O analista recebeu a análise anterior inteira.' : ''}`
         }
+        /* O REFAZER DÁ A PARTIDA (28/09/2026). Antes ele só devolvia a pasta à
+           fila e dizia "próxima rodada", que não existe: nada anda sem uma
+           ordem de iniciar (Alphaville, 28/09). Agora, refeito, começa pelo
+           mesmo caminho do "Iniciar", com o portão do cadastro e as vagas do
+           motor. `instrucoes` vai vazio de propósito: o dossiê da reanálise já
+           está no `_instrucoes.txt`, e o recado curto o apagaria. */
+        const aviso = (mensagem) => crm('/api/esteira', { acao: 'progresso', id: o.id, etapa: 'fila', mensagem, maquina: c.maquina, pid: process.pid })
         if (local) {
           const r = await servidor('/api/refazer/' + encodeURIComponent(o.pasta), op)
-          await (r.ok ? feito(contou(r)) : falhou(r.erro || r.motivo || 'o servidor recusou'))
+          if (!r.ok) { await falhou(r.erro || r.motivo || 'o servidor recusou'); await sincronizar(); continue }
+          const a = await servidor('/api/analisar', { pastas: [o.pasta], chave: o.chave || '', instrucoes: '', modo })
+          await feito(contou(r) + (a.ok
+            ? ' Comecei a análise.'
+            : ` Não comecei agora (${a.erro || a.motivo || 'o servidor recusou'}): clique em Iniciar no card.`))
         } else {
           const r = Fila?.refazer?.(o.pasta, op)
-          await (r?.ok === false ? falhou(r.motivo || 'não consegui refazer') : feito(contou(r)))
+          if (r?.ok === false) { await falhou(r.motivo || 'não consegui refazer'); await sincronizar(); continue }
+          await feito(contou(r))
+          await iniciarSemServidor(o, '', modo, aviso, aviso)
         }
         await sincronizar()
         continue
