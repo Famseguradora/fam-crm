@@ -185,7 +185,9 @@ function fichaVirandoFila(fi: FichaAnalise): FilaRica {
     criado_por: null,
     concluido_em: agora,
     atualizado_em: agora,
-    chave: fi.chave_local,
+    // A chave do TOMADOR, como na Mesa (é por ela que notas e o cofre se acham),
+    // e não a da análise: com chave_local as notas da empresa não apareciam.
+    chave: (fi.cnpj && fi.cnpj.length === 14 ? fi.cnpj : '') || fi.chave_local,
     fase: 'pronta',
     nome: fi.nome_curto || fi.razao_social,
     corretora: fi.corretora,
@@ -364,6 +366,16 @@ export default function CardAnalise({ id }: { id: string }) {
       // Não é pasta da esteira: será uma análise do acervo?
       const fi = await fichaPorId(id)
       if (fi) {
+        /* A PASTA DESTA ANÁLISE PODE EXISTIR (28/09/2026). O Acervo navega com o
+           id da análise, e a Alphaville abria "sem esteira": sem notas, sem
+           documentos, sem substatus, embora a linha da fila apontasse para essa
+           mesma análise. Achando a pasta, o card vira o da Mesa, com a URL dela. */
+        const { data: pastas } = await supabase.from('analise_fila').select('id, cnpj')
+          .or(`analise_id.eq.${fi.id},analise_chave.eq.${fi.chave_local}`)
+          .order('atualizado_em', { ascending: false }).limit(5)
+        // Ponteiro trocado (Power IV) não leva ao card de outra empresa.
+        const daPasta = (pastas ?? []).find(p => !p.cnpj || !fi.cnpj || p.cnpj === fi.cnpj)
+        if (daPasta?.id && daPasta.id !== id) { router.replace(`/analises/mesa/${daPasta.id}`); return }
         setFicha(fi)
         linha = fichaVirandoFila(fi)
         setF(linha)
@@ -383,7 +395,7 @@ export default function CardAnalise({ id }: { id: string }) {
       setAbertos(count ?? 0)
     }
     setCarregando(false)
-  }, [id])
+  }, [id, router])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
