@@ -161,13 +161,17 @@ export default function Acervo() {
     setCarregando(false)
   }, [])
 
-  /* O ACERVO É O QUE NÃO ESTÁ NA MESA (28/09/2026). A vigente "a revisar"
-     mora na Mesa, na Pronta, até ele ler e editar; depois segue o substatus
-     do card ou a recomendação. A histórica é registro e fica sempre aqui. */
-  const linhas = useMemo(
-    () => todas.filter(l => !l.vigente || !analiseEstaNaMesa(l, colunasMesa, pastasNaMesa)),
+  /* O ACERVO TEM TODAS (29/09/2026). Em 28/09 ele passou a esconder o que
+     estava na Mesa, e a RT 61, recém-editada e com ressalva, sumiu daqui. A
+     regra dele: "o Acervo é o acervo total: as que faltam conferir, as
+     reprovadas e as aprovadas". A Mesa é que escolhe o que mostra e em que
+     coluna (Pronta, Aprovar com Ressalvas, Interrompido); o Acervo só marca,
+     na linha, que a análise também está na Mesa. */
+  const linhas = todas
+  const idsNaMesa = useMemo(
+    () => new Set(todas.filter(l => l.vigente && analiseEstaNaMesa(l, colunasMesa, pastasNaMesa)).map(l => l.id)),
     [todas, colunasMesa, pastasNaMesa])
-  const naMesaN = todas.length - linhas.length
+  const naMesaN = idsNaMesa.size
 
   useEffect(() => {
     const vivo = { atual: true }
@@ -280,8 +284,8 @@ export default function Acervo() {
         <span className="badge badge-blue">{contagem.vigentes} vigentes</span>
         {naMesaN > 0 && (
           <span className="badge badge-yellow"
-            title="Análises vigentes que estão na Mesa: as que você ainda não revisou (coluna Pronta) e as que estão numa coluna pelo substatus.">
-            {naMesaN} na Mesa
+            title="Das análises desta lista, quantas também estão na Mesa: as que você ainda não revisou (coluna Pronta) e as que estão numa coluna pelo substatus.">
+            {naMesaN} também na Mesa
           </span>
         )}
         {contagem.semTomador > 0 && (
@@ -303,9 +307,7 @@ export default function Acervo() {
           { id: 'todas' as Foco, rot: 'Todas', n: abas.todas },
           { id: 'precisam' as Foco, rot: 'Precisam de você', n: abas.precisam },
           { id: 'analisadas' as Foco, rot: 'Já analisadas', n: abas.analisadas },
-          // "Precisam de você" agora mora na Mesa: a aba só aparece se sobrar
-          // alguma histórica a revisar (com "só as vigentes" desligado).
-        ]).filter(a => a.id !== 'precisam' || a.n > 0 || foco === 'precisam').map(a => (
+        ]).map(a => (
           <button key={a.id} type="button" onClick={() => setFoco(a.id)}
             aria-pressed={foco === a.id}
             style={{
@@ -430,6 +432,10 @@ export default function Acervo() {
                           )}
                           {!l.revisada && l.vigente && (
                             <span className="badge badge-yellow" style={{ marginLeft: 7, fontSize: 10 }}>a revisar</span>
+                          )}
+                          {idsNaMesa.has(l.id) && (
+                            <span className="badge badge-blue" style={{ marginLeft: 7, fontSize: 10 }}
+                              title="Esta análise também está num card da Mesa">na Mesa</span>
                           )}
                         </div>
                         <div style={{ fontSize: 11.5, color: 'var(--soft)', fontVariantNumeric: 'tabular-nums' }}>
