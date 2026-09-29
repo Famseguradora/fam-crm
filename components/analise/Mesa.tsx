@@ -57,6 +57,15 @@ interface CasoTriagem {
   tomador_id: string | null; analise_fila_id: string | null; criado_em: string
 }
 
+/** O pedido cuja pasta foi para a rede sem análise nenhuma (29/09/2026). */
+interface PerdidoNaRede {
+  fila: FilaRica
+  caso: { id: string; numero: number; etapa: string; razao_social: string | null; assunto: string | null }
+}
+
+/** Caso sem pasta há mais do que isto sai da coluna para a faixa recolhida. */
+const DIAS_SEM_PASTA = 7
+
 /** Uma análise rodando agora, do jeito que o notebook a escreve em
  *  `analise_estado`. É o que o painel de missão desenha. */
 type Execucao = NonNullable<EstadoEsteira['execucao']>['execucoes'][number]
@@ -88,6 +97,8 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
      computador) aparecem aqui como caso, para nenhum pedido sumir na mudança. */
   const [casosTriagem, setCasosTriagem] = useState<CasoTriagem[]>([])
   const [analisesMesa, setAnalisesMesa] = useState<AnaliseDaMesa[]>([])
+  const [naRede, setNaRede] = useState<PerdidoNaRede[]>([])
+  const [excluindo, setExcluindo] = useState<string | null>(null)
   const [estado, setEstado] = useState<EstadoEsteira | null>(null)
   const [estadoEm, setEstadoEm] = useState<string | null>(null)
   const [acervo, setAcervo] = useState<{ total: number; revisadas: number } | null>(null)
@@ -208,6 +219,33 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
     setCasosTriagem((ca.data ?? []) as CasoTriagem[])
     // Sem as colunas novas (migration atrasada), segue sem o acervo, sem cair.
     if (!an.error) setAnalisesMesa((an.data ?? []) as AnaliseDaMesa[])
+
+    /* A PASTA QUE FOI PARA A REDE SEM ANÁLISE (29/09/2026). A GGP (caso #20)
+       saiu da Mesa em 11/09 ainda "pendente" e nunca foi analisada: sumiu sem
+       ninguém ver. Das pastas na rede sem análise concluída, quase todas são
+       nome velho de pasta renomeada, cuja análise mora em outra linha. Fica só
+       o PEDIDO de verdade: tem caso aberto, nenhuma outra pasta do caso
+       concluiu e o CNPJ/tomador não tem análise vigente. */
+    const todas = (f.data ?? []) as unknown as FilaRica[]
+    const cand = todas.filter(x => x.fora_do_disco_em && !x.coluna_id && x.situacao !== 'concluida' && x.caso_id)
+    const perdidos: PerdidoNaRede[] = []
+    if (cand.length && !an.error) {
+      const { data: cs } = await supabase.from('casos')
+        .select('id, numero, etapa, cnpj, tomador_id, razao_social, assunto')
+        .in('id', [...new Set(cand.map(x => x.caso_id as string))])
+      if (!vivo.atual) return
+      const vig = (an.data ?? []) as AnaliseDaMesa[]
+      const cnpjs = new Set(vig.map(v => v.cnpj).filter(Boolean))
+      const toms = new Set(vig.map(v => v.tomador_id).filter(Boolean))
+      const concluidos = new Set(todas.filter(x => x.situacao === 'concluida' && x.caso_id).map(x => x.caso_id))
+      for (const x of cand) {
+        const c = (cs ?? []).find(k => k.id === x.caso_id)
+        if (!c || ['descartado', 'encerrado'].includes(String(c.etapa)) || concluidos.has(x.caso_id)) continue
+        if ([x.cnpj, c.cnpj].some(k => k && cnpjs.has(k)) || [x.tomador_id, c.tomador_id].some(k => k && toms.has(k))) continue
+        perdidos.push({ fila: x, caso: c })
+      }
+    }
+    setNaRede(perdidos)
     setAgora(Date.now())
     setCarregando(false)
   }, [])
@@ -338,15 +376,43 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
   const grupos = useMemo(() => agruparPorEmpresa(fichas, faseDa), [fichas])
 
   /** Os casos em triagem que o quadro ainda não mostra por uma pasta. */
-  const casosSoltos = useMemo(() => {
+  const casosSoltosTodos = useMemo(() => {
     const vistos = new Set(fila.flatMap(f => [f.id, f.caso_id].filter(Boolean) as string[]))
+    // O pedido que já aparece na faixa "na rede sem análise" não repete aqui.
+    for (const p of naRede) vistos.add(p.caso.id)
     const q = busca.trim().toLowerCase()
     return casosTriagem.filter(c => {
       if (vistos.has(c.id) || (c.analise_fila_id && vistos.has(c.analise_fila_id))) return false
       if (!q) return true
       return [c.razao_social, c.assunto, c.cnpj, c.corretora_texto, `#${c.numero}`].filter(Boolean).join(' ').toLowerCase().includes(q)
     })
-  }, [casosTriagem, fila, busca])
+  }, [casosTriagem, fila, busca, naRede])
+
+  /* CASO SEM PASTA NÃO FICA NA COLUNA PARA SEMPRE (29/09/2026). A Biribeira
+     (#17) e a duplicata da GGP (#19) moravam em Triagem desde 10/09, sem pasta,
+     e nada as tirava de lá. Passados DIAS_SEM_PASTA dias, o caso desce para a
+     faixa recolhida da coluna, com o botão Excluir no próprio card. */
+  const semPastaHa = useCallback(
+    (c: CasoTriagem) => Math.floor((agora - new Date(c.criado_em).getTime()) / 86400000),
+    [agora])
+  const casosSoltos = useMemo(() => casosSoltosTodos.filter(c => semPastaHa(c) <= DIAS_SEM_PASTA), [casosSoltosTodos, semPastaHa])
+  const casosVelhos = useMemo(() => casosSoltosTodos.filter(c => semPastaHa(c) > DIAS_SEM_PASTA), [casosSoltosTodos, semPastaHa])
+
+  /** O Excluir da triagem (a mesma rota do card): o caso vira "descartado",
+   *  com o motivo, e se recupera pelo histórico. Nada é apagado. */
+  const excluirCaso = async (c: { id: string; numero: number }) => {
+    const motivo = window.prompt(`Excluir o caso #${c.numero} da triagem?\n\nEle sai da Mesa e fica no histórico (dá para recuperar). Motivo:`, 'Sem pasta e sem andamento.')
+    if (motivo === null) return
+    setExcluindo(c.id); setErro('')
+    try {
+      const r = await fetch(`/api/casos/${c.id}/excluir`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ motivo }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) setErro(j.erro || 'Não consegui excluir o caso.')
+      await carregar()
+    } finally { setExcluindo(null) }
+  }
 
   /* A FAIXA CONTA O QUE O QUADRO DESENHA (09/09/2026).
      Ele abriu a Mesa com "Esperando sua ordem: 6" em cima de um quadro com
@@ -767,6 +833,25 @@ Nada do que já foi salvo se perde.`)) return
                 </div>
               )}
               {soltos.map(c => fichaDoCaso(c, col.cor))}
+              {col.fase === 'entrada' && casosVelhos.length > 0 && (
+                <details className="an-velhos">
+                  <summary title={`Casos sem pasta há mais de ${DIAS_SEM_PASTA} dias: fora da contagem da coluna`}>
+                    Sem pasta há mais de {DIAS_SEM_PASTA} dias ({casosVelhos.length})
+                  </summary>
+                  {casosVelhos.map(c => (
+                    <div key={`velho-${c.id}`}>
+                      {fichaDoCaso(c, '#b8c2cf')}
+                      <div className="an-velho-pe">
+                        <span>{semPastaHa(c)} dias sem pasta</span>
+                        {!somenteLeitura && (
+                          <button type="button" className="an-bt mini" disabled={excluindo === c.id}
+                            onClick={() => excluirCaso(c)}>{excluindo === c.id ? 'Excluindo…' : 'Excluir'}</button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </details>
+              )}
             </section>
           )
         })}
@@ -1073,6 +1158,28 @@ Nada do que já foi salvo se perde.`)) return
       )}
 
       {erro && <div className="alert-error" style={{ marginBottom: 12 }}>{erro}</div>}
+
+      {/* O pedido que foi para a rede sem análise: é prazo correndo sem card. */}
+      {!carregando && naRede.length > 0 && (
+        <div className="an-na-rede" role="status">
+          <b>{naRede.length === 1 ? '1 pedido foi para a rede sem análise' : `${naRede.length} pedidos foram para a rede sem análise`}</b>
+          <span>A pasta saiu deste computador antes de a análise acontecer. Traga a pasta de volta para analisar, ou exclua o pedido.</span>
+          <ul>
+            {naRede.map(p => (
+              <li key={p.fila.id}>
+                <button type="button" className="an-na-rede-link" onClick={() => router.push(`/analises/mesa/${p.fila.id}`)}>
+                  {p.caso.razao_social || p.caso.assunto || p.fila.pasta}
+                </button>
+                <small>caso #{p.caso.numero} · na rede desde {p.fila.fora_do_disco_em ? new Date(p.fila.fora_do_disco_em).toLocaleDateString('pt-BR') : '?'}</small>
+                {!somenteLeitura && ['comercial', 'triagem'].includes(p.caso.etapa) && (
+                  <button type="button" className="an-bt mini" disabled={excluindo === p.caso.id}
+                    onClick={() => excluirCaso(p.caso)}>{excluindo === p.caso.id ? 'Excluindo…' : 'Excluir'}</button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* ── 4. o quadro ── */}
       {carregando ? (
