@@ -14,8 +14,10 @@ Funil e triagem na Mesa), 0740ba1 (Mesa sem pasta, "Aprovar com Ressalvas"). O q
       Sem ela as telas mostram certo (corrigem pela esteira), mas o banco, o filtro de área e quem
       escreve o oficial continuam lendo "Comercial".
 - [ ] **Conferência na Mesa**: juntar com "Triagem e cadastro" ou manter separada?
-- [ ] **Casos velhos em triagem**: #17 Biribeira e #19 (10/09, sem pasta) apareceram na Mesa.
-      Ficam ou saem?
+- [ ] **Limpeza da Mesa (um clique cada)**: #17 Biribeira e #19 (duplicata do #20) estão na faixa
+      "Sem pasta há mais de 7 dias" da Triagem, com Excluir. **GGP (#20) nunca foi analisada**: a pasta
+      foi para a rede em 11/09 ainda pendente; trazer de volta. Bravo RS (#32) é corretora, não tomador.
+      Projeto 22 aparece em duas pastas. Riosul parada desde 10/09 esperando resposta.
 - [ ] **Aprovar definitivo**: testado só o caminho do "Tirar da Mesa". Clicar uma vez num caso
       real e conferir o registro na linha do tempo do tomador.
 - [ ] **Página do caso pelo Funil** (/comercial/<id>) ainda sem a régua em cima.
