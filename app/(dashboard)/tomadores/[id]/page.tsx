@@ -55,12 +55,13 @@ import {
 // O fluxo por área entrou em 08/09/2026: é a tela "mesa" do protótipo, com as
 // cinco seções nascendo juntas dentro do card. Ver components/tomador/SecoesDoCard.
 import SecoesDoCard from '@/components/tomador/SecoesDoCard'
+import Complementos from '@/components/analise/Complementos'
 import { nomeArea, etapaDoCard } from '@/lib/card/secoes'
 import RetratoDoFluxo from '@/components/tomador/RetratoDoFluxo'
 /** O formulário por área (SecoesDoCard) saiu da tela em 29/09/2026; `true` o traz de volta. */
 const FLUXO_ANTIGO = false
 
-type Gaveta = 'visao' | 'fluxo' | 'cadastro' | 'operacoes' | 'analise' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos' | 'linha'
+type Gaveta = 'visao' | 'fluxo' | 'cadastro' | 'operacoes' | 'analise' | 'complemento' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos' | 'linha'
 
 /** Operações que COMPROMETEM limite. As demais (Em Análise, Para Analisar,
  *  Recusado, Perdido) não seguram capacidade e não entram na barra. */
@@ -85,6 +86,9 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
   // Só a contagem, para o selo ao lado do nome — a lista em si mora na gaveta
   // Grupo (components/tomador/VinculoHolding), que não precisa subir pro topo.
   const [nEmpresasDoGrupo, setNEmpresasDoGrupo] = useState(0)
+  // Complementares da análise vigente (29/09/2026: a do Grupo ADN só aparecia
+  // no relatório, e o colega que abria o tomador não a via).
+  const [nComplementos, setNComplementos] = useState(0)
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
   const [gaveta, setGaveta] = useState<Gaveta>('visao')
@@ -181,13 +185,14 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
     // pode impedir a ficha de aparecer. Quando este tomador é uma SPE sem
     // análise própria, cai para a análise vigente da holding vinculada.
     const fichaPropria = await fichaDaAnalise(t.id, t.cnpj)
-    if (fichaPropria) {
-      setFicha(fichaPropria); setFichaDaHolding(false)
-    } else if (t.holding) {
-      setFicha(await fichaDaAnalise(t.holding.id, t.holding.cnpj)); setFichaDaHolding(true)
-    } else {
-      setFicha(null); setFichaDaHolding(false)
-    }
+    const fichaFinal = fichaPropria ?? (t.holding ? await fichaDaAnalise(t.holding.id, t.holding.cnpj) : null)
+    setFicha(fichaFinal); setFichaDaHolding(!fichaPropria && !!fichaFinal)
+    // Só a contagem, para o menu: a lista mora em components/analise/Complementos.
+    if (fichaFinal) {
+      const { count } = await supabase.from('analise_complementos')
+        .select('id', { count: 'exact', head: true }).eq('analise_id', fichaFinal.id)
+      setNComplementos(count ?? 0)
+    } else setNComplementos(0)
     setCarregando(false)
   }, [id])
 
@@ -439,6 +444,11 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
     {
       g: 'analise', nome: 'Análise de crédito', ico: <IcoDoc />,
       meta: ficha ? `${fmtData(ficha.data_analise)}${fichaDaHolding ? ' · da holding' : ''}` : 'sem análise',
+    },
+    {
+      g: 'complemento', nome: 'Análise complementar', ico: <IcoDoc />,
+      meta: !ficha ? 'sem análise' : nComplementos === 0 ? 'nenhuma' : undefined,
+      badge: nComplementos > 0 ? String(nComplementos) : undefined,
     },
     {
       g: 'serasa', nome: 'Serasa', ico: <IcoEscudo />,
@@ -752,6 +762,13 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
                 </button>
               </div>
             )}
+          </>}
+
+          {/* A mesma seção do relatório (Acervo e Mesa), ligada à análise vigente:
+              quem abre o tomador lê a complementar sem ir ao relatório. */}
+          {gaveta === 'complemento' && <>
+            {fichaDaHolding && tomador.holding && <AvisoFichaHolding nome={tomador.holding.razao_social} />}
+            {ficha ? <Complementos ficha={ficha} /> : <SecaoAnalise ficha={null} confronto={null} />}
           </>}
 
           {gaveta === 'serasa' && <>
