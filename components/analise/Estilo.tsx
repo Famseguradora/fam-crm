@@ -215,22 +215,12 @@ export default function EstiloAnalises() {
 .an-bt.forcar { border-color:#e0a0a0; color:#a02020; }
 .an-bt.forcar:hover:not(:disabled) { background:#fbeaea; color:#a02020; }
 .an-bt.mini { font-size:12px; padding:5px 10px; border-radius:7px; }
-/* 29/09/2026: o caso sem pasta há dias desce para esta faixa recolhida, e o
-   pedido que foi para a rede sem análise ganha o aviso em cima do quadro.
-   Cores de alerta de lib/ui/painel.ts (alerta, alertaFundo, alertaBorda). */
+/* 29/09/2026: o caso sem pasta há dias desce para esta faixa recolhida. */
 .an-velhos { margin-top:10px; border-top:1px dashed #c5d5e8; padding-top:8px; }
 .an-velhos > summary { font-size:12px; font-weight:600; color:#5a6b80; cursor:pointer; padding:4px 2px; }
 .an-velhos[open] > summary { margin-bottom:6px; }
 .an-velhos .an-ficha { opacity:.8; }
 .an-velho-pe { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11.5px; color:#5a6b80; margin:4px 2px 10px; }
-.an-na-rede { background:#fbe9e9; border:1px solid #e8b4b4; border-radius:10px; padding:12px 14px; margin-bottom:12px; font-size:13px; color:#26374a; }
-.an-na-rede > b { color:#c0392b; display:block; }
-.an-na-rede > span { display:block; margin-top:2px; }
-.an-na-rede ul { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
-.an-na-rede li { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
-.an-na-rede small { color:#5a6b80; }
-.an-na-rede-link { font:inherit; font-weight:700; color:#1e4080; background:none; border:none; padding:0; cursor:pointer; text-align:left; }
-.an-na-rede-link:hover { text-decoration:underline; }
 .an-bt.grande { padding:11px 20px; font-size:14px; }
 
 /* ── o kanban ─────────────────────────────────────────────────────────── */

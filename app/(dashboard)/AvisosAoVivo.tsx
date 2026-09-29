@@ -57,6 +57,14 @@ const TOM: Record<string, { faixa: string; texto: string; verbo: string; prefixo
   // de "análise pronta": as duas coisas acontecem em pontas opostas da esteira e
   // confundi-las faria alguém abrir a análise achando que já tem parecer.
   triagem:  { faixa: '#c8922e', texto: '#7a5410', verbo: 'entrou na fila de análise', prefixo: 'O tomador' },
+  // A pasta foi para a rede sem análise (29/09/2026, lib/analise/na-rede.ts).
+  // Só informa: o detalhe fica no mural de recados, e o botão leva para lá.
+  na_rede:  { faixa: '#c0392b', texto: '#7f1d1d', verbo: 'foi para a rede sem análise', prefixo: 'O pedido de' },
+}
+
+/** Para onde o botão do aviso leva, quando não é o andamento da análise. */
+const DESTINO: Record<string, { rotulo: string; href: string }> = {
+  na_rede: { rotulo: 'Ver no mural de recados →', href: '/analises?aba=recados' },
 }
 
 export default function AvisosAoVivo({ editaAnalise }: { editaAnalise: boolean }) {
@@ -113,6 +121,7 @@ export default function AvisosAoVivo({ editaAnalise }: { editaAnalise: boolean }
     }}>
       {avisos.map(a => {
         const t = TOM[a.tipo] ?? TOM.iniciou
+        const ir = DESTINO[a.tipo]
         return (
           <div key={a.id}
             // Pausa enquanto o mouse está em cima: ninguém consegue clicar num
@@ -141,14 +150,14 @@ export default function AvisosAoVivo({ editaAnalise }: { editaAnalise: boolean }
                   </div>
                 )}
                 <button type="button"
-                  onClick={() => { fechar(a.id); router.push(destino) }}
+                  onClick={() => { fechar(a.id); router.push(ir?.href ?? destino) }}
                   style={{
                     marginTop: 8, padding: '5px 11px', borderRadius: 6, cursor: 'pointer',
                     border: `1px solid ${t.faixa}`, background: 'transparent',
                     color: t.faixa, fontSize: 12, fontWeight: 700,
                     fontFamily: 'inherit',
                   }}>
-                  Acompanhe o andamento →
+                  {ir?.rotulo ?? 'Acompanhe o andamento →'}
                 </button>
               </div>
               <button type="button" onClick={() => fechar(a.id)} aria-label="Fechar aviso"

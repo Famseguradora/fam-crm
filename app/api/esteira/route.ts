@@ -37,6 +37,7 @@ import { apenasMudadas } from '@/lib/sync/hash'
 import { createClient } from '@supabase/supabase-js'
 import { SITUACOES, nomeDaEtapa, travaMorta } from '@/lib/analise/esteira'
 import { aplicarCadastroDoAgente } from '@/lib/cadastro/agente-cadastro'
+import { avisarPedidosNaRede } from '@/lib/analise/na-rede'
 
 export const runtime = 'nodejs'
 
@@ -394,7 +395,9 @@ export async function POST(req: NextRequest) {
       if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
       limpas = data?.length ?? 0
     }
-    return NextResponse.json({ ok: true, marcadas, limpas })
+    // Pedido que foi para a rede sem análise: balão e recado no mural (29/09/2026).
+    const na_rede = marcadas ? await avisarPedidosNaRede(sb).catch(() => 0) : 0
+    return NextResponse.json({ ok: true, marcadas, limpas, na_rede })
   }
 
   // ── sincronizar: o retrato do disco ───────────────────────────────────────
@@ -580,6 +583,11 @@ export async function POST(req: NextRequest) {
       const conhecidas = new Set(((jaTem ?? []) as { chave_local: string }[]).map((a) => a.chave_local))
       publicar_pendentes = entregues.filter((c) => !conhecidas.has(c))
     }
+
+    /* A conferência dos pedidos na rede também roda aqui, e não só quando uma
+       pasta sai: pega os que saíram antes desta regra existir (GGP, 11/09). É
+       barata: sem candidato novo, são duas consultas e nenhuma escrita. */
+    await avisarPedidosNaRede(sb).catch(() => 0)
 
     return NextResponse.json({ ok: true, criadas, atualizadas, total: entrada.length, recusadas, publicar_pendentes })
   }
