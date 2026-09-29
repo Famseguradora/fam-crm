@@ -62,7 +62,7 @@ export function SecaoPainel({ nome, cor: c, acao, children }: {
    dia vira paisagem, e aí o vermelho não quer dizer mais nada.
    ══════════════════════════════════════════════════════════════════════════ */
 export function CartaoNumero({
-  rotulo, numero, sub, alerta, aberto, aoAlternar, children, rodape,
+  rotulo, numero, sub, alerta, aberto, aoAlternar, children, rodape, compacto,
 }: {
   rotulo: string
   /** Já formatado. O cartão não formata nada: quem sabe a unidade é quem chama. */
@@ -76,7 +76,13 @@ export function CartaoNumero({
   children?: React.ReactNode
   /** Uma ação no pé do cartão aberto (um "aprofundar", um "ver na tela"). */
   rodape?: React.ReactNode
+  /** Cinco cartões lado a lado numa tela de notebook (o Fluxo por área do
+   *  tomador, 29/09/2026): número menor e cada linha numa linha só, com o
+   *  texto inteiro no `title`. Pedido dele: "estão tomando muito espaço". */
+  compacto?: boolean
 }) {
+  const umaLinha: React.CSSProperties = compacto
+    ? { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } : {}
   const abrivel = !!aoAlternar
   const miolo = (
     <>
@@ -84,13 +90,14 @@ export function CartaoNumero({
         ...texto.rotulo, marginBottom: 3,
         display: 'flex', alignItems: 'center', gap: 6,
       }}>
-        <span style={{ flex: 1 }}>{rotulo}</span>
+        <span style={{ flex: 1, minWidth: 0, ...umaLinha }} title={compacto ? rotulo : undefined}>{rotulo}</span>
         {abrivel && (
           <span style={{ fontSize: 11, color: cor.textoSobreEscuro }}>{aberto ? '−' : '+'}</span>
         )}
       </div>
-      <div style={{ ...texto.numero, color: alerta ? cor.alerta : cor.tinta }}>{numero}</div>
-      {sub && <div style={{ ...texto.apoio, marginTop: 3 }}>{sub}</div>}
+      <div style={{ ...texto.numero, ...(compacto ? { fontSize: 15.5, fontWeight: 700 } : {}), ...umaLinha, color: alerta ? cor.alerta : cor.tinta }}
+        title={compacto ? numero : undefined}>{numero}</div>
+      {sub && <div style={{ ...texto.apoio, marginTop: 3, ...umaLinha }} title={compacto ? sub : undefined}>{sub}</div>}
     </>
   )
 
@@ -105,7 +112,7 @@ export function CartaoNumero({
           onClick={aoAlternar}
           style={{
             display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-            background: 'none', border: 'none', padding: '10px 12px',
+            background: 'none', border: 'none', padding: compacto ? '8px 11px' : '10px 12px',
           }}
         >
           {miolo}

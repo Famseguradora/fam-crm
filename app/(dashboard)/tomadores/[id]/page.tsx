@@ -56,6 +56,9 @@ import {
 // cinco seções nascendo juntas dentro do card. Ver components/tomador/SecoesDoCard.
 import SecoesDoCard from '@/components/tomador/SecoesDoCard'
 import { nomeArea, etapaDoCard } from '@/lib/card/secoes'
+import RetratoDoFluxo from '@/components/tomador/RetratoDoFluxo'
+/** O formulário por área (SecoesDoCard) saiu da tela em 29/09/2026; `true` o traz de volta. */
+const FLUXO_ANTIGO = false
 
 type Gaveta = 'visao' | 'fluxo' | 'cadastro' | 'operacoes' | 'analise' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos' | 'linha'
 
@@ -85,6 +88,17 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
   const [gaveta, setGaveta] = useState<Gaveta>('visao')
+  // O menu da esquerda recolhe (29/09/2026, pedido dele para a tela do
+  // notebook). A escolha fica neste navegador; sem armazenamento, abre visível.
+  const [semMenu, setSemMenu] = useState(false)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    try { if (localStorage.getItem('fam.tomador.semMenu') === '1') setSemMenu(true) } catch { /* sem storage */ }
+  }, [])
+  const alternarMenu = () => setSemMenu(v => {
+    try { localStorage.setItem('fam.tomador.semMenu', v ? '0' : '1') } catch { /* sem storage */ }
+    return !v
+  })
   /** A fase da pasta na esteira; com ela a régua diz onde o card está mesmo
    *  quando `central_area` ainda não acompanhou (lib/card/secoes.ts, etapaDoCard). */
   const [faseDaFila, setFaseDaFila] = useState<string | null>(null)
@@ -597,8 +611,16 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
       </div>
 
       {/* ══════════ 3. RAIL + PAINEL ══════════ */}
-      <div className="mt-corpo">
-        <div className="mt-rail">
+      <div style={{ display: 'flex', justifyContent: 'flex-start', margin: '-4px 0 -6px' }}>
+        <button type="button" onClick={alternarMenu} aria-expanded={!semMenu}
+          title={semMenu ? 'Mostrar o menu do tomador' : 'Recolher o menu para ganhar espaço'}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: 12, color: '#6080a0' }}>
+          {semMenu ? '» Mostrar menu' : '« Recolher menu'}
+        </button>
+      </div>
+
+      <div className="mt-corpo" style={semMenu ? { gridTemplateColumns: 'minmax(0, 1fr)' } : undefined}>
+        {!semMenu && <div className="mt-rail">
           <nav className="mt-card mt-menu" role="tablist" aria-label="Seções do tomador">
             {ITENS.map(it => (
               <button key={it.g} type="button" role="tab" className="mt-item"
@@ -638,7 +660,7 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
               </div>
             </div>
           </div>
-        </div>
+        </div>}
 
         <div className="mt-painel">
           {/* A ANÁLISE SAIU DAQUI EM 31/08/2026, e o componente continua no repositório.
@@ -660,7 +682,22 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
             tomador={tomador} ficha={ficha} anosAtividade={anosAtividade} estourou={c.estourou}
           />}
 
-          {gaveta === 'fluxo' && <SecoesDoCard
+          {/* 29/09/2026: o Fluxo por área virou retrato, só de leitura ("ninguém
+              vai preencher, o sistema já reconhece quando mudamos de área").
+              Para voltar ao formulário antigo: FLUXO_ANTIGO = true, no topo do arquivo. */}
+          {gaveta === 'fluxo' && !FLUXO_ANTIGO && <RetratoDoFluxo
+            tomador={tomador}
+            tomadorId={tomador.id}
+            cnpj={tomador.cnpj}
+            etapa={etapaDoCard(tomador.central_area, faseDaFila)}
+            corretora={corretoraNome}
+            dataEntrada={tomador.data_entrada}
+            operacoes={operacoes}
+            ficha={ficha}
+            fichaDaHolding={fichaDaHolding ? tomador.holding?.razao_social ?? null : null}
+          />}
+
+          {gaveta === 'fluxo' && FLUXO_ANTIGO && <SecoesDoCard
             tomadorId={tomador.id}
             cnpj={tomador.cnpj}
             centralInicial={tomador.central_area}
