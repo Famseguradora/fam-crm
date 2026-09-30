@@ -148,7 +148,7 @@ export default function RelatorioCompleto({ analiseId, semCabecalho, aoCarregar 
       )}
 
       {/* ── as etiquetas que dizem o que esta análise É ── */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '12px 0 14px', alignItems: 'center' }}>
+      <div className="an-rel-barra" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '10px 0 12px', alignItems: 'center' }}>
         <span className={`badge ${ficha.revisada ? 'badge-green' : 'badge-yellow'}`}>
           {ficha.revisada ? 'Revisada por você' : 'Gerada, a revisar'}
         </span>

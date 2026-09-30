@@ -72,6 +72,46 @@ export default function EstiloAnalises() {
 }
 .an-area .mt-tab th { color:#6080a0; background:#f7fafd; border-bottom-color:#e3ebf5; }
 
+/* O BANHO DE LOJA DO RELATÓRIO (30/09/2026). A Base compartilhada tinha o
+   corpo da Mesa do Tomador antiga: menu de itens altos (o "Grupo econômico"
+   quebrava em duas linhas), blocos com muito respiro, valor dos campos em peso
+   normal e seis botões grandes em duas linhas. A medida é a Mesa da Subscrição:
+   cartão de borda fina sem sombra, título em negrito, rótulo pequeno e fraco,
+   valor em negrito escuro. Preso a '.an-area': a Mesa do Tomador fica como está. */
+.an-area .mt-card { box-shadow:none; border-color:#dbe6f3; border-radius:12px; }
+.an-area .mt-corpo { grid-template-columns:minmax(0,215px) minmax(0,1fr); gap:12px; }
+/* A mesma quebra do globals (1000px): sem repetir aqui, a regra acima ganharia
+   da media query e o celular ficaria com o menu espremido ao lado. */
+@media (max-width:1000px){ .an-area .mt-corpo { grid-template-columns:1fr; } }
+.an-area .mt-painel { gap:12px; }
+.an-area .mt-menu { padding:6px; gap:1px; }
+.an-area .mt-item { padding:7px 9px; gap:9px; border-radius:8px; }
+/* O nome da seção nunca é cortado; quem encolhe (com reticências) é a nota da
+   direita, "sem organograma", que é o que menos se lê. */
+.an-area .mt-item-nome { font-size:12.5px; white-space:nowrap; flex:1 0 auto; }
+.an-area .mt-item-meta { font-size:11px; font-weight:500; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.an-area .mt-item[aria-selected="true"] .mt-item-nome { font-weight:700; }
+.an-area .mt-bloco-cab { padding:11px 16px; }
+.an-area .mt-bloco-cab .pt { width:7px; height:7px; }
+.an-area .mt-bloco-corpo { padding:12px 16px 14px; }
+.an-area .mt-lab { font-size:11px; font-weight:500; color:#6080a0; }
+.an-area .mt-campo { padding:7px 0; }
+.an-area .mt-campo .v { font-size:13px; font-weight:700; color:#0a1628; }
+.an-area .mt-campo .v.vd { color:#1a7a50; }
+.an-area .mt-campo .v.az { color:#1e4080; }
+.an-area .mt-campo .v.ou { color:#a07b1e; font-weight:600; }
+.an-area .mt-sub { font-size:12.5px; color:#0a1628; margin-top:14px; }
+.an-area .mt-nota { font-size:11.5px; padding:9px 12px; margin-top:12px; }
+.an-area .mt-tab th { font-size:11.5px; font-weight:700; color:#0a1628; }
+.an-area .mt-tab td { padding:8px 12px; font-size:12.5px; }
+.an-area .mt-serasa-score .n { font-size:26px; letter-spacing:0; }
+
+/* A barra do relatório: etiquetas à esquerda, botões pequenos à direita, numa
+   linha só no monitor. */
+.an-rel-barra .an-bt, .an-rel-barra .btn-secondary, .an-rel-barra .btn-primary {
+  font-size:12px !important; padding:5px 11px !important; min-height:0; border-radius:7px; }
+.an-rel-barra .badge { font-size:11px; }
+
 
 /* ── a moldura ─────────────────────────────────────────────────────────── */
 .an-topo { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:12px 18px; }
@@ -297,6 +337,13 @@ export default function EstiloAnalises() {
 .an-fi-cab { display:flex; align-items:flex-start; gap:9px; }
 .an-selo { width:34px; height:34px; border-radius:9px; flex:none; display:grid; place-items:center; color:#fff; font-weight:700; font-size:12.5px; letter-spacing:.3px; background:var(--cor,#3A6491); }
 .an-selo.gr { width:52px; height:52px; border-radius:13px; font-size:18px; }
+/* O logo do tomador no lugar do selo: mesma altura do selo, largura até o
+   dobro (logo costuma ser retangular), fundo branco e borda fina. */
+.an-card-logo { height:52px; min-width:52px; max-width:120px; flex:none; display:grid; place-items:center;
+  background:#fff; border:1px solid #dbe6f3; border-radius:11px; padding:5px 8px; box-sizing:border-box; }
+.an-card-logo img { max-height:100%; max-width:100%; object-fit:contain; display:block; }
+.an-card-site { color:#1e4080; font-weight:600; text-decoration:none; }
+.an-card-site:hover { text-decoration:underline; }
 .an-fi-nome { min-width:0; }
 .an-fi-nome b { display:block; font-size:13.5px; color:#0a1628; line-height:1.25; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
 .an-fi-nome small { display:block; font-size:11.5px; color:#6080a0; margin-top:2px; font-variant-numeric:tabular-nums; }
@@ -389,8 +436,10 @@ export default function EstiloAnalises() {
 @media (max-width:980px){ .an-duas { grid-template-columns:1fr; }  }
 
 .an-bloco { background:#fff; border:1px solid #e3ebf5; border-radius:13px; padding:14px 16px 16px; margin-bottom:14px; }
-.an-bloco h4 { margin:0 0 10px; font-size:11.5px; font-weight:600; color:#6080a0; letter-spacing:0; display:flex; align-items:center; gap:8px; }
-.an-bloco h4 .dir { margin-left:auto; font-weight:600; text-transform:none; letter-spacing:0; font-size:11.5px; display:flex; gap:6px; align-items:center; }
+/* O título do bloco em negrito escuro (30/09/2026): era cinza-azulado miúdo e
+   sumia; o padrão da casa é o texto.titulo de lib/ui/painel.ts (13 px, 700). */
+.an-bloco h4 { margin:0 0 10px; font-size:13px; font-weight:700; color:#0a1628; letter-spacing:0; display:flex; align-items:center; gap:8px; }
+.an-bloco h4 .dir { margin-left:auto; font-weight:700; color:#0a1628; text-transform:none; letter-spacing:0; font-size:12px; display:flex; gap:6px; align-items:center; }
 .an-dados { display:grid; grid-template-columns:auto 1fr; gap:6px 16px; margin:0; font-size:13.5px; }
 .an-dados dt { color:#6080a0; }
 .an-dados dd { margin:0; text-align:right; color:#0a1628; font-weight:700; font-variant-numeric:tabular-nums; }

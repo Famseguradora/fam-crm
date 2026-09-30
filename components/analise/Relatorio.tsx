@@ -161,13 +161,13 @@ export function SecaoAnalise({ ficha, confronto }: {
         <Bloco titulo="Pontos da análise" cor="#e8b84b">
           {ficha.pontos_positivos.length > 0 && <>
             <Sub texto="Pontos positivos" cor="#27a96c" />
-            <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.55 }}>
+            <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.55 }}>
               {ficha.pontos_positivos.map((p, i) => <li key={i} style={{ marginBottom: 5 }}>{p}</li>)}
             </ul>
           </>}
           {ficha.pontos_atencao.length > 0 && <>
             <Sub texto="Pontos de atenção" cor="#e8b84b" />
-            <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.55 }}>
+            <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.55 }}>
               {ficha.pontos_atencao.map((p, i) => <li key={i} style={{ marginBottom: 5 }}>{p}</li>)}
             </ul>
           </>}
@@ -178,14 +178,14 @@ export function SecaoAnalise({ ficha, confronto }: {
         <Bloco titulo="Conclusão e condições" cor="#1e4080">
           {ficha.conclusao && <>
             <Sub texto="Conclusão" cor="#3070c8" />
-            <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: '4px 0 0' }}>{ficha.conclusao}</p>
+            <p style={{ fontSize: 12.5, lineHeight: 1.6, margin: '4px 0 0' }}>{ficha.conclusao}</p>
           </>}
           {ficha.condicoes && <>
             <Sub texto="Condições" cor="#e8b84b" />
             {/* O texto vem do editor antigo com marcação HTML dentro. Aqui ele é
                 mostrado como TEXTO, sem interpretar as marcas: é conteúdo de
                 banco, e não pode virar HTML numa tela do CRM. */}
-            <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: '4px 0 0' }}>
+            <p style={{ fontSize: 12.5, lineHeight: 1.6, margin: '4px 0 0' }}>
               {ficha.condicoes.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()}
             </p>
           </>}
@@ -241,13 +241,14 @@ export function SecaoTresCs({ ficha }: { ficha: FichaAnalise | null }) {
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 14, fontWeight: 700, color: '#0a1628' }}>{nome}</span>
                 <span style={{
-                  fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase',
+                  // Sem caixa alta espaçada: é o tique que ele mandou tirar do CRM.
+                  fontSize: 11.5, fontWeight: 700,
                   color: cor, border: `1px solid ${cor}`, borderRadius: 999, padding: '1px 9px',
                 }}>
                   {c?.classe ?? 'não classificado'}
                 </span>
               </div>
-              <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: '7px 0 0', color: '#1a2a3a' }}>
+              <p style={{ fontSize: 12.5, lineHeight: 1.6, margin: '7px 0 0', color: '#1a2a3a' }}>
                 {c?.fundamento || 'A análise não escreveu o fundamento deste C.'}
               </p>
               <div style={{ fontSize: 11.5, color: '#6080a0', marginTop: 6 }}>{oQueE}</div>
@@ -283,7 +284,7 @@ export function TabelaExercicios({ ficha }: { ficha: FichaAnalise }) {
 
   return (
     <>
-      <div className="mt-tab-wrap">
+      <div className="mt-tab-wrap mt-quadro">
         <table className="mt-tab">
           <thead>
             <tr>
@@ -344,7 +345,7 @@ export function SecaoDocumentos({ ficha }: { ficha: FichaAnalise | null }) {
           <b> todas</b> as análises, não só para esta. É a próxima carga a rodar.
         </div>
       ) : (
-        <div className="mt-tab-wrap">
+        <div className="mt-tab-wrap mt-quadro">
           <table className="mt-tab">
             <thead><tr><th>Documento</th><th style={{ textAlign: 'right' }}>Tamanho</th><th style={{ textAlign: 'right' }}>Hash</th></tr></thead>
             <tbody>
@@ -463,7 +464,7 @@ export function SecaoSerasa({ ficha }: { ficha: FichaAnalise | null }) {
         {s.interpretacao && (
           <>
             <Sub texto="Leitura da análise" cor="#3070c8" />
-            <p style={{ fontSize: 13.5, lineHeight: 1.6, margin: '4px 0 0' }}>{s.interpretacao}</p>
+            <p style={{ fontSize: 12.5, lineHeight: 1.6, margin: '4px 0 0' }}>{s.interpretacao}</p>
           </>
         )}
 
@@ -500,7 +501,7 @@ export function SecaoSerasa({ ficha }: { ficha: FichaAnalise | null }) {
         {s.consultas.length === 0 ? (
           <div className="mt-vazio">A análise não listou consultas.</div>
         ) : (
-          <div className="mt-tab-wrap">
+          <div className="mt-tab-wrap mt-quadro">
             <table className="mt-tab">
               <thead><tr><th>Data</th><th>Quem consultou</th><th>Segmento</th></tr></thead>
               <tbody>

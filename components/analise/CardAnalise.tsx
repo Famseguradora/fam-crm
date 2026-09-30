@@ -53,6 +53,11 @@ import { etapaDoCard, nomeArea, type PostoCentral } from '@/lib/card/secoes'
 import { fmtData } from '@/lib/utils'
 import BancadaTriagem from '@/components/triagem/BancadaTriagem'
 
+/** "https://www.celog.com.br/" vira "www.celog.com.br": o endereço como se fala. */
+function siteCurto(url: string): string {
+  return url.replace(/^https?:\/\//i, '').replace(/\/$/, '')
+}
+
 type Aba = 'triagem' | 'geral' | 'arquivos' | 'analise' | 'relatorio' | 'ia' | 'encaminhar' | 'atividades'
 
 /* CADA ABA MORA NA ÁREA DONA DELA  ·  28/09/2026
@@ -758,7 +763,13 @@ export default function CardAnalise({ id }: { id: string }) {
           <button type="button" className="an-bt"
             onClick={() => router.push(f.semEsteira ? '/analises?aba=acervo' : '/analises')}
             title={f.semEsteira ? 'Voltar para o acervo' : 'Voltar para a Mesa'}>← Voltar</button>
-          <span className="an-selo gr" style={{ ['--cor' as string]: corDoNome(nome) }}>{iniciaisDe(nome)}</span>
+          {/* O LOGO DA CAPA (30/09/2026): o que ele insere no relatório aparece
+              aqui no lugar das iniciais, numa caixa branca de borda fina, com a
+              imagem inteira (contain). Sem logo, as iniciais de sempre. */}
+          {ficha?.logo
+            // eslint-disable-next-line @next/next/no-img-element -- imagem embutida (data:), não há o que o next/image otimizar
+            ? <span className="an-card-logo"><img src={ficha.logo} alt={`Logo de ${nome}`} /></span>
+            : <span className="an-selo gr" style={{ ['--cor' as string]: corDoNome(nome) }}>{iniciaisDe(nome)}</span>}
           <div style={{ minWidth: 0 }}>
             <h1 className="an-card-nome">{nome}</h1>
             <div className="an-card-cnpj">
@@ -766,6 +777,8 @@ export default function CardAnalise({ id }: { id: string }) {
               {f.cnpj && (f.cnpj_confiavel || f.analise_id || f.tomador_id) ? maskCNPJ(f.cnpj) : 'CNPJ a confirmar'}
               {f.razao_social && f.razao_social !== nome ? ` · ${f.razao_social}` : ''}
               {f.pasta !== nome ? <span title="A pasta no disco"> · pasta “{f.pasta}”</span> : null}
+              {ficha?.site && <> · <a className="an-card-site" href={ficha.site} target="_blank" rel="noopener noreferrer"
+                title="O site que a análise pôs na capa do relatório">{siteCurto(ficha.site)}</a></>}
             </div>
           </div>
           <div className="an-card-fita">

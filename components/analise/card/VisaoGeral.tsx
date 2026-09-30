@@ -9,6 +9,16 @@
 //  entreguei, Relatório gerencial, Substatus) e os documentos do tomador, com
 //  a porta da pasta. Cada bloco no lugar onde ele cai no cockpit.
 //
+//  O DESENHO DE 30/09/2026, pedido dele olhando esta aba: "repare o tamanho dos
+//  botões do lado direito, temos que melhorar isso, essa tela é muito
+//  importante para mim como analista". A referência foi a Mesa da Subscrição:
+//  em cima a FAIXA do Crédito (decisão e limite, com o que falta e o botão do
+//  template), embaixo os INSTRUMENTOS (Score, Rating, Grupo, Documentos) e as
+//  duas colunas. Os seis botões de largura inteira viraram um principal na
+//  faixa e atalhos compactos. Os dados são os mesmos de antes, nenhum a mais.
+//  A faixa e os instrumentos são as peças de components/painel/Faixa.tsx, as
+//  mesmas da bancada de Cadastro e triagem.
+//
 //  OS BOTÕES DO TEMPLATE só aparecem quando o Sistema de Análise responde nesta
 //  máquina: o relatório continua sendo EDITADO lá (ordem dele de 01/09/2026, o
 //  v13.html não se mexe). Fora da máquina dele, o botão vira "Abrir o
@@ -24,6 +34,8 @@ import Notas from './Notas'
 import { SISTEMA_LOCAL, decisaoLimpa, type PropsAba } from './comum'
 import { dataCurta, colunasVisiveis, colunaDoCard, type ColunaMesa } from '@/lib/analise/mesa'
 import { faseDe, type Fase } from '@/lib/analise/esteira'
+import { FaixaDaArea, Instrumentos, Instrumento } from '@/components/painel/Faixa'
+import { ScoreFormado, EvolucaoExercicios, LimiteFormado } from './GraficosCredito'
 
 const SITUACAO_ITEM: Record<string, { rotulo: string; cls: string }> = {
   ok: { rotulo: 'recebido', cls: 'ok' },
@@ -74,6 +86,29 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
     ].filter(x => x.n > 0)
   })()
 
+  /* ── O QUE A FAIXA DIZ ─────────────────────────────────────────────────
+     Tudo do que esta aba JÁ lia (a ficha, os itens do cadastro, o substatus).
+     O que falta é dito em linha curta; o texto longo da análise mora na aba
+     Relatório, e na faixa viraria parede. */
+  const pendentesCad = itens.filter(i => !['ok', 'dispensado'].includes(i.situacao))
+  const pontosFaixa: string[] = []
+  if (ficha) {
+    if (!ficha.revisada) pontosFaixa.push('Gerada pela máquina: falta a sua revisão')
+    // O aviso do limite anulado já vai no meio da faixa, embaixo de "ver a análise".
+    for (const i of pendentesCad) pontosFaixa.push(`${i.nome}: ${SITUACAO_ITEM[i.situacao]?.rotulo ?? i.situacao}`)
+    if (f.substatus) pontosFaixa.push(`Recado: ${f.substatus}`)
+    // "Checklist do cadastro", e não "documento": a conferência da pasta é
+    // outra conta (o cartão Documentos), e as duas podem discordar.
+    if (!pontosFaixa.length) pontosFaixa.push('Revisada, sem pendência no checklist do cadastro')
+  }
+  const veredito = !ficha
+    ? (f.situacao === 'concluida' ? <>Análise <i className="at">a publicar</i></> : <>Análise <i className="at">ainda não feita</i></>)
+    : dec.cor === 'ok' ? <i>{dec.txt}</i>
+      : dec.cor === 'res' ? <>Aprovar <i className="at">com ressalvas</i></>
+        : dec.cor === 'nao' ? <i className="al">{dec.txt}</i>
+          : <>{dec.txt}</>
+  const detalhesScore = [ficha?.classe ? `classe ${ficha.classe}` : '', ficha?.porte ? `porte ${ficha.porte}` : ''].filter(Boolean).join(' · ')
+
   const salvarSubstatus = async () => {
     setSalvando(true); setErroSub('')
     const supabase = createClient()
@@ -106,38 +141,85 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
   }
 
   return (
+    <>
+      <FaixaDaArea
+        rotulo={ficha
+          ? `Crédito · análise de ${fmtData(ficha.data_analise)} · ${ficha.revisada ? 'revisada por você' : 'gerada, ainda não revisada por você'}`
+          : 'Crédito'}
+        veredito={veredito}
+        pontos={ficha ? pontosFaixa : f.situacao === 'concluida'
+          ? ['A análise foi concluída, mas o resultado ainda não está no banco do CRM',
+            'Quem publica é a carga (npm run publicar) ou o botão Finalizar no template']
+          : ['Este tomador ainda não tem análise no banco',
+            'O que chegou até agora está na aba Arquivos; rodar a análise é na aba Análise']}
+        meio={ficha ? {
+          rotulo: 'Limite recomendado',
+          titulo: ficha.limiteNum !== null ? fmtMoeda(ficha.limiteNum) : 'ver a análise',
+          sub: ficha.limiteNum === null ? (ficha.limiteAviso || undefined) : undefined,
+        } : undefined}
+        acoes={(chaveAnalise && local) || ficha ? (
+          <>
+            {chaveAnalise && local && (
+              <a className="pf-bt ouro" href={`${SISTEMA_LOCAL}/analise/${encodeURIComponent(chaveAnalise)}`} target="_blank" rel="noopener"
+                title="Abre a análise no template, onde ela é editada. Só nesta máquina.">Abrir no template</a>
+            )}
+            {ficha && !local && (
+              <button type="button" className="pf-bt ouro" onClick={() => aoIrParaAba('relatorio')}
+                title="O relatório inteiro, lendo o banco do CRM">Abrir o relatório</button>
+            )}
+            {ficha && (
+              <button type="button" className="pf-bt" onClick={() => router.push(`/analises/${ficha.id}`)}
+                title="Corrigir os dados desta análise (limite, decisão, rating) e ler o relatório inteiro, sem abrir o template.">Editar a análise</button>
+            )}
+          </>
+        ) : undefined}
+      />
+
+      {ficha && (
+        <Instrumentos>
+          <Instrumento titulo="Score FAM" numero={fmtScore(ficha.score_final)} apoio={detalhesScore || undefined}
+            origem="memória de cálculo da análise" />
+          <Instrumento titulo="Rating" numero={ficha.rating_cod ?? ficha.rating_txt ?? '—'}
+            apoio={ficha.nivel_risco ? `risco ${ficha.nivel_risco.toLowerCase()}` : undefined} origem="rating FAM da análise" />
+          <Instrumento titulo="Grupo econômico" numero={ficha.grupo ?? 'Não se aplica'}
+            apoio={ficha.grupo ? 'a análise considera o grupo' : 'a análise é só do tomador'} origem="estrutura societária da análise" />
+          <Instrumento titulo="Documentos" marca="na pasta"
+            numero={f.docs ? `${f.docs.feitos} de ${f.docs.total}` : '—'}
+            tom={f.docs && f.docs.total > 0 && f.docs.feitos === f.docs.total ? 'ok' : ''}
+            apoio={f.docs ? 'conferidos' : 'a lista chega do notebook'} origem="pasta do tomador" />
+        </Instrumentos>
+      )}
+
+      {/* OS GRÁFICOS (30/09/2026): por que o Score, como a empresa anda, de
+          onde saiu o limite. Ver o cabeçalho de GraficosCredito.tsx. */}
+      {ficha && (
+        <div className="an-duas">
+          {/* minWidth 0: sem ele a coluna da grade cresce até o texto mais longo
+              e o celular ganha rolagem lateral. */}
+          <div className="an-bloco" style={{ minWidth: 0 }}>
+            <h4>Como o Score foi formado
+              {ficha.score_final !== null && <span className="dir">Score {fmtScore(ficha.score_final)}</span>}
+            </h4>
+            <ScoreFormado memoria={ficha.scoreMemoria} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div className="an-bloco">
+              <h4>Como o limite foi formado</h4>
+              <LimiteFormado ficha={ficha} />
+            </div>
+            <div className="an-bloco">
+              <h4>Evolução dos exercícios</h4>
+              <EvolucaoExercicios exercicios={ficha.exercicios} />
+            </div>
+          </div>
+        </div>
+      )}
+
     <div className="an-duas">
       {/* ── esquerda: o que se lê e escreve ── */}
       <div>
-        <div className="an-bloco">
-          <h4>A análise
-            {ficha && (
-              <span className="dir">
-                <button type="button" className="an-bt mini" onClick={() => router.push(`/analises/${ficha.id}`)}
-                  title="Corrigir os dados desta análise (limite, decisão, rating) e ler o relatório inteiro, sem abrir o template.">Editar</button>
-              </span>
-            )}
-          </h4>
-          {ficha ? (
-            <dl className="an-dados">
-              <dt>Score FAM</dt><dd>{fmtScore(ficha.score_final)}</dd>
-              <dt>Rating</dt><dd>{ficha.rating_cod ?? ficha.rating_txt ?? '—'}</dd>
-              <dt>Decisão</dt><dd className={`dec ${dec.cor}`}>{dec.txt}</dd>
-              <dt>Limite recomendado</dt>
-              <dd>{ficha.limiteNum !== null ? fmtMoeda(ficha.limiteNum) : <span style={{ color: '#a07b1e' }}>ver a análise</span>}
-                {ficha.limiteNum === null && ficha.limiteAviso && <small>{ficha.limiteAviso}</small>}</dd>
-              <dt>Grupo econômico</dt><dd>{ficha.grupo ?? 'Não se aplica'}</dd>
-              <dt>Última análise</dt><dd>{fmtData(ficha.data_analise)}{!ficha.revisada && <small>gerada, ainda não revisada por você</small>}</dd>
-            </dl>
-          ) : (
-            <div className="an-vazio">
-              {f.situacao === 'concluida'
-                ? <>A análise foi concluída, mas o resultado ainda não está no banco do CRM. Quem publica é a carga (<b>npm run publicar</b>) ou o botão Finalizar no template.</>
-                : <>Este tomador ainda não tem análise no banco. O que chegou até agora está na aba <b>Arquivos</b>; rodar a análise é na aba <b>Análise</b>.</>}
-            </div>
-          )}
-        </div>
-
+        {/* O antigo bloco "A análise" saiu: com análise, os números estão na
+            faixa e nos instrumentos; sem ela, a faixa diz por quê e quem publica. */}
         <div className="an-bloco">
           <h4>O que eu sei deste tomador</h4>
           <Notas chave={f.chave || f.pasta} filaId={f.semEsteira ? null : f.id} tomadorId={f.tomador_id} cnpj={f.cnpj}
@@ -147,41 +229,40 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
 
       {/* ── direita: o que se faz e confere ── */}
       <div>
+        {/* OS ATALHOS  ·  30/09/2026. Eram seis botões de largura inteira, todos
+            com o mesmo peso, ocupando meia tela. O principal (template ou
+            relatório) subiu para a faixa; o resto virou esta grade compacta, na
+            mesma ordem de antes. Nenhum botão sumiu. */}
         <div className="an-bloco">
-          <div className="an-acoes">
+          <h4>Atalhos da análise</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 6 }}>
             {chaveAnalise && local && (
-              <a className="an-bt ouro" href={`${SISTEMA_LOCAL}/analise/${encodeURIComponent(chaveAnalise)}`} target="_blank" rel="noopener"
-                title="Abre a análise no template, onde ela é editada. Só nesta máquina.">Abrir no template</a>
-            )}
-            {ficha && !local && (
-              <button type="button" className="an-bt ouro" onClick={() => aoIrParaAba('relatorio')}
-                title="O relatório inteiro, lendo o banco do CRM">Abrir o relatório</button>
-            )}
-            {chaveAnalise && local && (
-              <a className="an-bt contorno" href={`${SISTEMA_LOCAL}/analise/${encodeURIComponent(chaveAnalise)}?versao=gerada`} target="_blank" rel="noopener"
+              <a className="an-bt mini contorno" style={{ textAlign: 'center' }} href={`${SISTEMA_LOCAL}/analise/${encodeURIComponent(chaveAnalise)}?versao=gerada`} target="_blank" rel="noopener"
                 title="A análise do jeito que eu entreguei, antes da sua edição. Somente leitura: não tem como salvar por cima da sua.">Como eu entreguei</a>
             )}
             {chaveAnalise && local && (
-              <a className="an-bt" href={`${SISTEMA_LOCAL}/gerencial/${encodeURIComponent(chaveAnalise)}`} target="_blank" rel="noopener"
+              <a className="an-bt mini" style={{ textAlign: 'center' }} href={`${SISTEMA_LOCAL}/gerencial/${encodeURIComponent(chaveAnalise)}`} target="_blank" rel="noopener"
                 title="Relatório de uma página, com a conclusão em destaque, para anexar no e-mail">Relatório gerencial</a>
             )}
             {ficha && (
-              <button type="button" className="an-bt" onClick={() => router.push(`/analises/${ficha.id}`)}
+              <button type="button" className="an-bt mini" onClick={() => router.push(`/analises/${ficha.id}`)}
                 title="O relatório fracionado, seção por seção, lendo o banco">Relatório no CRM</button>
             )}
             {f.caso_id && (
-              <button type="button" className="an-bt" onClick={() => router.push(`/comercial/${f.caso_id}`)}
+              <button type="button" className="an-bt mini" onClick={() => router.push(`/comercial/${f.caso_id}`)}
                 title="A estação anterior da esteira: o CNPJ, o cadastro do tomador e os documentos que o Comercial recebeu por e-mail.">Triagem e cadastro</button>
             )}
             {quem.podeEscrever && (
-              <button type="button" className={`an-bt${f.substatus || f.coluna_id ? ' contorno' : ''}`}
+              <button type="button" className={`an-bt mini${f.substatus || f.coluna_id ? ' contorno' : ''}`}
                 onClick={() => { setColunaEscolhida(f.coluna_id ?? null); setSubTexto(f.substatus ?? ''); setSubAberto(true) }}
                 title="Escolha a coluna da Mesa onde este card fica (Interrompido, ou outra que você criou) e deixe um recado">
                 {f.substatus || f.coluna_id ? 'Mudar o substatus' : 'Substatus'}
               </button>
             )}
+          </div>
+          <div className="an-acoes">
             {f.substatus && (
-              <div className="an-aviso aviso" style={{ margin: 0 }}>
+              <div className="an-aviso aviso" style={{ margin: '10px 0 0' }}>
                 <span>📌</span>
                 <span><b>{f.substatus}</b><br /><small style={{ color: '#8a6410' }}>{f.substatus_por ?? 'Marco'}{f.substatus_em ? ` · ${dataCurta(f.substatus_em)}` : ''}</small></span>
               </div>
@@ -306,5 +387,6 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
         </div>
       )}
     </div>
+    </>
   )
 }

@@ -543,9 +543,49 @@ function limpoFundo(v, nivel = 0) {
   return v === undefined ? null : v
 }
 
+/* O LOGO E O SITE DA CAPA (30/09/2026). Ele insere o logo do tomador na capa
+   do relatorio (`S.orgLogo`, o mesmo do organograma) e o site embaixo
+   (`S.capaSite`), e pediu que o card do CRM mostre os dois. Viajam dentro da
+   `identificacao`, que ja e bloco so de leitura (SO_LEITURA, la embaixo): sem
+   coluna nova e sem migration, e a analise editada no CRM tambem recebe.
+   O logo so passa se for imagem embutida (data:image), e com teto de tamanho:
+   o maior do acervo tem 350 KB, e o CRM le isto numa linha so. */
+const LOGO_TETO = 400_000
+const LOGO_OK = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=\s]+$/
+function logoDaCapa(rev) {
+  const v = typeof rev?.orgLogo === 'string' ? rev.orgLogo.trim() : ''
+  return v && v.length <= LOGO_TETO && LOGO_OK.test(v) ? v : null
+}
+/* O site vem como o HTML que o editor gravou (`<a href="...">www...</a>`). Vale
+   o href quando e um endereco de verdade; quando nao (ja apareceu um href
+   apontando para o localhost, colado pelo navegador), vale o texto visivel. */
+function siteDaCapa(rev) {
+  const html = typeof rev?.capaSite === 'string' ? rev.capaSite : ''
+  if (!html.trim()) return null
+  const href = /href="([^"]+)"/i.exec(html)?.[1] ?? ''
+  const candidatos = [href, semTags(html)]
+  for (const c of candidatos) {
+    const t = c.trim().replace(/\s+/g, '')
+    if (!t) continue
+    try {
+      const u = new URL(/^https?:\/\//i.test(t) ? t : `https://${t}`)
+      if (!u.hostname.includes('.') || /^(localhost|127\.|10\.|192\.168\.)/.test(u.hostname)) continue
+      return u.href
+    } catch { /* texto que nao e endereco: tenta o proximo */ }
+  }
+  return null
+}
+
+function identificacao(rev, ger) {
+  const ficha = fichaDaEmpresa(rev, ger)
+  const logo = logoDaCapa(rev), site = siteDaCapa(rev)
+  if (!logo && !site) return ficha
+  return { ...(ficha ?? {}), ...(logo ? { logo } : {}), ...(site ? { site } : {}) }
+}
+
 /* A ficha da empresa. No template e um objeto `ident`; no motor os campos vem
    SOLTOS na raiz, um a um. Por isso este e o unico que monta o objeto. */
-function identificacao(rev, ger) {
+function fichaDaEmpresa(rev, ger) {
   const doTemplate = limpoFundo(rev?.ident)
   if (vale(doTemplate)) return doTemplate
   if (!ger) return null

@@ -1123,6 +1123,19 @@ ul.org-tree > li.org-subtree::after { display: none; }
 .mt-tab td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mt-tab td.dim { color: #6080a0; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mt-tab .seta { color: #b9c8da; font-size: 15px; }
+
+/* O QUADRO (30/09/2026): tabela com moldura e linha entre as colunas, o jeito
+   do Enquadramento da Mesa da Subscrição. Pedido dele: "quando for quadro,
+   separe por linhas". A linha do grupo é o título dentro do quadro. */
+.mt-quadro { border: 1px solid #c5d5e8; border-radius: 9px; }
+.mt-quadro .mt-tab th + th, .mt-quadro .mt-tab td + td { border-left: 1px solid #dbe6f3; }
+.mt-quadro .mt-tab td { border-bottom-color: #e3ebf5; vertical-align: top; }
+/* Com um <tbody> por grupo, a última linha de cada grupo mantém a sua linha;
+   só a última do quadro inteiro encosta na moldura sem ela. */
+.mt-quadro .mt-tab tbody tr:last-child td { border-bottom: 1px solid #e3ebf5; }
+.mt-quadro .mt-tab tbody:last-child tr:last-child td { border-bottom: none; }
+.mt-tab tr.mt-tab-grupo td { background: #f4f7fb; color: #0a1628; font-size: 12.5px; padding-top: 8px; padding-bottom: 8px; }
+.mt-tab tr.mt-tab-grupo td + td { border-left-color: transparent; }
 .mt-tab tbody tr:hover td { background: #fbfdff; }
 
 .mt-pill {

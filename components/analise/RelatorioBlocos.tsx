@@ -53,45 +53,62 @@ export function SecaoResseguro({ ficha }: { ficha: FichaAnalise | null }) {
     )
   }
 
+  /* QUADRO, NÃO PILHA DE CARTÕES (30/09/2026). Eram dez cartões com borda
+     colorida, um embaixo do outro: três telas de rolagem. Virou o quadro do
+     Enquadramento da Mesa da Subscrição, que ele escolheu como medida: uma
+     linha por regra do contrato, a situação na última coluna com o ponto
+     colorido, e a linha inteira tingida só quando pede ação. */
   const cor = (st: string | null) => {
     const t = (st ?? '').toLowerCase()
-    if (t.includes('bloqu')) return { fundo: '#fbeaea', texto: '#a02020', borda: '#f5b8b8' }
-    if (t.includes('especial') || t.includes('aten')) return { fundo: '#fdf6e3', texto: '#8a6410', borda: '#ecdfb4' }
-    if (t.includes('enquadr')) return { fundo: '#e6f9f0', texto: '#1a7a50', borda: '#a7e9c8' }
-    return { fundo: '#eef3f9', texto: '#26374a', borda: '#dbe6f3' }
+    if (t.includes('bloqu')) return { ponto: '#d64545', texto: '#a02020', fundo: '#fdf1f1' }
+    if (t.includes('especial') || t.includes('aten')) return { ponto: '#e8b84b', texto: '#8a6410', fundo: '#fdf9ec' }
+    if (t.includes('enquadr') || /^ok\b/.test(t)) return { ponto: '#27a96c', texto: '#1a7a50', fundo: '' }
+    return { ponto: '#8ba3c0', texto: '#26374a', fundo: '' }
   }
   const bloqueios = ficha.resseguro.filter(l => (l.status ?? '').toLowerCase().includes('bloqu')).length
 
   return (
     <Bloco titulo="Enquadramento no contrato de resseguro" cor="#1e4080">
-      <div className="mt-nota" style={{ marginTop: 0, marginBottom: 12 }}>
+      <div style={{ fontSize: 12, color: '#6080a0', marginBottom: 10 }}>
         {ficha.resseguro.length} linha{ficha.resseguro.length === 1 ? '' : 's'} do contrato automático,
         como a análise de {fmtData(ficha.data_analise)} as apurou
-        {bloqueios ? ` · ${bloqueios} bloqueio${bloqueios === 1 ? '' : 's'}` : ' · nenhum bloqueio'}.
+        {bloqueios ? <> · <b style={{ color: '#a02020' }}>{bloqueios} bloqueio{bloqueios === 1 ? '' : 's'}</b></> : ' · nenhum bloqueio'}.
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {ficha.resseguro.map((l, i) => {
-          const c = cor(l.status)
-          return (
-            <div key={i} style={{ border: `1px solid ${c.borda}`, borderRadius: 10, padding: '10px 13px', background: '#fff' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                <b style={{ fontSize: 13.5, color: '#0a1628' }}>{l.item}</b>
-                {l.status && (
-                  <span style={{
-                    fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 7,
-                    background: c.fundo, color: c.texto, whiteSpace: 'nowrap',
-                  }}>{l.status}</span>
-                )}
-                {l.regra && (
-                  <span style={{ fontSize: 12, color: '#6080a0', marginLeft: 'auto', textAlign: 'right' }}>{l.regra}</span>
-                )}
-              </div>
-              {l.resultado && <div style={{ fontSize: 13, color: '#26374a', marginTop: 5, lineHeight: 1.5 }}>{l.resultado}</div>}
-              {l.obs && <div style={{ fontSize: 12, color: '#6080a0', marginTop: 4, lineHeight: 1.5 }}>{l.obs}</div>}
-            </div>
-          )
-        })}
+      <div className="mt-tab-wrap mt-quadro">
+        <table className="mt-tab" style={{ minWidth: 620 }}>
+          <thead>
+            <tr>
+              <th style={{ width: '30%' }}>Linha do contrato</th>
+              <th>O que a análise apurou</th>
+              <th style={{ width: 120, textAlign: 'center' }}>Situação</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ficha.resseguro.map((l, i) => {
+              const c = cor(l.status)
+              return (
+                <tr key={i} style={c.fundo ? { background: c.fundo } : undefined}>
+                  <td>
+                    <div style={{ fontWeight: 700, color: '#0a1628' }}>{l.item}</div>
+                    {l.regra && <div style={{ fontSize: 11.5, color: '#6080a0', marginTop: 2, lineHeight: 1.4 }}>{l.regra}</div>}
+                  </td>
+                  <td style={{ lineHeight: 1.5 }}>
+                    {l.resultado ?? '—'}
+                    {l.obs && <div style={{ fontSize: 11.5, color: '#6080a0', marginTop: 2 }}>{l.obs}</div>}
+                  </td>
+                  <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                    {l.status ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: c.texto }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: c.ponto }} />{l.status}
+                      </span>
+                    ) : '—'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </Bloco>
   )
@@ -124,10 +141,7 @@ export function SecaoScore({ ficha }: { ficha: FichaAnalise | null }) {
     <>
       <Bloco titulo={`Como o Score ${fmtScore(ficha.score_final)} foi formado`} cor="#1e4080">
         {m.calculo && (
-          <div style={{
-            fontSize: 13, color: '#26374a', lineHeight: 1.6, background: '#f7fafd',
-            border: '1px solid #dbe6f3', borderRadius: 9, padding: '10px 13px', marginBottom: 14,
-          }}>{m.calculo}</div>
+          <div style={{ fontSize: 12.5, color: '#26374a', lineHeight: 1.6, marginBottom: 10 }}>{m.calculo}</div>
         )}
         <div className="mt-campos">
           <Campo rotulo="Score objetivo" valor={num(m.scoreObjetivo)} cls="az" />
@@ -137,23 +151,33 @@ export function SecaoScore({ ficha }: { ficha: FichaAnalise | null }) {
         </div>
       </Bloco>
 
-      {m.grupos.map(g => (
-        <Bloco key={g.id} titulo={`${g.nome}${g.subtotal !== null ? ` · subtotal ${num(g.subtotal)}` : ''}`} cor="#6080a0">
-          <div className="mt-nota" style={{ marginTop: 0, marginBottom: 10 }}>{g.dica}</div>
-          {/* A tabela rola dentro da própria caixa: a página nunca rola de lado. */}
-          <div style={{ overflowX: 'auto' }}>
-            <table className="mt-tab" style={{ minWidth: 660 }}>
-              <thead>
-                <tr>
-                  <th>Indicador</th>
-                  <th style={{ textAlign: 'right' }}>Valor</th>
-                  <th>Classificação</th>
-                  <th style={{ textAlign: 'right' }}>Pontos</th>
-                  <th style={{ textAlign: 'right' }}>Peso</th>
-                  <th style={{ textAlign: 'right' }}>Parcial</th>
+      {/* UM QUADRO SÓ (30/09/2026). Eram cinco blocos, um por grupo, cada um
+          com a própria nota e o próprio cabeçalho de tabela repetido. Agora o
+          grupo é uma linha de título dentro do mesmo quadro, com o subtotal à
+          direita; a fórmula continua à vista, embaixo do indicador. */}
+      <Bloco titulo="Indicador a indicador" cor="#6080a0">
+        {/* A tabela rola dentro da própria caixa: a página nunca rola de lado. */}
+        <div className="mt-tab-wrap mt-quadro">
+          <table className="mt-tab" style={{ minWidth: 660 }}>
+            <thead>
+              <tr>
+                <th>Indicador</th>
+                <th style={{ textAlign: 'right' }}>Valor</th>
+                <th>Classificação</th>
+                <th style={{ textAlign: 'right' }}>Pontos</th>
+                <th style={{ textAlign: 'right' }}>Peso</th>
+                <th style={{ textAlign: 'right' }}>Parcial</th>
+              </tr>
+            </thead>
+            {m.grupos.map(g => (
+              <tbody key={g.id}>
+                <tr className="mt-tab-grupo">
+                  <td colSpan={5}>
+                    <b>{g.nome}</b>
+                    {g.dica && <span style={{ fontSize: 11.5, fontWeight: 400, color: '#6080a0', marginLeft: 8 }}>{g.dica}</span>}
+                  </td>
+                  <td className="n"><b>{num(g.subtotal)}</b></td>
                 </tr>
-              </thead>
-              <tbody>
                 {g.indicadores.map(i => (
                   <tr key={i.id}>
                     <td>
@@ -163,16 +187,16 @@ export function SecaoScore({ ficha }: { ficha: FichaAnalise | null }) {
                     </td>
                     <td className="n">{i.valor ?? '—'}</td>
                     <td>{i.classificacao ?? '—'}</td>
-                    <td className="n">{i.pontos ?? '—'}</td>
+                    <td className="n" style={{ fontWeight: 700, color: '#0a1628' }}>{i.pontos ?? '—'}</td>
                     <td className="n">{i.peso === null ? '—' : `${String(i.peso).replace('.', ',')}%`}</td>
                     <td className="n">{num(i.parcial)}</td>
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
-        </Bloco>
-      ))}
+            ))}
+          </table>
+        </div>
+      </Bloco>
     </>
   )
 }

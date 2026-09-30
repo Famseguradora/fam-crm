@@ -161,6 +161,10 @@ export interface FichaAnalise {
      e o CRM os mostra. Análise publicada antes da carga nova vem com null, e
      a tela simplesmente não desenha a seção. */
   identificacao: IdentificacaoFicha | null
+  /** O logo e o site que ele pôs na capa do relatório (30/09/2026). Chegam
+   *  dentro da `identificacao` do banco; ver `logoDaCapa` na carga. */
+  logo: string | null
+  site: string | null
   enquadramento: EnquadramentoFicha | null
   resseguro: LinhaResseguro[]
   scoreMemoria: ScoreMemoria | null
@@ -263,6 +267,17 @@ function leIdentificacao(v: unknown): IdentificacaoFicha | null {
     funcionarios: txt(o.funcionarios), filiais: txt(o.filiais),
   }
   return Object.values(f).some(Boolean) ? f : null
+}
+
+/* O logo só vira <img> se for imagem embutida: a carga já filtra, e a tela
+   confere de novo, porque é conteúdo de banco. O site só se for http(s). */
+function leLogo(v: unknown): string | null {
+  const l = obj(v)?.logo
+  return typeof l === 'string' && /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/.test(l) ? l : null
+}
+function leSite(v: unknown): string | null {
+  const s = obj(v)?.site
+  return typeof s === 'string' && /^https?:\/\/[^\s/]+\.[^\s]+$/i.test(s) ? s : null
 }
 
 function leEnquadramento(v: unknown): EnquadramentoFicha | null {
@@ -659,6 +674,8 @@ async function montarFicha(
 
       // ── o resto do relatório ──────────────────────────────────────────
       identificacao: leIdentificacao(linha.identificacao),
+      logo: leLogo(linha.identificacao),
+      site: leSite(linha.identificacao),
       enquadramento: leEnquadramento(linha.enquadramento),
       resseguro: leResseguro(linha.resseguro),
       scoreMemoria: leScoreMemoria(linha.score_memoria),
