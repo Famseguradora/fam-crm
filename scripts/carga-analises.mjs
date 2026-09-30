@@ -51,6 +51,16 @@ const COPIAS = path.join(RAIZ_ANALISES, '_sistema', 'registro', 'json')
 const iSo = process.argv.indexOf('--so')
 const SO = iSo > -1 ? String(process.argv[iSo + 1] || '').trim() : ''
 
+/* O FINALIZAR GANHA DA EDICAO NO CRM (30/09/2026).
+   A trava de `editado_no_crm` (la embaixo, em `protegidas`) nao distinguia a
+   carga em lote do clique dele no Finalizar Analise. Na Heating e Cooling ele
+   preencheu a corretora na tela do CRM em 29/09, a linha inteira virou "dele",
+   e no dia seguinte o Finalizar foi recusado: o relatorio novo nao entrou e
+   ele teve de redigitar o limite a mao.
+   Com `--finalizar` (so junto de `--so`, e so o motor passa), o relatorio
+   sobrescreve a linha e a marca e limpa. Ver `liberarParaFinalizar`. */
+const FINALIZAR = process.argv.includes('--finalizar')
+
 const MODO = process.argv.includes('--gravar') ? 'gravar'
   : process.argv.includes('--limpar') ? 'limpar'
   : 'ensaio'
@@ -80,8 +90,24 @@ function conectar() {
 // ─────────────────────────────────────────────────────────────
 // Leitura de numero, com a regra de nunca chutar
 // ─────────────────────────────────────────────────────────────
-const semTags = (v) => String(v ?? '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ')
+/* TAG DE FORMATACAO NAO VIRA ESPACO (30/09/2026). Ele formata o relatorio
+   (capitular, negrito no meio da frase), e trocar toda tag por espaco publicava
+   "I nstaladora", "1,62 , mas" e "Aprovar , com". So a tag de BLOCO separa
+   palavras; a de formatacao some sem deixar nada. */
+const TAG_DE_FORMATO = /<\/?(span|b|i|u|s|em|strong|font|a|sub|sup|mark|small)\b[^>]*>/gi
+const semTags = (v) => String(v ?? '').replace(TAG_DE_FORMATO, '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ')
   .replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()
+
+/* O registro do motor ja entrega conclusao e condicoes SEM as tags, mas com o
+   espaco no lugar de cada uma. Quando o texto do registro e o mesmo do
+   relatorio revisado, vale a limpeza daqui sobre o HTML original. Quando nao
+   e (correcao feita no cockpit), o registro continua mandando. */
+const comEspaco = (v) => String(v ?? '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ')
+  .replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()
+function textoDoRelatorio(doRegistro, html) {
+  const sujo = comEspaco(html)
+  return sujo && sujo === comEspaco(doRegistro) ? semTags(html) : semTags(doRegistro)
+}
 
 const VAZIO = /^(n\/?d|n\/?a|nao informado|não informado|-{1,3}|—|–|s\/d)$/i
 
@@ -339,21 +365,28 @@ function copiaFunda(id) {
   }
 }
 
-/** Pontos: array na versao gerada, HTML na revisada. Sai sempre array de texto. */
+/** Pontos: array na versao gerada, HTML na revisada. Sai sempre array de texto.
+ *  A REVISADA PRIMEIRO (30/09/2026). Ate aqui a gerada ganhava, e os pontos que
+ *  ele reescrevia no relatorio nunca chegavam ao CRM: a Heating e Cooling foi
+ *  finalizada com dois pontos novos (o contrato que sustenta a excecao) e a
+ *  tela continuou com os quatro da maquina. */
 function pontos(rev, ger, qual) {
-  const arr = qual === 'positivos' ? ger?.pontos_positivos : ger?.pontos_atencao
-  if (Array.isArray(arr) && arr.length) return arr.map(s => semTags(s)).filter(Boolean)
   const html = qual === 'positivos' ? rev?.ppHtml : rev?.paHtml
   if (typeof html === 'string' && html.trim()) {
     const itens = html.split(/<\/li>|<br\s*\/?>|<\/p>/i).map(s => semTags(s)).filter(Boolean)
     if (itens.length) return itens
   }
+  const arr = qual === 'positivos' ? ger?.pontos_positivos : ger?.pontos_atencao
+  if (Array.isArray(arr) && arr.length) return arr.map(s => semTags(s)).filter(Boolean)
   return null
 }
 
-/** Os 3 C's: `tres_cs` na gerada, `cs` na revisada. Guardado como veio. */
+/** Os 3 C's: `cs` na revisada, `tres_cs` na gerada, com a mesma forma. A
+ *  revisada primeiro, pelo mesmo motivo dos pontos, e sem a marcacao do editor. */
 function tresCs(rev, ger) {
-  const c = ger?.tres_cs ?? rev?.cs ?? null
+  const doTemplate = limpoFundo(rev?.cs)
+  if (doTemplate && typeof doTemplate === 'object' && !Array.isArray(doTemplate) && Object.keys(doTemplate).length) return doTemplate
+  const c = ger?.tres_cs ?? null
   return c && typeof c === 'object' && Object.keys(c).length ? c : null
 }
 
@@ -709,8 +742,8 @@ function montar(a, avisos) {
       taxa_tradicional: taxaPct(a.taxa_tradicional),
       taxa_judicial: taxaPct(a.taxa_judicial),
       taxa_estruturada: taxaPct(a.taxa_estruturada),
-      condicoes: semTags(a.condicoes) || null,
-      conclusao: semTags(a.conclusao) || null,
+      condicoes: textoDoRelatorio(a.condicoes, rev?.concl?.cond) || null,
+      conclusao: textoDoRelatorio(a.conclusao, rev?.concl?.texto) || null,
       tres_cs: tresCs(rev, ger),
       pontos_positivos: pontos(rev, ger, 'positivos'),
       pontos_atencao: pontos(rev, ger, 'atencao'),
@@ -758,9 +791,84 @@ function montar(a, avisos) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// O Finalizar por cima de uma linha editada no CRM
+// ─────────────────────────────────────────────────────────────
+// Os campos que o `EditorAnalise.tsx` deixa editar, com o MESMO rotulo de la:
+// o historico (`analise_edicoes`) e lido por gente, e dois nomes para o mesmo
+// campo fariam a troca do Finalizar parecer outra coisa.
+const ROTULOS_DO_EDITOR = {
+  corretora: 'Corretora', grupo: 'Grupo econômico',
+  score_final: 'Score FAM', rating_cod: 'Rating (código)', rating_txt: 'Rating (por extenso)',
+  classe: 'Classe', porte: 'Porte', nivel_risco: 'Nível de risco', recomendacao: 'Decisão',
+  limite_recomendado_num: 'Limite recomendado',
+  limite_recomendado_txt: 'O que a análise escreveu sobre o limite',
+  taxa_tradicional: 'Taxa tradicional (%)', taxa_judicial: 'Taxa judicial (%)',
+  taxa_estruturada: 'Taxa estruturada (%)',
+  pontos_positivos: 'Pontos positivos', pontos_atencao: 'Pontos de atenção',
+  conclusao: 'Conclusão', condicoes: 'Condições',
+}
+const CS_DO_EDITOR = [['carater', 'Caráter'], ['capacidade', 'Capacidade'], ['capital', 'Capital']]
+
+const vazio = (v) => v === null || v === undefined || v === '' ||
+  (Array.isArray(v) && v.length === 0)
+const emTexto = (v) => vazio(v) ? null
+  : Array.isArray(v) ? v.join('\n')
+    : typeof v === 'object' ? JSON.stringify(v) : String(v)
+function mesmoValor(a, b) {
+  if (vazio(a) && vazio(b)) return true
+  if (vazio(a) || vazio(b)) return false
+  // O banco devolve numeric como texto ("7.6000"); o disco traz numero.
+  if (typeof a !== 'object' && typeof b !== 'object' &&
+    Number.isFinite(Number(a)) && Number.isFinite(Number(b))) return Number(a) === Number(b)
+  return emTexto(a) === emTexto(b)
+}
+
+/** O que muda quando o relatorio entra por cima de uma linha editada no CRM.
+ *  MEXE em `linha`: onde o relatorio nao tem o dado e o CRM tem, o do CRM fica
+ *  (a corretora que ele digitou, a determinacao). Onde os dois tem, vale o
+ *  relatorio, e a troca volta em `trocas` para virar historico. */
+export function liberarParaFinalizar(linha, guardada) {
+  const mantidos = []
+  // So o que a tela do CRM deixa escrever. O resto da linha nunca foi dele ali
+  // (blocos de leitura, campos derivados), e nesses o relatorio manda sempre.
+  const DELE = [...Object.keys(ROTULOS_DO_EDITOR), 'tres_cs', 'determinacao']
+  for (const k of DELE) {
+    // O limite e tratado logo abaixo: numero nulo no disco pode ser de proposito.
+    if (k === 'limite_recomendado_num') continue
+    if (vazio(linha[k]) && !vazio(guardada[k])) { linha[k] = guardada[k]; mantidos.push(k) }
+  }
+  /* O numero do limite fica NULO de proposito quando o relatorio da um teto ou
+     uma frase ("R$ 80.000.000,00 (Teto FAM)"). Manter o numero do CRM nesse
+     caso ressuscitaria o limite da versao anterior. Entao o do CRM so fica
+     quando o relatorio nao diz NADA sobre limite, e ai fica o trio inteiro: o
+     motivo do disco esconderia de novo o numero que ele digitou. */
+  if (vazio(linha.limite_recomendado_num) && !vazio(guardada.limite_recomendado_num) &&
+    mantidos.includes('limite_recomendado_txt')) {
+    linha.limite_recomendado_num = guardada.limite_recomendado_num
+    linha.limite_recomendado_tipo = guardada.limite_recomendado_tipo ?? null
+    linha.limite_recomendado_motivo = guardada.limite_recomendado_motivo ?? null
+    mantidos.push('limite_recomendado_num')
+  }
+
+  const trocas = []
+  for (const [k, rotulo] of Object.entries(ROTULOS_DO_EDITOR)) {
+    if (mesmoValor(guardada[k], linha[k])) continue
+    trocas.push({ campo: rotulo, de: emTexto(guardada[k]), para: emTexto(linha[k]) })
+  }
+  for (const [qual, nome] of CS_DO_EDITOR) {
+    for (const [parte, rot] of [['classe', 'classe'], ['fundamento', 'fundamento']]) {
+      const de = guardada.tres_cs?.[qual]?.[parte], para = linha.tres_cs?.[qual]?.[parte]
+      if (mesmoValor(de, para)) continue
+      trocas.push({ campo: `${nome} · ${rot}`, de: emTexto(de), para: emTexto(para) })
+    }
+  }
+  return { mantidos, trocas }
+}
+
+// ─────────────────────────────────────────────────────────────
 // O relatorio de conflitos
 // ─────────────────────────────────────────────────────────────
-const brl = (n) => n === null || n === undefined ? '(vazio)'
+const brl =(n) => n === null || n === undefined ? '(vazio)'
   : n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
 function conflitos(montadas, tomadores) {
@@ -1079,6 +1187,9 @@ async function principal() {
     return
   }
 
+  // Sem `--so`, o `--finalizar` passaria por cima de TODAS as editadas no CRM.
+  if (FINALIZAR && !SO) throw new Error('--finalizar so vale junto de --so <id>: ele e o clique numa analise, nunca a carga em lote.')
+
   // ── ler os dois lados
   let { analises } = acervo()
   if (SO) {
@@ -1147,7 +1258,8 @@ async function principal() {
   const chavesDoAcervo = montadas.map(m => m.linha.chave_local).filter(Boolean)
   for (let i = 0; i < chavesDoAcervo.length; i += 200) {
     const { data, error } = await sb.from('analises')
-      .select('id, chave_local, razao_social, editado_no_crm, score_final, recomendacao, limite_recomendado_num, conclusao')
+      // No Finalizar a linha inteira e comparada com o relatorio, campo a campo.
+      .select(FINALIZAR ? '*' : 'id, chave_local, razao_social, editado_no_crm, score_final, recomendacao, limite_recomendado_num, conclusao')
       .in('chave_local', chavesDoAcervo.slice(i, i + 200))
       .not('editado_no_crm', 'is', null)
     // Sem CONSEGUIR conferir, a carga para. Publicar as cegas pode apagar a
@@ -1162,6 +1274,8 @@ async function principal() {
   for (const m of montadas) {
     const guardada = protegidas.get(m.linha.chave_local)
     if (!guardada) continue
+    // No Finalizar nao ha divergencia para ele decidir: o relatorio entra.
+    if (FINALIZAR) continue
     const L = m.linha
     const pares = [
       ['score_final', comoTexto(guardada.score_final), comoTexto(L.score_final)],
@@ -1171,7 +1285,9 @@ async function principal() {
     ]
     for (const [campo, noCrm, noDisco] of pares) {
       if (Number(noCrm) === Number(noDisco) && noCrm !== null && noDisco !== null) continue
-      if (String(noCrm ?? '') === String(noDisco ?? '')) continue
+      // Sem contar espaco: a limpeza de tags mudou em 30/09 e o mesmo texto,
+      // gravado antes com "1,62 , mas", nao e divergencia para ele decidir.
+      if (String(noCrm ?? '').replace(/\s+/g, '') === String(noDisco ?? '').replace(/\s+/g, '')) continue
       confl.push({
         tipo: 'editada_no_crm', chave_local: L.chave_local, tomador_id: null, campo,
         valor_crm: noCrm, valor_analise: noDisco, sugestao: null, candidatos: null,
@@ -1179,10 +1295,25 @@ async function principal() {
       })
     }
   }
-  if (protegidas.size) {
+  if (protegidas.size && !FINALIZAR) {
     console.log(`\nEDITADAS NO CRM (nao serao sobrescritas): ${protegidas.size}`)
     for (const [chave, d] of [...protegidas].slice(0, 10)) {
       console.log(`   ${chave}  ${d.razao_social ?? ''}`)
+    }
+  }
+
+  // O Finalizar por cima da edicao no CRM: aqui so se calcula (e a linha ja
+  // fica com o que e mantido do CRM); o historico e gravado la embaixo.
+  const liberadas = new Map()
+  if (FINALIZAR) {
+    for (const m of montadas) {
+      const guardada = protegidas.get(m.linha.chave_local)
+      if (!guardada) continue
+      const r = liberarParaFinalizar(m.linha, guardada)
+      liberadas.set(m.linha.chave_local, r)
+      console.log(`\nFINALIZAR por cima da edicao no CRM: ${m.linha.chave_local}  ${guardada.razao_social ?? ''}`)
+      console.log(`   o relatorio troca ${r.trocas.length} campo(s): ${r.trocas.map(t => t.campo).join(', ') || 'nenhum'}`)
+      if (r.mantidos.length) console.log(`   fica o do CRM (o relatorio nao tem): ${r.mantidos.join(', ')}`)
     }
   }
 
@@ -1234,6 +1365,29 @@ async function principal() {
   // linha de falha, o resto continua, e o fim mostra o que nao entrou.
   console.log('\ngravando…')
   const falhas = []
+
+  /* O HISTORICO ANTES, A LINHA DEPOIS. O que estava no CRM vai para
+     `analise_edicoes` e so entao a trava sai. Se o historico nao gravar, a
+     linha CONTINUA protegida e o caso vira falha visivel: sobrescrever sem
+     guardar o valor anterior e justamente o dano que a trava evita. */
+  for (const m of montadas) {
+    const r = liberadas.get(m.linha.chave_local)
+    if (!r) continue
+    const guardada = protegidas.get(m.linha.chave_local)
+    if (r.trocas.length) {
+      const { error } = await sb.from('analise_edicoes').insert(r.trocas.map(t => ({
+        analise_id: guardada.id, campo: t.campo, de: t.de, para: t.para,
+        quem: null, quem_nome: 'Finalizar Análise (relatório)',
+      })))
+      if (error) {
+        falhas.push(`${m.linha.chave_local}: nao consegui guardar o historico do que estava no CRM (${error.message}); a analise NAO foi sobrescrita`)
+        continue
+      }
+    }
+    m.linha.editado_no_crm = null
+    m.linha.editado_por = null
+    protegidas.delete(m.linha.chave_local)
+  }
 
   // As editadas no CRM ficam de fora da gravacao (a trava esta explicada la em
   // cima, junto com `protegidas`). Elas continuam no relatorio de conflitos.
