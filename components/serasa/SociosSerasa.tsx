@@ -32,6 +32,7 @@ import { createClient } from '@/lib/supabase/client'
 import { maskCNPJ, maskCPF } from '@/lib/utils'
 import { cor } from '@/lib/ui/painel'
 import { percentualDoSocio } from '@/lib/serasa/pedido'
+import { nomeDeExibicao } from '@/lib/cnpj'
 
 interface Socio {
   id: string
@@ -59,19 +60,30 @@ const ROTULO: Record<string, string> = {
 }
 const MOSTRA = 8
 
-export default function SociosSerasa({ tomadorId, pasta, analista, classeBotao = 'mt-btn', aoChegarPdf }: {
+/** A contagem dos sócios da lista, para o resumo de quem mostra um cartão. */
+export interface ResumoSocios { aguardando: number; andando: number; falhou: number; decididos: number }
+
+export default function SociosSerasa({ tomadorId, pasta, analista, classeBotao = 'mt-btn', aoChegarPdf, aoResumir }: {
   tomadorId?: string | null
   pasta?: string | null
   analista: boolean
   classeBotao?: string
   /** Um sócio saiu de aberto para consultado: o PDF acabou de virar anexo. */
   aoChegarPdf?: () => void
+  /** A contagem, para quem mostra um resumo fora daqui (o cartão "Sócios no
+   *  Serasa" da bancada de triagem). Sai da MESMA leitura desta peça, para o
+   *  número do cartão e a lista nunca discordarem. */
+  aoResumir?: (r: ResumoSocios) => void
 }) {
   const [socios, setSocios] = useState<Socio[]>([])
   const abertosAntes = useRef<Set<string>>(new Set())
   // Em ref, para a função da tela de fora não recriar a leitura a cada render.
   const avisar = useRef(aoChegarPdf)
   useEffect(() => { avisar.current = aoChegarPdf }, [aoChegarPdf])
+  const resumir = useRef(aoResumir)
+  useEffect(() => { resumir.current = aoResumir }, [aoResumir])
+  // Só avisa quando a conta muda: a lista relê de 8 em 8 segundos com sócio aberto.
+  const resumoAntes = useRef('')
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState('')
   const [verZerados, setVerZerados] = useState(false)
@@ -95,6 +107,16 @@ export default function SociosSerasa({ tomadorId, pasta, analista, classeBotao =
     if (lista.some((s) => abertosAntes.current.has(s.id) && ['pronto', 'reaproveitado'].includes(s.estado))) avisar.current?.()
     abertosAntes.current = new Set(lista.filter((s) => ABERTOS.includes(s.estado)).map((s) => s.id))
     setSocios(lista)
+    // Três contas separadas: consulta que falhou ou ainda está na fila não é
+    // "decidida", e o cartão não pode dizer que é.
+    const resumo: ResumoSocios = {
+      aguardando: lista.filter((s) => s.estado === 'aguardando_aprovacao').length,
+      andando: lista.filter((s) => ['pendente', 'consultando'].includes(s.estado)).length,
+      falhou: lista.filter((s) => s.estado === 'falhou').length,
+      decididos: lista.filter((s) => ['pronto', 'reaproveitado', 'recusado'].includes(s.estado)).length,
+    }
+    const chave = JSON.stringify(resumo)
+    if (chave !== resumoAntes.current) { resumoAntes.current = chave; resumir.current?.(resumo) }
   }, [tomadorId, pasta])
 
   useEffect(() => { carregar() }, [carregar])
@@ -125,7 +147,8 @@ export default function SociosSerasa({ tomadorId, pasta, analista, classeBotao =
   const linha = (s: Socio, direita: ReactNode, mostrarParte = true) => (
     <div key={s.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px', padding: '8px 0', borderTop: `1px solid ${cor.bordaSuave}` }}>
       <div style={{ flex: '1 1 220px', minWidth: 0 }}>
-        <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{s.nome || 'Sem nome no Serasa'}</div>
+        {/* O Serasa escreve em CAIXA ALTA: na tela vira Título, e a sigla fica sigla. */}
+        <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{nomeDeExibicao(s.nome) || 'Sem nome no Serasa'}</div>
         <div style={{ fontSize: 12, color: cor.textoSub }}>
           {documento(s)}
           {mostrarParte && <> · <b style={{ color: cor.tinta }}>{percentualDoSocio(s.participacao) > 0 ? `${s.participacao} do capital` : 'sem percentual'}</b></>}

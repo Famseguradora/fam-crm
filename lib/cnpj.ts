@@ -59,12 +59,35 @@ const limpo = (v: unknown): string | null => {
   return s ? s : null
 }
 
-/** Nome em CAIXA ALTA da Receita vira Título, sem quebrar siglas curtas (S.A, ME). */
+/** Nome em CAIXA ALTA da Receita vira Título, sem quebrar siglas curtas (S.A, ME).
+ *  O "S.A." (30/09/2026): o padrão antigo era `S\.a\.?\b`, e depois do ponto
+ *  final não há fronteira de palavra; ele casava só "S.a", trocava por "S.A." e
+ *  o ponto original sobrava. Oito tomadores e cinco casos foram gravados com
+ *  "S.A..". Agora o ponto é consumido depois da fronteira. */
 export function tituloReceita(s: string): string {
   return s.toLowerCase().replace(/(^|\s|\.|\/)(\S)/g, (m, a, b) => a + b.toUpperCase())
     .replace(/\b(De|Da|Do|Das|Dos|E)\b/g, m => m.toLowerCase())
-    .replace(/\bLtda\b/g, 'Ltda').replace(/\bS\.a\.?\b/gi, 'S.A.').replace(/\bEireli\b/gi, 'EIRELI')
+    .replace(/\bLtda\b/g, 'Ltda').replace(/\bS\.a\b\.?/gi, 'S.A.').replace(/\bEireli\b/gi, 'EIRELI')
     .replace(/\bMe\b/g, 'ME').replace(/\bEpp\b/g, 'EPP').replace(/\bSpe\b/g, 'SPE')
+}
+
+/** O nome para LER na tela, sem mudar o dado. Pedido dele em 30/09/2026: "as
+ *  informações são escritas feias, o nome do tomador está maiúsculo".
+ *  Só mexe no que chegou TODO em caixa alta (o nome do Serasa, o assunto do
+ *  e-mail): vira Título pelo `tituloReceita`. Palavra curta sem vogal é sigla
+ *  e volta a ser sigla em qualquer caso (FBS, MGM, MDS), porque "Fbs", que o
+ *  próprio `tituloReceita` grava no cadastro, é pior que "FBS". O resto de um
+ *  texto em caixa normal passa intacto. E o "S.A.." gravado pelo defeito antigo
+ *  do `tituloReceita` sai com um ponto só. */
+export function nomeDeExibicao(s: string | null | undefined): string {
+  const t = String(s ?? '').trim().replace(/\.{2,}(?=\s|$)/g, '.')
+  const letras = t.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, '')
+  const altas = letras.replace(/[^A-ZÀ-ÖØ-Þ]/g, '').length
+  const base = letras.length >= 4 && altas / letras.length >= 0.8 ? tituloReceita(t) : t
+  return base.replace(
+    /(^|[\s(/-])([A-Za-zÀ-ÖØ-öø-ÿ]{2,4})(?=$|[\s),./-])/g,
+    (m, a: string, w: string) => (/[aeiouyáéíóúâêôãõàü]/i.test(w) || /^(jr|sr|dr|dra|sra)$/i.test(w) ? m : a + w.toUpperCase()),
+  )
 }
 
 /* O User-Agent. A BrasilAPI é pública e mantida por voluntários: identificar

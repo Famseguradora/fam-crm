@@ -40,9 +40,10 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePermissoes } from '@/lib/context/permissoes-context'
 import { maskCNPJ, validarCNPJ, fmtData } from '@/lib/utils'
-import { consultarCNPJpelaTela } from '@/lib/cnpj'
-import { cor } from '@/lib/ui/painel'
-import SociosSerasa from '@/components/serasa/SociosSerasa'
+import { consultarCNPJpelaTela, nomeDeExibicao } from '@/lib/cnpj'
+import { cor, raio } from '@/lib/ui/painel'
+import SociosSerasa, { type ResumoSocios } from '@/components/serasa/SociosSerasa'
+import { FaixaDaArea, Instrumentos, Instrumento } from '@/components/painel/Faixa'
 import { type PedidoSerasa, SERASA_ABERTO, situacaoSerasa } from '@/lib/serasa/pedido'
 
 const CLASSES: { valor: string; rotulo: string }[] = [
@@ -90,26 +91,159 @@ interface Item {
 const fmtBytes = (b: number | null) =>
   !b ? '' : b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`
 
-/** O cabeçalho de um passo: o número grande, o título e a linha que explica o
- *  que aquele passo faz. Passo cumprido fica verde — é o único jeito de bater o
+/** O cabeçalho de um passo: o número, o título e a linha que explica o que
+ *  aquele passo faz. Passo cumprido fica verde — é o único jeito de bater o
  *  olho na tela e saber onde o caso parou sem ler nada. */
-function Passo({ n, titulo, pronto, children }: {
-  n: number; titulo: string; pronto: boolean; children: ReactNode
+function Passo({ n, titulo, pronto, acao, children }: {
+  n: number; titulo: string; pronto: boolean; acao?: ReactNode; children: ReactNode
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 14 }}>
-      <span style={{
-        flexShrink: 0, width: 27, height: 27, borderRadius: '50%',
-        background: pronto ? '#1a7a4c' : '#1e4080', color: '#fff',
-        display: 'grid', placeItems: 'center', fontSize: 14, fontWeight: 700,
-      }}>{pronto ? '✓' : n}</span>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 15.5, fontWeight: 700, color: '#0a1628' }}>{titulo}</div>
-        <div style={{ fontSize: 12.5, color: 'var(--soft)' }}>{children}</div>
+    <div className="bt-passo">
+      <span className={`bt-n${pronto ? ' ok' : ''}`}>{pronto ? '✓' : n}</span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <h4>{titulo}</h4>
+        <p>{children}</p>
       </div>
+      {acao}
     </div>
   )
 }
+
+/* O VISUAL DA BANCADA  ·  30/09/2026
+   Pedido dele, olhando a tela no notebook e no monitor grande: "os quadros não
+   estão condizentes com a estrutura da tela", "os botões são muito grandes",
+   "o nome do tomador está maiúsculo". E a referência que ele escolheu foi a
+   Mesa da Subscrição (mockup v2 de 29/09): a faixa marinho com a conclusão da
+   área, uma fileira de instrumentos, e embaixo duas colunas, o trabalho à
+   esquerda e o que falta à direita.
+
+   A largura manda por CONTAINER, e não pela janela: a mesma peça mora na
+   página do Funil (larga) e dentro do card da Análise (estreita, entre os dois
+   trilhos laterais). Com `@container`, no notebook o card empilha em uma coluna
+   e no monitor grande abre em duas, sem a tela precisar saber onde está.
+
+   A faixa e os instrumentos são peças de components/painel/Faixa.tsx, as
+   mesmas da Visão geral do Crédito: o pedido foi PADRONIZAR, e duas cópias
+   da mesma faixa divergiriam no primeiro ajuste.
+
+   Folha própria com prefixo `bt-`, pelo mesmo motivo do `an-` da Análise
+   (docs/DESIGN-PAINEL.md, exceção 1): estilo inline não faz `@container` nem
+   `:hover`. Os valores vêm de lib/ui/painel.ts por interpolação: nenhum hex
+   redigitado. Só a lógica ficou onde estava; aqui nada muda dado nenhum. */
+const FOLHA = `
+.bt { container-type: inline-size; color: ${cor.texto}; font-size: 12.5px; }
+.bt-topo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.bt-topo h1 { font-size: 19px; font-weight: 700; color: ${cor.tinta}; margin: 0; }
+
+.bt-grade { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(0,1fr); gap: 14px; align-items: start; }
+.bt-bloco { background: ${cor.papel}; border: 1px solid ${cor.borda}; border-radius: ${raio.cartao}px; padding: 14px 16px; margin-bottom: 14px; }
+.bt-bloco.vez { border-color: ${cor.acao}; box-shadow: inset 3px 0 0 ${cor.acao}; }
+.bt-bloco.ouro { border-color: ${cor.ouro}; box-shadow: inset 3px 0 0 ${cor.ouro}; }
+.bt-passo { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+.bt-passo h4 { margin: 0; font-size: 13.5px; font-weight: 700; color: ${cor.tinta}; }
+.bt-passo p { margin: 1px 0 0; font-size: 12px; color: ${cor.textoSub}; line-height: 1.45; }
+.bt-n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0;
+  font-size: 11.5px; font-weight: 800; color: ${cor.branco}; background: ${cor.acao}; margin-top: 1px; }
+.bt-n.ok { background: ${cor.areaOperacao}; }
+
+.bt-campos { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 14px; }
+.bt-campo { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.bt-campo > label { font-size: 11.5px; color: ${cor.textoFraco}; }
+.bt-campo .dica { font-size: 11.5px; color: ${cor.textoSub}; }
+.bt-campo .dica.at { color: ${cor.ouroTexto}; }
+.bt-linha { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.bt-in { font: inherit; font-size: 13px; padding: 6px 10px; border: 1px solid ${cor.borda}; border-radius: ${raio.controle}px;
+  background: ${cor.papel}; color: ${cor.tinta}; outline: none; width: 100%; min-width: 0; }
+.bt-in:focus { border-color: ${cor.bordaAtiva}; }
+.bt-in:disabled { background: ${cor.papelZebra}; color: ${cor.textoSub}; cursor: default; }
+select.bt-in { padding-right: 6px; }
+.bt-in.mini { font-size: 12px; padding: 4px 6px; }
+
+.bt-bt { font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: ${raio.controle}px;
+  border: 1px solid ${cor.borda}; background: ${cor.papel}; color: ${cor.texto}; cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; }
+.bt-bt:hover:not(:disabled) { border-color: ${cor.acaoClara}; color: ${cor.acao}; }
+.bt-bt:disabled { opacity: .5; cursor: default; }
+.bt-bt.cheio { background: ${cor.acao}; border-color: ${cor.acao}; color: ${cor.branco}; }
+.bt-bt.cheio:hover:not(:disabled) { background: ${cor.tinta2}; color: ${cor.branco}; }
+.bt-bt.mini { font-size: 12px; padding: 4px 10px; }
+.bt-bt.perigo { color: ${cor.alerta}; border-color: ${cor.alertaBorda}; }
+.bt-bt.perigo:hover:not(:disabled) { background: ${cor.alertaFundo}; color: ${cor.alerta}; border-color: ${cor.alerta}; }
+.bt-bts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.bt-nota { font-size: 12px; color: ${cor.textoSub}; line-height: 1.5; }
+
+.bt-aviso { border: 1px solid ${cor.borda}; background: ${cor.papelZebra}; border-radius: ${raio.controle}px; padding: 8px 11px;
+  margin-top: 12px; color: ${cor.textoSub}; font-size: 12px; line-height: 1.5; }
+.bt-aviso.erro { border-color: ${cor.alertaBorda}; background: ${cor.alertaFundo}; color: ${cor.alerta}; }
+.bt-aviso.at { border-color: ${cor.ouro}; background: ${cor.papel}; color: ${cor.ouroTexto}; }
+
+.bt-solta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border: 1.5px dashed ${cor.borda};
+  background: ${cor.papelZebra}; border-radius: ${raio.controle}px; padding: 9px 12px; margin-bottom: 12px; cursor: pointer; }
+.bt-solta.em { border-color: ${cor.acao}; background: ${cor.destaque}; }
+.bt-solta b { font-size: 12.5px; color: ${cor.tinta}; }
+.bt-solta span { font-size: 11.5px; color: ${cor.textoFraco}; }
+.bt-solta select { width: auto; max-width: 220px; }
+
+.bt-tab-caixa { border: 1px solid ${cor.bordaSuave}; border-radius: ${raio.controle}px; overflow-x: auto; }
+.bt-tab { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.bt-tab th { background: ${cor.papelZebra}; color: ${cor.tinta}; font-size: 11.5px; font-weight: 700; text-align: left;
+  padding: 7px 10px; border-bottom: 1px solid ${cor.bordaSuave}; white-space: nowrap; }
+.bt-tab td { padding: 6px 10px; border-bottom: 1px solid ${cor.bordaSuave}; vertical-align: middle; }
+.bt-tab tr:last-child td { border-bottom: none; }
+.bt-tab tbody tr:hover { background: ${cor.papelZebra}; }
+.bt-tab .arq { font-weight: 600; color: ${cor.tinta}; overflow-wrap: anywhere; }
+.bt-tab .tam { color: ${cor.textoFraco}; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bt-tab select { min-width: 150px; }
+
+.bt-exig { padding: 9px 0; border-bottom: 1px solid ${cor.bordaSuave}; }
+.bt-exig:last-of-type { border-bottom: none; }
+.bt-exig-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bt-exig-cab b { font-size: 12.5px; color: ${cor.tinta}; }
+.bt-exig .falta { font-size: 11.5px; color: ${cor.alerta}; flex-basis: 100%; }
+.bt-exig .pessoa { font-size: 11px; color: ${cor.textoFraco}; margin-left: auto; }
+.bt-seg { display: inline-flex; flex-wrap: wrap; border: 1px solid ${cor.borda}; border-radius: ${raio.controle}px; overflow: hidden; margin-top: 6px; }
+.bt-seg button { font: inherit; font-size: 11.5px; padding: 3px 9px; border: none; border-left: 1px solid ${cor.bordaSuave};
+  background: ${cor.papel}; color: ${cor.textoSub}; cursor: pointer; }
+.bt-seg button:first-child { border-left: none; }
+.bt-seg button:hover { color: ${cor.acao}; background: ${cor.papelZebra}; }
+.bt-seg button.on { background: ${cor.acao}; color: ${cor.branco}; }
+
+.bt-email dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
+.bt-email dt { color: ${cor.textoFraco}; }
+.bt-email dd { margin: 0; color: ${cor.texto}; overflow-wrap: anywhere; }
+.bt-email pre { white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 12.5px; color: ${cor.texto};
+  margin: 10px 0 0; max-height: 340px; overflow-y: auto; border-top: 1px solid ${cor.bordaSuave}; padding-top: 10px; }
+.bt-abre { background: none; border: none; padding: 0; font: inherit; font-size: 13.5px; font-weight: 700; color: ${cor.tinta};
+  cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; }
+.bt-abre small { margin-left: auto; font-size: 11.5px; font-weight: 600; color: ${cor.acao}; }
+
+@container (max-width: 980px) {
+  .bt-grade { grid-template-columns: minmax(0,1fr); }
+}
+@container (max-width: 560px) {
+  .bt-campos { grid-template-columns: minmax(0,1fr); }
+  /* No celular a tabela vira lista: o nome do arquivo na linha de cima, inteiro,
+     e o tipo, o tamanho e o Abrir embaixo. Em colunas, o nome virava uma
+     tira de três letras por linha. */
+  .bt-tab thead { display: none; }
+  .bt-tab, .bt-tab tbody { display: block; }
+  .bt-tab tr { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 6px 8px; align-items: center;
+    padding: 8px 10px; border-bottom: 1px solid ${cor.bordaSuave}; }
+  .bt-tab tr:last-child { border-bottom: none; }
+  .bt-tab td { display: block; padding: 0; border: none; }
+  .bt-tab td:first-child { grid-column: 1 / -1; }
+  .bt-tab select { min-width: 0; width: 100%; }
+}
+/* No celular o dedo precisa de alvo maior: o botão compacto é para o mouse. */
+@media (pointer: coarse) {
+  .bt-bt { min-height: 40px; }
+  .bt-in { font-size: 16px; min-height: 40px; }
+  .bt-seg button { min-height: 36px; }
+}
+`
+
+/** Dia e hora curtos, no mesmo formato do aviso do Serasa (`situacaoSerasa`). */
+const hora =(iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 
 export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
   /** o id do caso (`casos.id`) */
@@ -138,6 +272,8 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
   const [pasta, setPasta] = useState<string | null>(null)
   const [quem, setQuem] = useState<{ nome: string | null; analista: boolean }>({ nome: null, analista: false })
   const serasaAntes = useRef<PedidoSerasa | null>(null)
+  // A contagem dos sócios, vinda da própria lista (SociosSerasa), para o cartão.
+  const [socios, setSocios] = useState<ResumoSocios | null>(null)
 
   // rascunho da identificação
   const [cnpj, setCnpj] = useState('')
@@ -464,374 +600,384 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
   const bloqueando = pendentes.filter((i) => i.caso_item_catalogo.exigencia === 'bloqueia')
   const avisoSerasa = serasa ? situacaoSerasa(serasa, 'nos documentos do passo 2') : null
 
+  /* ── O QUE A FAIXA E OS INSTRUMENTOS DIZEM ─────────────────────────────────
+     Tudo derivado do que esta tela JÁ lia: caso, documentos, checklist, pedido
+     do Serasa e a lista de sócios. Nenhuma consulta nova, nenhum dado novo. */
+  const motivoExcluido = (caso as Caso & { motivo_descarte?: string | null }).motivo_descarte ?? null
+  const nomeCorretora = corretoras.find((c) => c.id === corretoraId)?.razao_social ?? null
+  const nomeTomador = nomeDeExibicao(caso.razao_social || razao)
+  const temSerasaPdf = docs.some((d) => d.classe === 'serasa_pj')
+  const recebidos = itens.filter((i) => i.situacao === 'ok').length
+
+  const veredito: ReactNode = excluido ? <>Caso <i className="at">excluído</i></>
+    : naAnalise ? <>Cadastro <i>concluído</i></>
+      : cadastrado ? <>Tomador <i>pré-cadastrado</i></>
+        : cnpjOk ? <>Pronto para <i className="at">cadastrar</i></>
+          : <>Falta <i className="at">o CNPJ</i></>
+
+  const pontos: string[] = []
+  if (excluido && motivoExcluido) pontos.push(`Excluído: ${motivoExcluido}`)
+  if (!excluido) {
+    if (!cnpjOk) pontos.push('Digite o CNPJ e busque na Receita')
+    else if (!cadastrado) pontos.push('Salve o passo 1 para o tomador entrar no cadastro do CRM')
+    if (socios?.aguardando) pontos.push(`${socios.aguardando} sócio${socios.aguardando === 1 ? '' : 's'} do Serasa esperando a autorização do analista`)
+    if (cadastrado && !temSerasaPdf && !serasa) pontos.push('Sem o Serasa da empresa nos documentos')
+    for (const i of pendentes) {
+      const s = SITUACOES.find((x) => x.valor === i.situacao) ?? SITUACOES[4]
+      pontos.push(`${i.caso_item_catalogo.nome}: ${s.rotulo.toLowerCase()}`)
+    }
+    if (!pontos.length) pontos.push(naAnalise ? 'Tudo recebido. A próxima área é o Crédito' : 'Nada pendente nesta bancada')
+  }
+
+  // Serasa da empresa: o pedido do robô manda; sem pedido, vale o PDF anexado.
+  const serasaCartao: { num: string; tom: 'ok' | 'at' | 'al' | ''; ap: string } = !serasa
+    ? temSerasaPdf
+      ? { num: 'Anexado', tom: 'ok', ap: 'o PDF está nos documentos do passo 2' }
+      : { num: 'Não consultado', tom: '', ap: cadastrado ? 'use o botão Serasa, no passo 1' : 'o Serasa depende do tomador salvo' }
+    : serasa.estado === 'pendente' ? { num: 'Pedido', tom: 'at', ap: `em ${hora(serasa.criado_em)}, esperando o notebook` }
+      : serasa.estado === 'consultando' ? { num: 'Consultando', tom: 'at', ap: 'o robô está no Serasa agora' }
+        : serasa.estado === 'falhou' ? { num: 'O robô parou', tom: 'al', ap: serasa.resultado ?? 'sem motivo registrado' }
+          : { num: 'Consultado', tom: 'ok', ap: `${serasa.feito_em ? `em ${hora(serasa.feito_em)}` : ''}${serasa.estado === 'reaproveitado' ? ' · reaproveitado, sem cobrança' : ''}` }
+
+  const porClasse = CLASSES.map((c) => ({ c, n: docs.filter((d) => d.classe === c.valor).length })).filter((x) => x.n > 0)
+  const CURTO: Record<string, [string, string]> = {
+    contabil: ['contábil', 'contábeis'], serasa_pj: ['Serasa', 'Serasa'], serasa_pf: ['Serasa de sócio', 'Serasa de sócios'],
+    contrato_social: ['contrato social', 'contratos sociais'], acordo_socios: ['acordo de sócios', 'acordos de sócios'],
+    cartao_cnpj: ['cartão CNPJ', 'cartões CNPJ'], outro: ['outro', 'outros'],
+  }
+
   return (
-    <div style={{ padding: embutida ? 0 : '20px 0' }}>
-      {/* ── cabeçalho ── */}
+    <div className="bt" style={{ padding: embutida ? 0 : '20px 0' }}>
+      <style href="bancada-triagem" precedence="default">{FOLHA}</style>
+
+      {/* ── cabeçalho da página (só fora do card: lá a moldura já diz quem é) ── */}
       {!embutida && (
-        <button onClick={() => router.push('/fluxo')} className="btn-clear" style={{ marginBottom: 12 }}>
-          ← Voltar para o funil
-        </button>
+        <div className="bt-topo">
+          <button type="button" className="bt-bt mini" onClick={() => router.push('/fluxo')}>← Voltar para o funil</button>
+          <h1>Triagem e cadastro · caso #{caso.numero}</h1>
+          {naAnalise && <span className="badge badge-green">na fila de análise</span>}
+          {!naAnalise && !excluido && cadastrado && <span className="badge badge-blue">pré-cadastrado</span>}
+          {excluido && <span className="badge badge-gray">excluído</span>}
+        </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
-        {embutida ? (
-          <h2 style={{ fontSize: 16, fontWeight: 700, color: '#0a1628', margin: 0 }}>
-            Bancada de triagem e cadastro · caso #{caso.numero}
-          </h2>
-        ) : (
-          <h1 style={{ fontSize: 21, fontWeight: 700, color: '#0a1628', margin: 0 }}>
-            Triagem e cadastro · caso #{caso.numero}
-          </h1>
-        )}
-        {naAnalise && <span className="badge badge-green">na fila de análise</span>}
-        {!naAnalise && cadastrado && <span className="badge badge-blue">pré-cadastrado</span>}
-        {excluido && <span className="badge badge-gray">excluído</span>}
-        {naTriagem && !somenteLeitura && (
-          <button
-            type="button" className="btn-secondary" onClick={excluirCaso} disabled={salvando}
-            style={{ marginLeft: 'auto', color: '#a02020', borderColor: '#e0a0a0' }}
-            title="Para caso repetido: sai da triagem e do funil, a pasta vai para _excluidas, o tomador fica."
-          >
-            Excluir
-          </button>
-        )}
-      </div>
-      {excluido && (caso as Caso & { motivo_descarte?: string | null }).motivo_descarte && (
-        <p style={{ fontSize: 13, color: '#a02020', margin: '4px 0 0' }}>
-          Excluído: {(caso as Caso & { motivo_descarte?: string | null }).motivo_descarte}
-        </p>
-      )}
-      <p style={{ color: 'var(--soft)', fontSize: 14, margin: '4px 0 18px' }}>
-        {caso.assunto}
-        {caso.remetente_nome ? ` · de ${caso.remetente_nome}` : ''}
-        {caso.remetente_email ? ` (${caso.remetente_email})` : ''} · entrou em {fmtData(caso.criado_em)}
-        {caso.criado_por_nome ? ` por ${caso.criado_por_nome}` : ''}
-      </p>
-
-      {erro && <div className="alert-error" style={{ marginBottom: 14 }}>{erro}</div>}
-      {recado && <div className="alert-success" style={{ marginBottom: 14 }}>{recado}</div>}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 960 }}>
-
-        {/* ══ PASSO 1 · A EMPRESA ═══════════════════════════════════════════ */}
-        <div className="card-panel" style={{ borderColor: cadastrado ? undefined : '#1e4080' }}>
-          <Passo n={1} titulo="A empresa" pronto={cadastrado}>
-            {cadastrado
-              ? 'O tomador está no banco. Dá para parar aqui: o resto é quando quiser.'
-              : 'Digite o CNPJ e clique em Receita. Ao salvar, o tomador já entra no cadastro do CRM.'}
-          </Passo>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 12 }}>
-            <div className="form-field">
-              <label className="form-label">CNPJ</label>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <input
-                  className="fam-input" value={maskCNPJ(cnpj)} disabled={!podeEditar}
-                  onChange={(e) => setCnpj(e.target.value.replace(/\D/g, '').slice(0, 14))}
-                  placeholder="00.000.000/0000-00" inputMode="numeric"
-                  style={{ flex: '1 1 160px', minWidth: 0 }}
-                />
-                <button
-                  className="btn-secondary" onClick={buscarNaReceita}
-                  disabled={!podeEditar || !cnpjOk || buscandoReceita}
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  {buscandoReceita ? '…' : 'Receita'}
-                </button>
-                {!somenteLeitura && !excluido && (
-                  <button
-                    className="btn-secondary" onClick={pedirSerasa}
-                    disabled={!cadastrado || serasaAberto || pedindoSerasa}
-                    title={!cadastrado
-                      ? 'Salve o passo 1 antes: o Serasa consulta o CNPJ do tomador cadastrado'
-                      : 'Consulta o Serasa pelo robô do notebook; o PDF entra nos documentos deste caso'}
-                    style={{ whiteSpace: 'nowrap' }}
-                  >
-                    {serasaAberto || pedindoSerasa ? '…' : 'Serasa'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="form-field">
-              <label className="form-label">Razão social</label>
-              <input className="fam-input" value={razao} disabled={!podeEditar}
-                onChange={(e) => setRazao(e.target.value)} placeholder="a Receita preenche" />
-            </div>
-
-            <div className="form-field">
-              <label className="form-label">Corretora</label>
-              <select className="fam-input" value={corretoraId} disabled={!podeEditar}
-                onChange={(e) => setCorretoraId(e.target.value)}>
-                <option value="">— Selecione a corretora —</option>
-                {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
-              </select>
-              {caso.corretora_id && corretoraId === caso.corretora_id && caso.identificado_por !== 'humano' && (
-                <span style={{ fontSize: 12, color: 'var(--soft)' }}>identificada pelo agente no e-mail</span>
-              )}
-              {!caso.corretora_id && !corretoraId && caso.corretora_texto && (
-                <span style={{ fontSize: 12, color: '#8a6410' }}>
-                  no e-mail aparece &quot;{caso.corretora_texto}&quot;, que não está no cadastro de corretoras
-                </span>
-              )}
-            </div>
-
-            <div className="form-field">
-              <label className="form-label">Produto</label>
-              <input className="fam-input" value={produto} disabled={!podeEditar}
-                onChange={(e) => setProduto(e.target.value)}
-                placeholder="Garantia Executante, Judicial…" />
-            </div>
-          </div>
-
-          {avisoSerasa && (
-            <div style={{ border: `1px solid ${avisoSerasa.erro ? cor.alertaBorda : cor.borda}`, background: avisoSerasa.erro ? cor.alertaFundo : cor.papelZebra, borderRadius: 8, padding: '9px 12px', marginTop: 12, color: avisoSerasa.erro ? cor.alerta : cor.textoSub, fontSize: 12.5, lineHeight: 1.5 }}>
-              {avisoSerasa.texto}
-            </div>
-          )}
-          {caso.tomador_id && (
-            <div style={{ marginTop: 12 }}>
-              <SociosSerasa tomadorId={caso.tomador_id} pasta={pasta} analista={quem.analista} classeBotao="btn-secondary" />
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 14 }}>
-            {podeEditar && (
-              <button className="btn-primary" onClick={preCadastrar} disabled={!cnpjOk || salvando}>
-                {salvando ? 'Salvando…' : cadastrado ? 'Salvar de novo' : 'Salvar e cadastrar o tomador'}
-              </button>
-            )}
+      {/* ══ A FAIXA: a conclusão da área, quem é o tomador e o que fazer ══════ */}
+      <FaixaDaArea
+        rotulo={`Cadastro e triagem · caso #${caso.numero} · entrou em ${fmtData(caso.criado_em)}${caso.criado_por_nome ? ` por ${caso.criado_por_nome}` : ''}`}
+        veredito={veredito}
+        pontos={pontos}
+        meio={{
+          rotulo: 'Tomador',
+          titulo: nomeTomador || 'Ainda não identificado',
+          sub: (cnpjOk ? `CNPJ ${maskCNPJ(cnpj)}` : 'o CNPJ liga caso, cadastro e análise')
+            + (nomeCorretora ? ` · ${nomeDeExibicao(nomeCorretora)}` : caso.corretora_texto ? ` · ${caso.corretora_texto} (no e-mail)` : ''),
+        }}
+        acoes={(caso.tomador_id || naTriagem || (!embutida && caso.analise_fila_id)) ? (
+          <>
             {caso.tomador_id && (
-              <button className="btn-secondary" onClick={() => router.push(`/tomadores/${caso.tomador_id}`)}>
-                Abrir a ficha do tomador →
+              <button type="button" className="pf-bt ouro" onClick={() => router.push(`/tomadores/${caso.tomador_id}`)}>
+                Abrir a ficha do tomador
               </button>
             )}
-            {!cnpjOk && (
-              <span style={{ fontSize: 12.5, color: 'var(--soft)' }}>
-                Sem o CNPJ nada anda: é ele que liga caso, cadastro e análise.
-              </span>
-            )}
-          </div>
-
-          {/* O resto do Cadastro Básico (endereço, contato, porte, limite) vive
-              na ficha do tomador e é preenchido pela Receita neste momento.
-              Repetir aqueles campos aqui criaria uma segunda tela de cadastro,
-              que é exatamente o que este CRM não pode ter. */}
-          {cadastrado && (
-            <p style={{ fontSize: 12.5, color: 'var(--soft)', margin: '10px 0 0' }}>
-              Endereço, contato e sócios vieram do cartão CNPJ e estão na ficha. Porte, limite e
-              observações se editam lá, no Cadastro do tomador.
-            </p>
-          )}
-        </div>
-
-        {/* ══ PASSO 2 · OS DOCUMENTOS ══════════════════════════════════════ */}
-        <div className="card-panel">
-          <Passo n={2} titulo="Os documentos" pronto={docs.length > 0}>
-            O que veio no e-mail já está aqui. O Serasa e o que faltar, você solta abaixo.
-          </Passo>
-
-          {podeEditar && (
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
-              <div className="form-field" style={{ minWidth: 210, flex: '0 1 240px', marginBottom: 0 }}>
-                <label className="form-label">O que você vai anexar</label>
-                <select className="fam-input" value={classeNova} onChange={(e) => setClasseNova(e.target.value)}>
-                  {CLASSES.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo}</option>)}
-                </select>
-              </div>
-            </div>
-          )}
-
-          {podeEditar && (
-            <div
-              onDragOver={(e) => { e.preventDefault(); setArrastando(true) }}
-              onDragLeave={() => setArrastando(false)}
-              onDrop={(e) => { e.preventDefault(); setArrastando(false); anexar(e.dataTransfer.files) }}
-              onClick={() => seletor.current?.click()}
-              style={{
-                border: `2px dashed ${arrastando ? '#1e4080' : 'var(--border)'}`,
-                background: arrastando ? '#f2f6fd' : '#fbfcfe',
-                borderRadius: 10, padding: '18px 14px', textAlign: 'center',
-                cursor: subindo ? 'progress' : 'pointer', marginBottom: 14,
-              }}
-            >
-              <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0a1628' }}>
-                {subindo ? 'Enviando…' : 'Solte os arquivos aqui, ou clique para escolher'}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--soft)', marginTop: 3 }}>
-                PDF, Excel, imagem. Até 50 MB cada. Vários de uma vez.
-              </div>
-              <input
-                ref={seletor} type="file" multiple hidden
-                onChange={(e) => { if (e.target.files) anexar(e.target.files); e.target.value = '' }}
-              />
-            </div>
-          )}
-
-          {docs.length === 0 ? (
-            <p style={{ color: 'var(--soft)', fontSize: 14, margin: 0 }}>
-              Nenhum documento ainda.
-            </p>
-          ) : (
-            <div className="fam-table-wrap">
-              <table className="fam-table">
-                <thead>
-                  <tr>
-                    <th>Arquivo</th>
-                    <th style={{ width: 200 }}>É o quê</th>
-                    <th style={{ width: 78 }}>Tamanho</th>
-                    <th style={{ width: 74 }} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {docs.map((d) => (
-                    <tr key={d.id}>
-                      <td>
-                        <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{d.nome}</div>
-                        {d.certeza === 'nula' && (
-                          <div style={{ fontSize: 12, color: '#a02020' }}>não consegui abrir</div>
-                        )}
-                      </td>
-                      <td>
-                        <select
-                          className="fam-input" value={d.classe} disabled={!podeEditar}
-                          onChange={(e) => trocarClasse(d.id, e.target.value)}
-                          style={{ fontSize: 13, padding: '5px 8px' }}
-                        >
-                          {CLASSES.map((c) => (
-                            <option key={c.valor} value={c.valor}>{c.rotulo}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td style={{ color: 'var(--soft)' }}>{fmtBytes(d.bytes)}</td>
-                      <td>
-                        <button className="btn-clear" onClick={() => abrirDocumento(d)}>abrir</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        {/* ══ PASSO 3 · PARA A ANÁLISE ═════════════════════════════════════ */}
-        <div className="card-panel" style={{ borderColor: !naAnalise && cadastrado ? '#e8b84b' : undefined }}>
-          <Passo n={3} titulo="Mandar para a análise de crédito" pronto={naAnalise}>
-            {naAnalise
-              ? 'Já foi. A análise é feita no Sistema de Análise, dentro do CRM.'
-              : caso.analise_fila_id
-                ? 'A esteira automática já está com este caso: a pasta foi criada no notebook, e a triagem, o cadastro e a análise andam sozinhos. Este botão só é preciso para concluir à mão.'
-                : 'Opcional agora. Pendência de documento não trava: ela viaja junto e o analista decide.'}
-          </Passo>
-          {!embutida && !naAnalise && caso.analise_fila_id && (
-            <div style={{ marginBottom: 12 }}>
-              <button className="btn-secondary" onClick={() => router.push(`/analises/mesa/${caso.analise_fila_id}`)}>
-                Acompanhar na esteira →
+            {!embutida && !naAnalise && caso.analise_fila_id && (
+              <button type="button" className="pf-bt" onClick={() => router.push(`/analises/mesa/${caso.analise_fila_id}`)}>
+                Acompanhar na esteira
               </button>
-            </div>
-          )}
+            )}
+            {naTriagem && !somenteLeitura && (
+              <button type="button" className="pf-bt" onClick={excluirCaso} disabled={salvando}
+                title="Para caso repetido: sai da triagem e do funil, a pasta vai para _excluidas, o tomador fica.">
+                Excluir o caso
+              </button>
+            )}
+          </>
+        ) : undefined}
+      />
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 11, marginBottom: 14 }}>
-            {itens.map((i) => {
-              const s = SITUACOES.find((x) => x.valor === i.situacao) ?? SITUACOES[4]
-              return (
-                <div key={i.id}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 600, color: '#0a1628' }}>
-                      {i.caso_item_catalogo.nome}
-                    </span>
-                    <span className={`badge ${s.badge}`}>{s.rotulo}</span>
-                    {i.caso_item_catalogo.exigencia === 'bloqueia' && !['ok', 'dispensado'].includes(i.situacao) && (
-                      <span style={{ fontSize: 11.5, color: '#a02020' }}>
-                        {i.caso_item_catalogo.frase_falta}
-                      </span>
-                    )}
-                    {i.por === 'humano' && (
-                      <span style={{ fontSize: 11, color: 'var(--soft)' }}>decidido por pessoa</span>
-                    )}
-                  </div>
-                  {podeEditar && (
-                    <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
-                      {SITUACOES.map((op) => (
-                        <button
-                          key={op.valor} onClick={() => marcarItem(i.id, op.valor)}
-                          className="btn-clear"
-                          style={{
-                            fontSize: 11.5, padding: '4px 9px',
-                            background: i.situacao === op.valor ? '#1e4080' : undefined,
-                            color: i.situacao === op.valor ? '#fff' : undefined,
-                            borderColor: i.situacao === op.valor ? '#1e4080' : undefined,
-                          }}
-                        >
-                          {op.rotulo}
-                        </button>
-                      ))}
-                    </div>
+      {erro && <div className="bt-aviso erro" style={{ margin: '0 0 14px' }}>{erro}</div>}
+      {recado && <div className="alert-success" style={{ marginBottom: 14, fontSize: 13 }}>{recado}</div>}
+
+      {/* ══ OS INSTRUMENTOS: um número por cartão, com a origem embaixo ═══════ */}
+      <Instrumentos>
+        <Instrumento titulo="Serasa da empresa" marca="robô" numero={serasaCartao.num} tom={serasaCartao.tom}
+          apoio={serasaCartao.ap} origem="pedido do Serasa deste tomador" />
+        <Instrumento titulo="Sócios no Serasa" marca="1ª camada"
+          numero={socios?.aguardando ? `${socios.aguardando} esperando`
+            : socios?.falhou ? `${socios.falhou} com falha`
+              : socios?.andando ? `${socios.andando} consultando`
+                : socios?.decididos ? `${socios.decididos} decidido${socios.decididos === 1 ? '' : 's'}` : 'Nenhum'}
+          tom={socios?.falhou ? 'al' : socios?.aguardando || socios?.andando ? 'at' : ''}
+          apoio={socios?.aguardando ? 'a decisão é do analista de crédito'
+            : socios?.falhou ? 'o robô parou; o motivo está na lista'
+              : socios?.andando ? 'aprovados, na fila do notebook'
+                : socios?.decididos ? 'nos últimos 7 dias'
+                  : caso.tomador_id ? 'nenhum sócio a consultar' : 'depende do tomador salvo'}
+          origem="quadro societário do Serasa" />
+        <Instrumento titulo="Documentos" marca="no caso" numero={String(docs.length)}
+          apoio={porClasse.length
+            ? porClasse.map(({ c, n }) => `${n} ${CURTO[c.valor]?.[n === 1 ? 0 : 1] ?? c.rotulo}`).join(' · ')
+            : 'nenhum ainda'}
+          origem="anexos do e-mail e da tela" />
+        <Instrumento titulo="Exigências" marca="para a análise"
+          numero={itens.length ? `${recebidos} de ${itens.length}` : '—'}
+          tom={itens.length && !pendentes.length ? 'ok' : bloqueando.length ? 'at' : ''}
+          apoio={!itens.length ? 'o checklist nasce com o caso'
+            : bloqueando.length ? `falta ${bloqueando.map((i) => i.caso_item_catalogo.nome).join(' · ')}`
+              : pendentes.length ? `${pendentes.length} a confirmar, nada trava`
+                : 'todas recebidas ou dispensadas'}
+          origem="checklist da triagem" />
+      </Instrumentos>
+
+      <div className="bt-grade">
+        {/* ══ ESQUERDA: o trabalho (a empresa e os documentos) ═══════════════ */}
+        <div style={{ minWidth: 0 }}>
+          <div className={`bt-bloco${cadastrado || excluido ? '' : ' vez'}`}>
+            <Passo n={1} titulo="A empresa" pronto={cadastrado}>
+              {cadastrado
+                ? 'O tomador está no banco. Dá para parar aqui: o resto é quando quiser.'
+                : 'Digite o CNPJ e clique em Receita. Ao salvar, o tomador já entra no cadastro do CRM.'}
+            </Passo>
+
+            <div className="bt-campos">
+              <div className="bt-campo">
+                <label htmlFor={`cnpj-${id}`}>CNPJ</label>
+                <div className="bt-linha">
+                  <input
+                    id={`cnpj-${id}`} className="bt-in" value={maskCNPJ(cnpj)} disabled={!podeEditar}
+                    onChange={(e) => setCnpj(e.target.value.replace(/\D/g, '').slice(0, 14))}
+                    placeholder="00.000.000/0000-00" inputMode="numeric"
+                  />
+                  <button type="button" className="bt-bt" onClick={buscarNaReceita}
+                    disabled={!podeEditar || !cnpjOk || buscandoReceita}
+                    title="Consulta o cartão CNPJ na Receita e preenche a razão social">
+                    {buscandoReceita ? '…' : 'Receita'}
+                  </button>
+                  {!somenteLeitura && !excluido && (
+                    <button type="button" className="bt-bt" onClick={pedirSerasa}
+                      disabled={!cadastrado || serasaAberto || pedindoSerasa}
+                      title={!cadastrado
+                        ? 'Salve o passo 1 antes: o Serasa consulta o CNPJ do tomador cadastrado'
+                        : 'Consulta o Serasa pelo robô do notebook; o PDF entra nos documentos deste caso'}>
+                      {serasaAberto || pedindoSerasa ? '…' : 'Serasa'}
+                    </button>
                   )}
                 </div>
-              )
-            })}
-          </div>
+              </div>
 
-          {!naAnalise ? (
-            <>
-              {bloqueando.length > 0 && salvo && (
-                <p style={{
-                  fontSize: 12.5, color: '#8a6410', background: '#fdf4dd',
-                  border: '1px solid #e8b84b', borderRadius: 8, padding: '8px 10px', margin: '0 0 12px',
-                }}>
-                  Falta {bloqueando.map((i) => i.caso_item_catalogo.nome).join(' · ')}. Dá para mandar assim
-                  mesmo: a pendência viaja junto e quem decide se a análise começa é o analista.
-                </p>
-              )}
-              <button
-                className="btn-primary" onClick={concluir}
-                disabled={!podeEditar || !salvo || salvando}
-              >
-                {salvando ? 'Enviando…' : 'Concluir e enviar para análise'}
-              </button>
-              {!salvo && (
-                <div style={{ fontSize: 12, color: 'var(--soft)', marginTop: 6 }}>
-                  Termine o passo 1 primeiro.
-                </div>
-              )}
-            </>
-          ) : (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {caso.analise_fila_id ? (
-                embutida
-                  ? <span style={{ fontSize: 12.5, color: 'var(--soft)' }}>O caso já está na esteira: a próxima área é o Crédito, na régua acima.</span>
-                  : <button className="btn-secondary" onClick={() => router.push('/analises')}>
-                      Ver na esteira da análise →
-                    </button>
-              ) : (
-                <button className="btn-primary" onClick={mandarParaAnalise} disabled={somenteLeitura || salvando}>
-                  {salvando ? 'Mandando…' : 'Mandar para a análise'}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+              <div className="bt-campo">
+                <label htmlFor={`razao-${id}`}>Razão social</label>
+                <input id={`razao-${id}`} className="bt-in" value={razao} disabled={!podeEditar}
+                  onChange={(e) => setRazao(e.target.value)} placeholder="a Receita preenche" />
+              </div>
 
-        {/* corpo do e-mail: é onde moram corretora, produto e condições */}
-        {caso.corpo && (
-          <div className="card-panel">
-            <div
-              className="section-title"
-              style={{ cursor: 'pointer', marginBottom: verCorpo ? 14 : 0 }}
-              onClick={() => setVerCorpo((v) => !v)}
-            >
-              <span className="dot" />O que o e-mail dizia {verCorpo ? '▾' : '▸'}
+              <div className="bt-campo">
+                <label htmlFor={`corretora-${id}`}>Corretora</label>
+                <select id={`corretora-${id}`} className="bt-in" value={corretoraId} disabled={!podeEditar}
+                  onChange={(e) => setCorretoraId(e.target.value)}>
+                  <option value="">Selecione a corretora</option>
+                  {corretoras.map((c) => <option key={c.id} value={c.id}>{c.razao_social}</option>)}
+                </select>
+                {caso.corretora_id && corretoraId === caso.corretora_id && caso.identificado_por !== 'humano' && (
+                  <span className="dica">identificada pelo agente no e-mail</span>
+                )}
+                {!caso.corretora_id && !corretoraId && caso.corretora_texto && (
+                  <span className="dica at">no e-mail aparece &quot;{caso.corretora_texto}&quot;, que não está no cadastro de corretoras</span>
+                )}
+              </div>
+
+              <div className="bt-campo">
+                <label htmlFor={`produto-${id}`}>Produto</label>
+                <input id={`produto-${id}`} className="bt-in" value={produto} disabled={!podeEditar}
+                  onChange={(e) => setProduto(e.target.value)}
+                  placeholder={podeEditar ? 'Garantia Executante, Judicial…' : 'não informado'} />
+              </div>
             </div>
-            {verCorpo && (
-              <pre style={{
-                whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit',
-                fontSize: 13.5, color: '#26374a', margin: 0, maxHeight: 340, overflowY: 'auto',
-              }}>{caso.corpo}</pre>
+
+            {avisoSerasa && <div className={`bt-aviso${avisoSerasa.erro ? ' erro' : ''}`}>{avisoSerasa.texto}</div>}
+
+            {(podeEditar || !cnpjOk) && (
+              <div className="bt-bts">
+                {podeEditar && (
+                  <button type="button" className="bt-bt cheio" onClick={preCadastrar} disabled={!cnpjOk || salvando}>
+                    {salvando ? 'Salvando…' : cadastrado ? 'Salvar de novo' : 'Salvar e cadastrar o tomador'}
+                  </button>
+                )}
+                {!cnpjOk && <span className="bt-nota">Sem o CNPJ nada anda: é ele que liga caso, cadastro e análise.</span>}
+              </div>
+            )}
+
+            {/* O resto do Cadastro Básico (endereço, contato, porte, limite) vive
+                na ficha do tomador e é preenchido pela Receita neste momento.
+                Repetir aqueles campos aqui criaria uma segunda tela de cadastro,
+                que é exatamente o que este CRM não pode ter. */}
+            {cadastrado && (
+              <p className="bt-nota" style={{ margin: '10px 0 0' }}>
+                Endereço, contato e sócios vieram do cartão CNPJ e estão na ficha. Porte, limite e
+                observações se editam lá, no Cadastro do tomador.
+              </p>
             )}
           </div>
-        )}
+
+          {/* ══ PASSO 2 · OS DOCUMENTOS ════════════════════════════════════ */}
+          <div className="bt-bloco">
+            <Passo n={2} titulo="Os documentos" pronto={docs.length > 0}>
+              O que veio no e-mail já está aqui. O Serasa e o que faltar, você solta abaixo.
+            </Passo>
+
+            {podeEditar && (
+              <div
+                className={`bt-solta${arrastando ? ' em' : ''}`}
+                onDragOver={(e) => { e.preventDefault(); setArrastando(true) }}
+                onDragLeave={() => setArrastando(false)}
+                onDrop={(e) => { e.preventDefault(); setArrastando(false); anexar(e.dataTransfer.files) }}
+                onClick={() => seletor.current?.click()}
+                style={{ cursor: subindo ? 'progress' : 'pointer' }}
+              >
+                <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                  <b>{subindo ? 'Enviando…' : 'Solte os arquivos aqui, ou clique para escolher'}</b>
+                  <div><span>PDF, Excel, imagem. Até 50 MB cada. Vários de uma vez.</span></div>
+                </div>
+                {/* A classe é escolhida ANTES de soltar: é ela que marca o item do checklist. */}
+                <label className="bt-campo" onClick={(e) => e.stopPropagation()} style={{ flex: '0 1 220px' }}>
+                  <span style={{ fontSize: 11.5, color: cor.textoFraco }}>O que você vai anexar</span>
+                  <select className="bt-in mini" value={classeNova} onChange={(e) => setClasseNova(e.target.value)}>
+                    {CLASSES.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo}</option>)}
+                  </select>
+                </label>
+                <input
+                  ref={seletor} type="file" multiple hidden
+                  onChange={(e) => { if (e.target.files) anexar(e.target.files); e.target.value = '' }}
+                />
+              </div>
+            )}
+
+            {docs.length === 0 ? (
+              <p className="bt-nota" style={{ margin: 0 }}>Nenhum documento ainda.</p>
+            ) : (
+              <div className="bt-tab-caixa">
+                <table className="bt-tab">
+                  <thead>
+                    <tr>
+                      <th>Arquivo</th>
+                      <th style={{ width: 190 }}>É o quê</th>
+                      <th style={{ width: 70 }}>Tamanho</th>
+                      <th style={{ width: 60 }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {docs.map((d) => (
+                      <tr key={d.id}>
+                        <td>
+                          <div className="arq">{d.nome}</div>
+                          {d.certeza === 'nula' && <div style={{ fontSize: 11.5, color: cor.alerta }}>não consegui abrir</div>}
+                        </td>
+                        <td>
+                          <select className="bt-in mini" value={d.classe} disabled={!podeEditar}
+                            onChange={(e) => trocarClasse(d.id, e.target.value)} aria-label={`Tipo de ${d.nome}`}>
+                            {CLASSES.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo}</option>)}
+                          </select>
+                        </td>
+                        <td className="tam">{fmtBytes(d.bytes)}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button type="button" className="bt-bt mini" onClick={() => abrirDocumento(d)}>Abrir</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ══ DIREITA: o que falta decidir e a saída para a análise ═══════════ */}
+        <div style={{ minWidth: 0 }}>
+          {caso.tomador_id && (
+            <SociosSerasa tomadorId={caso.tomador_id} pasta={pasta} analista={quem.analista}
+              classeBotao="bt-bt mini" aoResumir={setSocios} />
+          )}
+
+          {/* ══ PASSO 3 · PARA A ANÁLISE ══════════════════════════════════════ */}
+          <div className={`bt-bloco${!naAnalise && !excluido && cadastrado ? ' ouro' : ''}`}>
+            <Passo n={3} titulo="Mandar para a análise de crédito" pronto={naAnalise}>
+              {naAnalise
+                ? 'Já foi. A análise é feita no Sistema de Análise, dentro do CRM.'
+                : caso.analise_fila_id
+                  ? 'A esteira automática já está com este caso: a pasta foi criada no notebook, e a triagem, o cadastro e a análise andam sozinhos. Este botão só é preciso para concluir à mão.'
+                  : 'Opcional agora. Pendência de documento não trava: ela viaja junto e o analista decide.'}
+            </Passo>
+
+            <div style={{ marginBottom: 12 }}>
+              {itens.map((i) => {
+                const s = SITUACOES.find((x) => x.valor === i.situacao) ?? SITUACOES[4]
+                return (
+                  <div key={i.id} className="bt-exig">
+                    <div className="bt-exig-cab">
+                      <b>{i.caso_item_catalogo.nome}</b>
+                      <span className={`badge ${s.badge}`}>{s.rotulo}</span>
+                      {i.por === 'humano' && <span className="pessoa">decidido por pessoa</span>}
+                      {i.caso_item_catalogo.exigencia === 'bloqueia' && !['ok', 'dispensado'].includes(i.situacao) && (
+                        <span className="falta">{i.caso_item_catalogo.frase_falta}</span>
+                      )}
+                    </div>
+                    {podeEditar && (
+                      <div className="bt-seg" role="group" aria-label={`Situação de ${i.caso_item_catalogo.nome}`}>
+                        {SITUACOES.map((op) => (
+                          <button key={op.valor} type="button" onClick={() => marcarItem(i.id, op.valor)}
+                            className={i.situacao === op.valor ? 'on' : ''} aria-pressed={i.situacao === op.valor}>
+                            {op.rotulo}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {!naAnalise ? (
+              <>
+                {bloqueando.length > 0 && salvo && (
+                  <div className="bt-aviso at" style={{ margin: '0 0 12px' }}>
+                    Falta {bloqueando.map((i) => i.caso_item_catalogo.nome).join(' · ')}. Dá para mandar assim
+                    mesmo: a pendência viaja junto e quem decide se a análise começa é o analista.
+                  </div>
+                )}
+                <button type="button" className="bt-bt cheio" onClick={concluir} disabled={!podeEditar || !salvo || salvando}>
+                  {salvando ? 'Enviando…' : 'Concluir e enviar para análise'}
+                </button>
+                {!salvo && <div className="bt-nota" style={{ marginTop: 6 }}>Termine o passo 1 primeiro.</div>}
+              </>
+            ) : caso.analise_fila_id ? (
+              embutida
+                ? <span className="bt-nota">O caso já está na esteira: a próxima área é o Crédito, na régua acima.</span>
+                : <button type="button" className="bt-bt" onClick={() => router.push('/analises')}>Ver na esteira da análise</button>
+            ) : (
+              <button type="button" className="bt-bt cheio" onClick={mandarParaAnalise} disabled={somenteLeitura || salvando}>
+                {salvando ? 'Mandando…' : 'Mandar para a análise'}
+              </button>
+            )}
+          </div>
+
+          {/* O e-mail que abriu o caso: é onde moram corretora, produto e condições.
+              O assunto vai aqui, como citação do e-mail, e não mais no título:
+              ele vem em caixa alta do remetente e não é o nome de ninguém. */}
+          <div className="bt-bloco bt-email">
+            <button type="button" className="bt-abre" onClick={() => setVerCorpo((v) => !v)} aria-expanded={verCorpo}
+              disabled={!caso.corpo}>
+              O e-mail que abriu o caso
+              {caso.corpo && <small>{verCorpo ? 'Esconder o texto' : 'Ler o texto'}</small>}
+            </button>
+            <dl style={{ marginTop: 10 }}>
+              <dt>Assunto</dt><dd>{caso.assunto}</dd>
+              {(caso.remetente_nome || caso.remetente_email) && (
+                <><dt>De</dt><dd>{caso.remetente_nome ?? ''}{caso.remetente_email ? ` (${caso.remetente_email})` : ''}</dd></>
+              )}
+              {caso.recebido_em && <><dt>Recebido</dt><dd>{fmtData(caso.recebido_em)}</dd></>}
+            </dl>
+            {verCorpo && caso.corpo && <pre>{caso.corpo}</pre>}
+          </div>
+        </div>
       </div>
     </div>
   )
