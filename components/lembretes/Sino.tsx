@@ -17,7 +17,9 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cor, raio, sombra } from '@/lib/ui/painel'
 import { VAPID_PUBLICA } from '@/lib/push/chave-publica'
+import { quandoLegivel } from '@/lib/lembretes/regras'
 
+interface Acompanhado { id: string; titulo: string; quando: string; status: string; origem: string; tomador_id: string | null; caso_id: string | null }
 interface Notificacao { id: string; titulo: string; texto: string | null; link: string | null; criado_em: string; lida_em: string | null }
 
 const quando = (iso: string) => {
@@ -52,6 +54,35 @@ export default function Sino({ userId }: { userId: string | null }) {
   }, [userId])
 
   useEffect(() => { carregar() }, [carregar])
+
+  /* ACOMPANHANDO (01/10/2026). Pedido dele: "tem sempre que aparecer no
+     lembrete, mesmo os que vão vencer, assim consigo antecipar o vencimento".
+     O aviso só chega na hora marcada; esta lista mostra ANTES todo lembrete em
+     aberto que a pessoa acompanha, vencidos primeiro, depois os próximos. */
+  const [acompanho, setAcompanho] = useState<Acompanhado[]>([])
+  const carregarAcompanho = useCallback(async () => {
+    if (!userId) return
+    const { data } = await createClient().from('lembrete_seguidores')
+      .select('lembretes!inner(id, titulo, quando, status, origem, tomador_id, caso_id)')
+      .eq('auth_id', userId).in('lembretes.status', ['aberto', 'parcial'])
+    const lista = ((data ?? []) as unknown as { lembretes: Acompanhado }[]).map((x) => x.lembretes)
+    setAcompanho(lista.sort((a, b) => a.quando.localeCompare(b.quando)))
+  }, [userId])
+  useEffect(() => { carregarAcompanho() }, [carregarAcompanho])
+  // Ao vivo: criou, adiou, resolveu, o robô mexeu. Rajada vira uma leitura só.
+  useEffect(() => {
+    if (!userId) return
+    const sb = createClient()
+    let espera: ReturnType<typeof setTimeout> | null = null
+    const canal = sb.channel(`sino-lembretes-${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lembretes' }, () => {
+        if (espera) clearTimeout(espera); espera = setTimeout(carregarAcompanho, 800)
+      })
+      .subscribe()
+    return () => { if (espera) clearTimeout(espera); sb.removeChannel(canal) }
+  }, [userId, carregarAcompanho])
+  // Abrir o sino relê: a hora "vence hoje" muda com o relógio.
+  useEffect(() => { if (aberto) carregarAcompanho() }, [aberto, carregarAcompanho])
 
   useEffect(() => {
     if (!userId) return
@@ -143,6 +174,10 @@ export default function Sino({ userId }: { userId: string | null }) {
   }
 
   const naoLidas = lista.filter((n) => !n.lida_em).length
+  const vencidos = acompanho.filter((l) => new Date(l.quando).getTime() < Date.now()).length
+  // O número do sino soma o que é novo e o que já venceu: os dois pedem ação.
+  const noSino = naoLidas + vencidos
+  const linkDe = (l: Acompanhado) => l.tomador_id ? `/tomadores/${l.tomador_id}?g=lembretes` : `/comercial/${l.caso_id}`
   if (!userId) return null
 
   return (
@@ -150,22 +185,22 @@ export default function Sino({ userId }: { userId: string | null }) {
       <button
         type="button"
         onClick={() => setAberto((a) => !a)}
-        aria-label={naoLidas ? `${naoLidas} notificações novas` : 'Notificações'}
+        aria-label={noSino ? `${naoLidas} avisos novos, ${vencidos} lembretes vencidos` : 'Lembretes e avisos'}
         title="Lembretes e avisos"
         style={{
           position: 'relative', background: 'transparent', border: 'none', cursor: 'pointer',
-          color: naoLidas ? cor.ouro : cor.textoSobreEscuro, padding: 6, minWidth: 40, minHeight: 40,
+          color: noSino ? cor.ouro : cor.textoSobreEscuro, padding: 6, minWidth: 40, minHeight: 40,
           display: 'grid', placeItems: 'center',
         }}
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
         </svg>
-        {naoLidas > 0 && (
+        {noSino > 0 && (
           <span style={{
             position: 'absolute', top: 2, right: 2, minWidth: 17, height: 17, borderRadius: 999, padding: '0 4px',
             background: cor.alerta, color: cor.branco, fontSize: 10.5, fontWeight: 700, display: 'grid', placeItems: 'center',
-          }}>{naoLidas > 99 ? '99+' : naoLidas}</span>
+          }}>{noSino > 99 ? '99+' : noSino}</span>
         )}
       </button>
 
@@ -185,9 +220,43 @@ export default function Sino({ userId }: { userId: string | null }) {
             )}
           </div>
 
+          {/* ── o que eu acompanho, antes de vencer ── */}
+          <div style={{ padding: '8px 14px 4px', fontSize: 12, fontWeight: 700, color: cor.tinta2 }}>
+            Acompanhando · {acompanho.length} em aberto{vencidos ? ` · ${vencidos} vencido${vencidos > 1 ? 's' : ''}` : ''}
+          </div>
+          {acompanho.length === 0 ? (
+            <div style={{ padding: '4px 14px 10px', fontSize: 12, color: cor.textoSub }}>
+              Nenhum lembrete em aberto que você acompanhe.
+            </div>
+          ) : acompanho.slice(0, 30).map((l) => {
+            const q = quandoLegivel(l.quando)
+            return (
+              <button key={l.id} type="button" onClick={() => { setAberto(false); router.push(linkDe(l)) }}
+                style={{
+                  display: 'flex', gap: 10, alignItems: 'baseline', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
+                  font: 'inherit', padding: '7px 14px', background: cor.papel, borderBottom: `1px solid ${cor.bordaSuave}`,
+                  boxShadow: q.vencido ? `inset 3px 0 0 ${cor.alerta}` : 'none',
+                }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: cor.tinta, overflowWrap: 'anywhere' }}>
+                  {l.origem === 'robo' && <span style={{ color: cor.ouroTexto, fontWeight: 600 }}>Robô · </span>}{l.titulo}
+                </span>
+                <span style={{ flexShrink: 0, fontSize: 11.5, whiteSpace: 'nowrap', fontWeight: q.vencido ? 700 : 500, color: q.vencido ? cor.alerta : cor.textoSub }}>
+                  {q.vencido ? `venceu ${q.txt}` : q.txt}
+                </span>
+              </button>
+            )
+          })}
+          {acompanho.length > 30 && (
+            <div style={{ padding: '6px 14px', fontSize: 11.5, color: cor.textoFraco }}>e mais {acompanho.length - 30}, nos cards.</div>
+          )}
+
+          {/* ── os avisos que já tocaram ── */}
+          <div style={{ padding: '10px 14px 4px', fontSize: 12, fontWeight: 700, color: cor.tinta2, borderTop: `1px solid ${cor.borda}` }}>
+            Avisos recebidos{naoLidas ? ` · ${naoLidas} novo${naoLidas > 1 ? 's' : ''}` : ''}
+          </div>
           {lista.length === 0 ? (
-            <div style={{ padding: 16, fontSize: 12.5, color: cor.textoSub }}>
-              Nada por enquanto. Quando um lembrete que você acompanha tocar, ele aparece aqui.
+            <div style={{ padding: '4px 14px 12px', fontSize: 12, color: cor.textoSub }}>
+              Nada ainda. Quando um lembrete que você acompanha tocar, o aviso chega aqui.
             </div>
           ) : lista.map((n) => (
             <button key={n.id} type="button" onClick={() => abrir(n)}
