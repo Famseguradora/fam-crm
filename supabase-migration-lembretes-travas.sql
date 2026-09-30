@@ -262,3 +262,10 @@ begin
 end $$;
 revoke all on function public.lembrete_repetir(uuid) from public, anon;
 grant execute on function public.lembrete_repetir(uuid) to authenticated;
+
+-- ── 7. o lembrete da operação (01/10/2026, aplicada como lembretes_da_operacao) ──
+-- Pedido de 30/09: "sempre deve ter o lembrete", inclusive ao criar a operação.
+-- A coluna operacao_id entra nos campos fixos e na recorrência.
+alter table public.lembretes add column if not exists operacao_id uuid references public.operacoes(id) on delete set null;
+create index if not exists lembretes_operacao_idx on public.lembretes (operacao_id) where operacao_id is not null;
+-- (lembretes_campos_fixos e lembrete_repetir foram recriados com operacao_id: ver o banco)

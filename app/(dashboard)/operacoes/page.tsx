@@ -10,6 +10,7 @@ import { maskCNPJ, maskMoeda, fmtMoeda, fmtMoedaCurta, fmtData, fmtPercent, titl
 import { consultarCNPJpelaTela, type CartaoCNPJ } from '@/lib/cnpj'
 import type { Operacao, Tomador, Corretora, Produto, StatusFluxo, MetaNegocio, ComiteComentario, Usuario, ComiteVoto, ComiteVotoHistorico, VotoComite, Anexo } from '@/types'
 import AnexosSection from '@/components/AnexosSection'
+import Lembretes from '@/components/lembretes/Lembretes'
 import ComiteEntradaModal from '@/components/comite/ComiteEntradaModal'
 import PainelJulgamento from '@/components/comite/PainelJulgamento'
 import OperacaoDados from '@/components/comite/OperacaoDados'
@@ -2989,6 +2990,20 @@ export default function OperacoesPage() {
                   <>
                     <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
                     <AnexosSection entidadeTipo="operacao" entidadeId={editando.id} tomadorId={editando.tomador_id ?? undefined} />
+                  </>
+                )}
+                {/* LEMBRETES (30/09/2026): "sempre deve ter o lembrete", inclusive
+                    criando a operação. Operação já salva: o lembrete nasce ligado a
+                    ela e ao tomador. Operação nova: com o tomador escolhido, já dá
+                    para lembrar (fica no tomador, porque a operação ainda não existe). */}
+                {(editando || form.tomador_id) && (
+                  <>
+                    <hr style={{ border: 'none', borderTop: '1.5px solid #e0ecf8', margin: '20px 0' }} />
+                    <Lembretes
+                      operacaoId={editando?.id ?? null}
+                      tomadorId={editando?.tomador_id ?? form.tomador_id ?? null}
+                      titulo={editando ? 'Lembretes desta operação e do tomador' : 'Lembretes do tomador'}
+                    />
                   </>
                 )}
                 {editando && (editando.comite_notas || (comentariosComite[editando.id]?.length ?? 0) > 0) && (

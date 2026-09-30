@@ -28,7 +28,7 @@ import { CATEGORIAS, RECORRENCIAS, STATUS, nomeCategoria, quandoLegivel, type It
 interface Seguidor { auth_id: string; nome: string | null; papel: string; visto_em: string | null; convidado_por: string | null }
 interface Evento { id: string; tipo: string; texto: string | null; por_nome: string | null; criado_em: string }
 interface Lembrete {
-  id: string; tomador_id: string | null; caso_id: string | null
+  id: string; tomador_id: string | null; caso_id: string | null; operacao_id: string | null
   titulo: string; detalhe: string | null; categoria: string; area: string | null
   quando: string; recorrencia: string | null; itens: ItemLembrete[]
   status: string; prioridade: string; responsavel_auth_id: string | null; responsavel_nome: string | null
@@ -46,14 +46,14 @@ const FOLHA = `
 .lb-seg button { font: inherit; font-size: 12px; padding: 4px 10px; border: none; border-left: 1px solid ${cor.bordaSuave}; background: ${cor.papel}; color: ${cor.textoSub}; cursor: pointer; }
 .lb-seg button:first-child { border-left: none; }
 .lb-seg button.on { background: ${cor.acao}; color: ${cor.branco}; }
-.lb-bt { font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: ${raio.controle}px; border: 1px solid ${cor.borda};
+.lb-bt { font: inherit; font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: ${raio.controle}px; border: 1px solid ${cor.borda};
   background: ${cor.papel}; color: ${cor.texto}; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
 .lb-bt:hover:not(:disabled) { border-color: ${cor.acaoClara}; color: ${cor.acao}; }
 .lb-bt:disabled { opacity: .5; cursor: default; }
 .lb-bt.cheio { background: ${cor.acao}; border-color: ${cor.acao}; color: ${cor.branco}; }
 .lb-bt.cheio:hover:not(:disabled) { background: ${cor.tinta2}; color: ${cor.branco}; }
-.lb-bt.mini { font-size: 12px; padding: 4px 10px; }
-.lb-bt.link { border: none; background: none; padding: 4px 2px; color: ${cor.acao}; font-weight: 600; }
+.lb-bt.mini { font-size: 11px; padding: 2px 8px; }
+.lb-bt.link { border: none; background: none; padding: 2px 2px; color: ${cor.acao}; font-weight: 600; font-size: 11px; }
 .lb-in { font: inherit; font-size: 13px; padding: 6px 9px; border: 1px solid ${cor.borda}; border-radius: ${raio.controle}px; background: ${cor.papel};
   color: ${cor.tinta}; outline: none; width: 100%; min-width: 0; box-sizing: border-box; }
 .lb-in:focus { border-color: ${cor.bordaAtiva}; }
@@ -89,7 +89,13 @@ textarea.lb-in { resize: vertical; min-height: 60px; }
 .lb-itens .ok { color: ${cor.textoFraco}; text-decoration: line-through; }
 .lb-pessoas { font-size: 11.5px; color: ${cor.textoSub}; margin-top: 6px; }
 .lb-pessoas b { color: ${cor.tinta}; font-weight: 600; }
-.lb-acoes { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.lb-acoes { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+/* Pedido de 30/09/2026: botões pequenos, que aparecem ao passar o mouse. Ficam
+   no lugar (só invisíveis) para o cartão não pular; o teclado também os acende
+   (focus-within). No celular não existe "passar o mouse": lá ficam sempre à vista. */
+.lb-item .lb-acoes { opacity: 0; transition: opacity .12s ease; }
+.lb-item:hover .lb-acoes, .lb-item:focus-within .lb-acoes, .lb-item.aberto .lb-acoes { opacity: 1; }
+.lb-tag.op { border-color: ${cor.areaOperacao}; color: ${cor.areaOperacao}; }
 .lb-acoes select { width: auto; }
 .lb-trilha { margin-top: 10px; border-top: 1px solid ${cor.bordaSuave}; padding-top: 8px; }
 .lb-trilha ol { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -107,6 +113,7 @@ textarea.lb-in { resize: vertical; min-height: 60px; }
   .lb-grade { grid-template-columns: minmax(0,1fr); }
 }
 @media (pointer: coarse) {
+  .lb-item .lb-acoes { opacity: 1; }
   .lb-bt, .lb-chip, .lb-seg button { min-height: 40px; }
   .lb-in { font-size: 16px; min-height: 40px; }
   .lb-itens input { width: 20px; height: 20px; }
@@ -139,9 +146,11 @@ function rascunhoDe(l: Lembrete): Rascunho {
   }
 }
 
-export default function Lembretes({ tomadorId, casoId, titulo = 'Lembretes' }: {
+export default function Lembretes({ tomadorId, casoId, operacaoId, titulo = 'Lembretes' }: {
   tomadorId?: string | null
   casoId?: string | null
+  /** dentro da operação: o lembrete novo nasce ligado a ela (e ao tomador dela) */
+  operacaoId?: string | null
   titulo?: string
 }) {
   const { somenteLeitura } = usePermissoes()
@@ -162,8 +171,9 @@ export default function Lembretes({ tomadorId, casoId, titulo = 'Lembretes' }: {
     const p = new URLSearchParams()
     if (tomadorId) p.set('tomador_id', tomadorId)
     if (casoId) p.set('caso_id', casoId)
+    if (operacaoId) p.set('operacao_id', operacaoId)
     return p.toString()
-  }, [tomadorId, casoId])
+  }, [tomadorId, casoId, operacaoId])
 
   const carregar = useCallback(async () => {
     if (!consulta) return
@@ -192,18 +202,19 @@ export default function Lembretes({ tomadorId, casoId, titulo = 'Lembretes' }: {
   const meus = useRef<Set<string>>(new Set())
   useEffect(() => { meus.current = new Set((lista ?? []).map((l) => l.id)) }, [lista])
   useEffect(() => {
-    if (!tomadorId && !casoId) return
+    if (!tomadorId && !casoId && !operacaoId) return
     const sb = createClient()
     let espera: ReturnType<typeof setTimeout> | null = null
     const recarregar = () => { if (espera) clearTimeout(espera); espera = setTimeout(carregar, 600) }
-    let canal = sb.channel(`lembretes-${tomadorId ?? ''}-${casoId ?? ''}`)
+    let canal = sb.channel(`lembretes-${tomadorId ?? ''}-${casoId ?? ''}-${operacaoId ?? ''}`)
     if (tomadorId) canal = canal.on('postgres_changes', { event: '*', schema: 'public', table: 'lembretes', filter: `tomador_id=eq.${tomadorId}` }, recarregar)
     if (casoId) canal = canal.on('postgres_changes', { event: '*', schema: 'public', table: 'lembretes', filter: `caso_id=eq.${casoId}` }, recarregar)
+    if (operacaoId) canal = canal.on('postgres_changes', { event: '*', schema: 'public', table: 'lembretes', filter: `operacao_id=eq.${operacaoId}` }, recarregar)
     canal = canal.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'lembrete_eventos' },
       (p) => { if (meus.current.has(String((p.new as { lembrete_id?: string }).lembrete_id))) recarregar() })
     canal.subscribe()
     return () => { if (espera) clearTimeout(espera); sb.removeChannel(canal) }
-  }, [tomadorId, casoId, carregar])
+  }, [tomadorId, casoId, operacaoId, carregar])
 
   async function agir(corpo: Record<string, unknown>, metodo: 'PATCH' | 'POST' = 'PATCH', aviso?: string) {
     setOcupado(true); setErro(''); setRecado('')
@@ -236,7 +247,7 @@ export default function Lembretes({ tomadorId, casoId, titulo = 'Lembretes' }: {
     if (orig && orig.responsavel === r.responsavel) delete edicao.responsavel_auth_id
     const ok = form.id
       ? await agir({ id: form.id, acao: 'editar', ...edicao }, 'PATCH', 'Lembrete atualizado.')
-      : await agir({ ...base, tomador_id: tomadorId ?? null, caso_id: casoId ?? null, seguidores: r.seguidores }, 'POST',
+      : await agir({ ...base, tomador_id: tomadorId ?? null, caso_id: casoId ?? null, operacao_id: operacaoId ?? null, seguidores: r.seguidores }, 'POST',
           r.seguidores.length ? 'Lembrete criado. Os colegas chamados já receberam o aviso.' : 'Lembrete criado.')
     if (ok) setForm(null)
   }
@@ -263,7 +274,7 @@ export default function Lembretes({ tomadorId, casoId, titulo = 'Lembretes' }: {
           ))}
         </div>
         {podeEditar && eu && !form && (
-          <button type="button" className="lb-bt cheio" onClick={() => { setErro(''); setForm({ id: null, r: rascunhoNovo(eu.id) }) }}>
+          <button type="button" className="lb-bt mini cheio" onClick={() => { setErro(''); setForm({ id: null, r: rascunhoNovo(eu.id) }) }}>
             Novo lembrete
           </button>
         )}
@@ -368,10 +379,11 @@ export default function Lembretes({ tomadorId, casoId, titulo = 'Lembretes' }: {
             const eventos = [...l.lembrete_eventos].sort((a, b) => a.criado_em.localeCompare(b.criado_em))
             const expandido = aberto === l.id
             return (
-              <div key={l.id} className={`lb-item ${l.status}${vencido ? ' vencido' : ''}`}>
+              <div key={l.id} className={`lb-item ${l.status}${vencido ? ' vencido' : ''}${expandido || convidando === l.id ? ' aberto' : ''}`}>
                 <div className="lb-cab">
                   <div className="lb-tit">{l.titulo}</div>
                   {l.origem === 'robo' && <span className="lb-tag robo">Robô do tomador</span>}
+                  {l.operacao_id && <span className="lb-tag op">{l.operacao_id === operacaoId ? 'Desta operação' : 'Operação'}</span>}
                   {l.prioridade === 'alta' && <span className="lb-tag alta">Prioridade alta</span>}
                   <span className={`lb-tag ${st.tom === 'parcial' ? 'st-parcial' : st.tom === 'ok' ? 'st-ok' : ''}`}>{st.nome}</span>
                 </div>

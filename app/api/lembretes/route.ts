@@ -17,7 +17,7 @@ import { CATEGORIAS, RECORRENCIAS, statusDosItens, type ItemLembrete } from '@/l
 
 export const runtime = 'nodejs'
 
-const CAMPOS = 'id, tomador_id, caso_id, titulo, detalhe, categoria, area, quando, recorrencia, itens, status, prioridade, responsavel_auth_id, responsavel_nome, origem, resolucao, resolvido_em, resolvido_por, avisado_em, criado_por_nome, criado_em, atualizado_em, lembrete_seguidores(auth_id, nome, papel, visto_em, convidado_por), lembrete_eventos(id, tipo, texto, por_nome, criado_em)'
+const CAMPOS = 'id, tomador_id, caso_id, operacao_id, titulo, detalhe, categoria, area, quando, recorrencia, itens, status, prioridade, responsavel_auth_id, responsavel_nome, origem, resolucao, resolvido_em, resolvido_por, avisado_em, criado_por_nome, criado_em, atualizado_em, lembrete_seguidores(auth_id, nome, papel, visto_em, convidado_por), lembrete_eventos(id, tipo, texto, por_nome, criado_em)'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const texto = (v: unknown, max: number) => String(v ?? '').replace(/\s+$/g, '').trim().slice(0, max)
@@ -41,12 +41,16 @@ export async function GET(req: NextRequest) {
   if (!eu) return NextResponse.json({ erro: 'Sessão expirada.' }, { status: 401 })
   const tomador = req.nextUrl.searchParams.get('tomador_id') ?? ''
   const caso = req.nextUrl.searchParams.get('caso_id') ?? ''
-  if (!UUID.test(tomador) && !UUID.test(caso)) return NextResponse.json({ erro: 'Diga de qual tomador ou caso.' }, { status: 422 })
+  const operacao = req.nextUrl.searchParams.get('operacao_id') ?? ''
+  /* Os três endereços de um lembrete: o tomador, o caso (triagem) e a
+     operação. A tela pede quantos tiver e recebe a união. Só UUID válido
+     entra no filtro. */
+  const filtros = [['tomador_id', tomador], ['caso_id', caso], ['operacao_id', operacao]]
+    .filter(([, v]) => UUID.test(v)).map(([k, v]) => `${k}.eq.${v}`)
+  if (!filtros.length) return NextResponse.json({ erro: 'Diga de qual tomador, caso ou operação.' }, { status: 422 })
 
-  let q = eu.supabase.from('lembretes').select(CAMPOS).order('quando', { ascending: true }).limit(300)
-  q = UUID.test(tomador) && UUID.test(caso) ? q.or(`tomador_id.eq.${tomador},caso_id.eq.${caso}`)
-    : UUID.test(tomador) ? q.eq('tomador_id', tomador) : q.eq('caso_id', caso)
-  const { data, error } = await q
+  const { data, error } = await eu.supabase.from('lembretes').select(CAMPOS)
+    .or(filtros.join(',')).order('quando', { ascending: true }).limit(300)
   if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
   return NextResponse.json({ lembretes: data ?? [], eu: { id: eu.id, nome: eu.nome } })
 }
@@ -59,8 +63,17 @@ export async function POST(req: NextRequest) {
   let c: Record<string, unknown> = {}
   try { c = await req.json() } catch { /* validação abaixo */ }
 
-  const tomador_id = UUID.test(String(c.tomador_id ?? '')) ? String(c.tomador_id) : null
+  let tomador_id = UUID.test(String(c.tomador_id ?? '')) ? String(c.tomador_id) : null
   const caso_id = UUID.test(String(c.caso_id ?? '')) ? String(c.caso_id) : null
+  /* Lembrete criado dentro da OPERAÇÃO: fica ligado a ela e ao tomador dela,
+     para aparecer também no card do tomador. O tomador vem do banco, não da tela. */
+  let operacao_id: string | null = null
+  if (UUID.test(String(c.operacao_id ?? ''))) {
+    const { data: op } = await eu.supabase.from('operacoes').select('id, tomador_id').eq('id', String(c.operacao_id)).maybeSingle()
+    if (!op) return NextResponse.json({ erro: 'Operação não encontrada.' }, { status: 404 })
+    operacao_id = op.id as string
+    tomador_id = (op.tomador_id as string | null) ?? tomador_id
+  }
   if (!tomador_id && !caso_id) return NextResponse.json({ erro: 'O lembrete precisa de um tomador ou de um caso.' }, { status: 422 })
   const titulo = texto(c.titulo, 200)
   if (titulo.length < 2) return NextResponse.json({ erro: 'Escreva do que é o lembrete.' }, { status: 422 })
@@ -78,7 +91,7 @@ export async function POST(req: NextRequest) {
   if (!nomes.has(respId) && respId !== eu.id) return NextResponse.json({ erro: 'O responsável não é um usuário ativo do CRM.' }, { status: 422 })
 
   const { data: l, error } = await eu.supabase.from('lembretes').insert({
-    tomador_id, caso_id, titulo, detalhe: texto(c.detalhe, 2000) || null, categoria, quando: quando.toISOString(),
+    tomador_id, caso_id, operacao_id, titulo, detalhe: texto(c.detalhe, 2000) || null, categoria, quando: quando.toISOString(),
     recorrencia, prioridade, itens, responsavel_auth_id: respId, responsavel_nome: nomes.get(respId) ?? eu.nome,
     origem: 'humano', criado_por_auth_id: eu.id, criado_por_nome: eu.nome,
   }).select('id').single()

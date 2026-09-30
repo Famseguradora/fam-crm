@@ -52,13 +52,14 @@ import ReguaDoCard, { PalcoDaRegua, type EstadoNo } from '@/components/card/Regu
 import { etapaDoCard, nomeArea, type PostoCentral } from '@/lib/card/secoes'
 import { fmtData } from '@/lib/utils'
 import BancadaTriagem from '@/components/triagem/BancadaTriagem'
+import Lembretes from '@/components/lembretes/Lembretes'
 
 /** "https://www.celog.com.br/" vira "www.celog.com.br": o endereço como se fala. */
 function siteCurto(url: string): string {
   return url.replace(/^https?:\/\//i, '').replace(/\/$/, '')
 }
 
-type Aba = 'triagem' | 'geral' | 'arquivos' | 'analise' | 'relatorio' | 'ia' | 'encaminhar' | 'atividades'
+type Aba = 'triagem' | 'geral' | 'arquivos' | 'analise' | 'relatorio' | 'ia' | 'lembretes' | 'encaminhar' | 'atividades'
 
 /* CADA ABA MORA NA ÁREA DONA DELA  ·  28/09/2026
    Antes as sete abas ficavam todas numa tela que parecia do Crédito, e a
@@ -69,8 +70,9 @@ type Aba = 'triagem' | 'geral' | 'arquivos' | 'analise' | 'relatorio' | 'ia' | '
    equipe, o substatus), Encaminhar e Atividades são do card inteiro e
    aparecem nas duas. */
 const ABAS_DO_POSTO: Partial<Record<PostoCentral, Aba[]>> = {
-  cadastro: ['triagem', 'geral', 'arquivos', 'encaminhar', 'atividades'],
-  credito: ['geral', 'analise', 'relatorio', 'ia', 'encaminhar', 'atividades'],
+  // Lembretes nas duas (30/09/2026): "durante a análise identifico a falta de algo e crio o lembrete".
+  cadastro: ['triagem', 'geral', 'arquivos', 'lembretes', 'encaminhar', 'atividades'],
+  credito: ['geral', 'analise', 'relatorio', 'ia', 'lembretes', 'encaminhar', 'atividades'],
 }
 
 interface SecaoDoCard {
@@ -537,6 +539,18 @@ export default function CardAnalise({ id }: { id: string }) {
     return () => { vivo = false }
   }, [tomadorId])
 
+  /* Quantos lembretes em aberto do tomador ou do caso: o número na aba. Conta
+     de novo ao trocar de aba (pode ter resolvido um lá dentro). */
+  const [nLembretes, setNLembretes] = useState(0)
+  const casoDoCard = f?.caso_id ?? null
+  useEffect(() => {
+    const filtros = [tomadorId && `tomador_id.eq.${tomadorId}`, casoDoCard && `caso_id.eq.${casoDoCard}`].filter(Boolean)
+    if (!filtros.length) return
+    createClient().from('lembretes').select('id', { count: 'exact', head: true })
+      .or(filtros.join(',')).in('status', ['aberto', 'parcial'])
+      .then(({ count }) => setNLembretes(count ?? 0))
+  }, [tomadorId, casoDoCard, aba])
+
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -707,6 +721,8 @@ export default function CardAnalise({ id }: { id: string }) {
        sistema. Agora a aba existe e diz o que falta — publicar. */
     { id: 'relatorio', txt: 'Relatório', some: !ficha && !entregue, alerta: !ficha && entregue },
     { id: 'ia', txt: 'IA' },
+    // Some só quando o card não tem tomador nem caso: sem um dos dois o lembrete não tem onde morar.
+    { id: 'lembretes', txt: 'Lembretes', n: nLembretes || null, some: !f.tomador_id && !f.caso_id },
     { id: 'encaminhar', txt: 'Encaminhar', n: abertos || null, alerta: abertos > 0 },
     { id: 'atividades', txt: 'Atividades' },
   ]
@@ -830,6 +846,9 @@ export default function CardAnalise({ id }: { id: string }) {
                 aoCarregar={fi => { if (fi) setFicha(fi) }} />
             : <RelatorioAPublicar f={f} quem={quem} aoMandar={mandar} />)}
           {abaNaTela === 'ia' && <AbaIA {...props} />}
+          {abaNaTela === 'lembretes' && (
+            <Lembretes tomadorId={f.tomador_id} casoId={f.caso_id} titulo="Lembretes do tomador" />
+          )}
           {abaNaTela === 'encaminhar' && (f.semEsteira
             ? <SemPasta aba="encaminhar" chave={f.chave_local} docs={0} aoIrParaAba={irParaAba} />
             : <Encaminhar {...props} />)}
