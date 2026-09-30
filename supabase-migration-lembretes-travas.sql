@@ -269,3 +269,9 @@ grant execute on function public.lembrete_repetir(uuid) to authenticated;
 alter table public.lembretes add column if not exists operacao_id uuid references public.operacoes(id) on delete set null;
 create index if not exists lembretes_operacao_idx on public.lembretes (operacao_id) where operacao_id is not null;
 -- (lembretes_campos_fixos e lembrete_repetir foram recriados com operacao_id: ver o banco)
+
+-- ── 8. lembrete para todos (01/10/2026, aplicada como lembretes_para_todos) ──
+-- "Liberar o lembrete para todos, principalmente a interação com os colegas."
+-- Nas policies de lembretes, lembrete_seguidores e lembrete_eventos, e na
+-- lembrete_repetir(), `fam_pode_escrever()` virou `fam_e_usuario()`: todo usuário
+-- ATIVO cria, comenta, acompanha, é chamado e resolve, inclusive o "Só leitura".

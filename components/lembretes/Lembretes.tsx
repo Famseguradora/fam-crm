@@ -21,7 +21,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { usePermissoes } from '@/lib/context/permissoes-context'
 import { cor, raio } from '@/lib/ui/painel'
 import { CATEGORIAS, RECORRENCIAS, STATUS, nomeCategoria, quandoLegivel, type ItemLembrete } from '@/lib/lembretes/regras'
 
@@ -153,7 +152,6 @@ export default function Lembretes({ tomadorId, casoId, operacaoId, titulo = 'Lem
   operacaoId?: string | null
   titulo?: string
 }) {
-  const { somenteLeitura } = usePermissoes()
   const [lista, setLista] = useState<Lembrete[] | null>(null)
   const [eu, setEu] = useState<{ id: string; nome: string } | null>(null)
   const [pessoas, setPessoas] = useState<Pessoa[]>([])
@@ -188,9 +186,10 @@ export default function Lembretes({ tomadorId, casoId, operacaoId, titulo = 'Lem
 
   useEffect(() => { carregar() }, [carregar])
 
-  // Os colegas que podem ser chamados: quem escreve no CRM, ativo.
+  // Os colegas que podem ser chamados: TODO usuário ativo (01/10/2026: "liberar o
+  // lembrete para todos, principalmente a interação com os colegas").
   useEffect(() => {
-    createClient().from('usuarios').select('auth_id, nome').eq('status', 'ativo').neq('perfil', 'leitura').not('auth_id', 'is', null).order('nome')
+    createClient().from('usuarios').select('auth_id, nome').eq('status', 'ativo').not('auth_id', 'is', null).order('nome')
       .then(({ data }) => setPessoas((data ?? []) as Pessoa[]))
   }, [])
 
@@ -255,7 +254,10 @@ export default function Lembretes({ tomadorId, casoId, operacaoId, titulo = 'Lem
   const visiveis = (lista ?? []).filter((l) =>
     filtro === 'todos' ? true : filtro === 'abertos' ? ['aberto', 'parcial'].includes(l.status) : ['resolvido', 'cancelado'].includes(l.status))
   const nAbertos = (lista ?? []).filter((l) => ['aberto', 'parcial'].includes(l.status)).length
-  const podeEditar = !somenteLeitura
+  /* Lembrete é conversa entre colegas: o perfil "Só leitura" vale para os dados
+     do CRM, não para cá (01/10/2026). Basta estar logado e ativo; a trava é a
+     RLS (`fam_e_usuario`). */
+  const podeEditar = !!eu
 
   const set = (campo: keyof Rascunho, valor: string | string[]) =>
     setForm((f) => (f ? { ...f, r: { ...f.r, [campo]: valor } } : f))
