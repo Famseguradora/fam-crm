@@ -57,6 +57,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!CLASSES.includes(classe as (typeof CLASSES)[number])) {
     return NextResponse.json({ erro: `Tipo de documento desconhecido: "${classe}".` }, { status: 422 })
   }
+  /* COMO CHEGOU (30/09/2026). Pedido do Marco: "às vezes recebemos por outros
+     meios que não o e-mail. O e-mail é a preferência porque deixa histórico."
+     O documento avulso passa a dizer por onde veio e quem subiu, e isso entra
+     na linha do tempo do caso ao lado dos e-mails. */
+  const meio = String(form.get('meio') ?? '').replace(/\s+/g, ' ').trim().slice(0, 60)
+  const { data: quem } = await supabase.from('usuarios').select('nome').eq('auth_id', user.id).maybeSingle()
+  const nomeQuem = (quem as { nome: string | null } | null)?.nome ?? user.email ?? null
+  const detalheAvulso = `Anexado à mão${meio ? ` (chegou por ${meio})` : ''}${nomeQuem ? ` por ${nomeQuem}` : ''}.`
+
   const arquivos = form.getAll('arquivo').filter((a): a is File => a instanceof File)
   if (!arquivos.length) return NextResponse.json({ erro: 'Nenhum arquivo veio.' }, { status: 400 })
 
@@ -119,7 +128,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         classe,
         certeza: 'alta',
         classificado_por: 'humano',
-        detalhe: 'Anexado à mão na Triagem.',
+        detalhe: detalheAvulso,
       })
       .select('id')
       .single()

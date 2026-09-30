@@ -58,10 +58,11 @@ import SecoesDoCard from '@/components/tomador/SecoesDoCard'
 import Complementos from '@/components/analise/Complementos'
 import { nomeArea, etapaDoCard } from '@/lib/card/secoes'
 import RetratoDoFluxo from '@/components/tomador/RetratoDoFluxo'
+import Lembretes from '@/components/lembretes/Lembretes'
 /** O formulário por área (SecoesDoCard) saiu da tela em 29/09/2026; `true` o traz de volta. */
 const FLUXO_ANTIGO = false
 
-type Gaveta = 'visao' | 'fluxo' | 'cadastro' | 'operacoes' | 'analise' | 'complemento' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos' | 'linha'
+type Gaveta = 'visao' | 'fluxo' | 'lembretes' | 'cadastro' | 'operacoes' | 'analise' | 'complemento' | 'serasa' | 'grupo' | 'demonstracoes' | 'documentos' | 'linha'
 
 /** Operações que COMPROMETEM limite. As demais (Em Análise, Para Analisar,
  *  Recusado, Perdido) não seguram capacidade e não entram na barra. */
@@ -112,7 +113,17 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
     const g = new URLSearchParams(window.location.search).get('g')
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (g === 'fluxo') setGaveta('fluxo')
+    // `?g=lembretes`: é para onde o sino e o celular mandam (30/09/2026).
+    if (g === 'lembretes') setGaveta('lembretes')
   }, [])
+  /* Quantos lembretes em aberto: o número ao lado da gaveta, que é o que faz
+     alguém abrir. Conta de novo ao sair da gaveta (pode ter resolvido lá). */
+  const [nLembretes, setNLembretes] = useState(0)
+  useEffect(() => {
+    createClient().from('lembretes').select('id', { count: 'exact', head: true })
+      .eq('tomador_id', id).in('status', ['aberto', 'parcial'])
+      .then(({ count }) => setNLembretes(count ?? 0))
+  }, [id, gaveta])
   // O editor do organograma (sócios, diretores, PDF, Excel): o mesmo de sempre,
   // aberto daqui de dentro. Ele pediu em 30/08 que voltasse para o tomador.
   const [editorOrg, setEditorOrg] = useState(false)
@@ -439,6 +450,8 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
     { g: 'fluxo', nome: 'Fluxo por área', ico: <IcoCheck />, meta: nomeArea(etapaDoCard(tomador.central_area, faseDaFila)) },
     // A edição do cadastro mora AQUI desde 30/08/2026, e não mais no modal da
     // lista: ordem dele, "tudo deve ser feito na tela quando clicar na linha".
+    // Lembretes (30/09/2026): o do robô (documento faltante) e os de cada pessoa.
+    { g: 'lembretes', nome: 'Lembretes', ico: <IcoRelogio />, meta: nLembretes ? undefined : 'nenhum em aberto', badge: nLembretes ? String(nLembretes) : undefined },
     { g: 'cadastro', nome: 'Cadastro', ico: <IcoCarteira /> },
     { g: 'operacoes', nome: 'Operações', ico: <IcoDoc />, badge: String(operacoes.length) },
     {
@@ -766,6 +779,8 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
 
           {/* A mesma seção do relatório (Acervo e Mesa), ligada à análise vigente:
               quem abre o tomador lê a complementar sem ir ao relatório. */}
+          {gaveta === 'lembretes' && <Lembretes tomadorId={id} titulo="Lembretes do tomador" />}
+
           {gaveta === 'complemento' && <>
             {fichaDaHolding && tomador.holding && <AvisoFichaHolding nome={tomador.holding.razao_social} />}
             {ficha ? <Complementos ficha={ficha} /> : <SecaoAnalise ficha={null} confronto={null} />}

@@ -55,7 +55,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "avisos:ensaio": "node scripts/ensaio-avisos-pedido.mjs"
+    "avisos:ensaio": "node scripts/ensaio-avisos-pedido.mjs",
+    "sugerir:test": "tsc -p scripts/tsconfig.teste-sugerir.json && node scripts/teste-sugerir-caso.cjs",
+    "juntar:ensaio": "tsc -p scripts/tsconfig.ensaio-juntar.json && node scripts/ensaio-juntar-email.cjs",
+    "push:test": "tsc -p scripts/tsconfig.teste-push.json && node scripts/teste-push.cjs",
+    "lembretes:ensaio": "node scripts/ensaio-lembretes.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",

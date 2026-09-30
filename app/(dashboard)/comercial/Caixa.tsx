@@ -39,6 +39,7 @@ import { usePermissoes } from '@/lib/context/permissoes-context'
 import { pistasDoEmail } from '@/lib/casos/pistas'
 import { lerChecklistPorNome, type ItemCatalogo } from '@/lib/casos/checklist'
 import { cor } from '@/lib/ui/painel'
+import JuntarAoCaso from '@/components/comercial/JuntarAoCaso'
 
 export interface EmailCaixa {
   id: string
@@ -64,6 +65,10 @@ export interface EmailCaixa {
   estado_por: string | null
   estado_erro: string | null
   caso_id: string | null
+  /** Pedido de juntar a um caso existente, à espera do Carteiro (30/09/2026). */
+  juntar_ao_caso?: string | null
+  /** E-mail filho: entrou num caso que já existia. */
+  juntado_em?: string | null
   visto_em: string
   /** Preenchido = não está mais na Caixa de Entrada do Outlook. */
   saiu_em: string | null
@@ -139,7 +144,7 @@ const desde = (iso: string | null) => {
 const nomeDaCaixa = (c: Conta) => c.apelido || c.dono_nome || c.conta
 
 const CAMPOS_EMAIL =
-  'id, origem, conta_id, conta, entry_id, assunto, de, email_de, recebido_em, nao_lido, previa, corpo, corpo_pedido_em, corpo_em, anexos, anexos_uteis, serve, motivo, estado, estado_em, estado_por, estado_erro, caso_id, visto_em, saiu_em'
+  'id, origem, conta_id, conta, entry_id, assunto, de, email_de, recebido_em, nao_lido, previa, corpo, corpo_pedido_em, corpo_em, anexos, anexos_uteis, serve, motivo, estado, estado_em, estado_por, estado_erro, caso_id, visto_em, saiu_em, juntar_ao_caso, juntado_em'
 
 /* A PESQUISA (14/09/2026). Pedido dele: "digitar o nome que eu quero, e
    selecionar de quem eu recebi". Sem acento e sem caixa, porque ninguém digita
@@ -768,7 +773,7 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
                     )}
                     {e.estado === 'a_trazer' && (
                       <div style={{ fontSize: 11.5, color: '#8a5a00', marginTop: 4 }}>
-                        Esperando a máquina trazer…
+                        {e.juntar_ao_caso ? 'Esperando a máquina trazer e juntar ao caso…' : 'Esperando a máquina trazer…'}
                       </div>
                     )}
                     {e.estado === 'erro' && (
@@ -776,7 +781,7 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
                     )}
                     {e.estado === 'trazido' && (
                       <div style={{ fontSize: 11.5, color: 'var(--green)', marginTop: 4 }}>
-                        Virou caso{e.estado_por ? ` · ${e.estado_por}` : ''}
+                        {e.juntado_em ? 'Juntado a um caso' : 'Virou caso'}{e.estado_por ? ` · ${e.estado_por}` : ''}
                       </div>
                     )}
                     {e.estado === 'tratado' && (
@@ -820,8 +825,18 @@ export default function Caixa({ aoAbrirCaso }: { aoAbrirCaso: () => void }) {
                       disabled={atual.estado === 'a_trazer' || ocupado === atual.id}
                       onClick={() => agir('trazer', [atual.id]).then(aoAbrirCaso)}
                     >
-                      {atual.estado === 'a_trazer' ? 'Trazendo…' : 'Trazer para a esteira'}
+                      {atual.estado === 'a_trazer' ? (atual.juntar_ao_caso ? 'Juntando…' : 'Trazendo…') : 'Trazer para a esteira'}
                     </button>
+                  )}
+                  {/* JUNTAR A UM CASO QUE JÁ EXISTE (30/09/2026): a resposta da
+                      corretora com o que faltava não abre análise nova. A tela
+                      sugere o caso provável; quem junta é a pessoa. */}
+                  {!atual.caso_id && atual.estado !== 'a_trazer' && (
+                    <JuntarAoCaso
+                      emailId={atual.id}
+                      ocupado={ocupado === atual.id}
+                      aoJuntar={(casoId) => agir('juntar', [atual.id], { caso_id: casoId })}
+                    />
                   )}
                   {!atual.caso_id && (
                     <button

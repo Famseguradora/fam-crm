@@ -41,6 +41,36 @@ export function dataDoEmail(txt: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString()
 }
 
+/* A LINHA DA CAIXA de um e-mail que entrou sem passar por ela (upload, arrasto
+   do Outlook). Mora aqui porque abrir o caso e juntar ao caso escrevem a mesma
+   linha, e duas cópias divergiriam no primeiro campo novo. */
+export function linhaDeCaixaDoUpload(email: EmailLido, bruto: Buffer, assunto: string, uteis: number) {
+  const agora = new Date().toISOString()
+  return {
+    origem: 'upload',
+    message_id: email.message_id,
+    assunto,
+    de: email.de || null,
+    email_de: email.email_de || null,
+    para: email.para || null,
+    copia: email.copia || null,
+    recebido_em: dataDoEmail(email.data),
+    previa: (email.corpo || '').slice(0, 400) || null,
+    corpo: email.corpo || null,
+    corpo_em: agora,
+    anexos: email.anexos.map((a) => ({
+      nome: a.nome,
+      kb: Math.round(a.dados.length / 1024),
+      embutido: a.embutido,
+    })),
+    anexos_uteis: uteis,
+    tamanho_kb: Math.round(bruto.length / 1024),
+    serve: true,
+    estado: 'trazido',
+    estado_em: agora,
+  }
+}
+
 export interface AutorDoCaso {
   auth_id: string | null
   nome: string | null
@@ -312,28 +342,8 @@ export async function abrirCasoPorEmail(
     const { data: nova } = await supabase
       .from('emails_caixa')
       .insert({
-        origem: 'upload',
-        message_id: email.message_id,
-        assunto,
-        de: email.de || null,
-        email_de: email.email_de || null,
-        para: email.para || null,
-        copia: email.copia || null,
-        recebido_em: dataDoEmail(email.data),
-        previa: (email.corpo || '').slice(0, 400) || null,
-        corpo: email.corpo || null,
-        corpo_em: new Date().toISOString(),
-        anexos: email.anexos.map((a) => ({
-          nome: a.nome,
-          kb: Math.round(a.dados.length / 1024),
-          embutido: a.embutido,
-        })),
-        anexos_uteis: documentos.length,
-        tamanho_kb: Math.round(entrada.bruto.length / 1024),
-        serve: true,
+        ...linhaDeCaixaDoUpload(email, entrada.bruto, assunto, documentos.length),
         motivo: 'Subido à mão no CRM.',
-        estado: 'trazido',
-        estado_em: new Date().toISOString(),
         estado_por: entrada.autor.nome,
         caso_id: caso.id,
       })

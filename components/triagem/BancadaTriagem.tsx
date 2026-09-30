@@ -45,6 +45,13 @@ import { cor, raio } from '@/lib/ui/painel'
 import SociosSerasa, { type ResumoSocios } from '@/components/serasa/SociosSerasa'
 import { FaixaDaArea, Instrumentos, Instrumento } from '@/components/painel/Faixa'
 import { type PedidoSerasa, SERASA_ABERTO, situacaoSerasa } from '@/lib/serasa/pedido'
+import { lerArrastoDoOutlook, FORMATO_ARRASTO } from '@/lib/email/arrasto-outlook'
+import ChegouParaOCaso from '@/components/triagem/ChegouParaOCaso'
+import Lembretes from '@/components/lembretes/Lembretes'
+
+/* Por onde o documento avulso chegou. É o que deixa histórico quando não há
+   e-mail (pedido de 30/09/2026); o texto vai para o detalhe do documento. */
+const MEIOS = ['WhatsApp', 'Entregue em mãos', 'Portal da corretora', 'Link de nuvem', 'Pendrive ou mídia', 'Outro meio']
 
 const CLASSES: { valor: string; rotulo: string }[] = [
   { valor: 'contabil', rotulo: 'Demonstração contábil' },
@@ -217,6 +224,21 @@ select.bt-in { padding-right: 6px; }
   cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; }
 .bt-abre small { margin-left: auto; font-size: 11.5px; font-weight: 600; color: ${cor.acao}; }
 
+.bt-tl { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid ${cor.bordaSuave}; }
+.bt-tl li { position: relative; padding: 0 0 12px 10px; }
+.bt-tl li:last-child { padding-bottom: 0; }
+.bt-tl li::before { content: ''; position: absolute; left: -21px; top: 4px; width: 10px; height: 10px; border-radius: 50%;
+  background: ${cor.papel}; border: 2px solid ${cor.acaoClara}; }
+.bt-tl li.matriz::before { border-color: ${cor.ouro}; background: ${cor.ouro}; }
+.bt-tl li.avulso::before { border-color: ${cor.textoFraco}; }
+.bt-tl-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bt-tl-selo { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; border: 1px solid ${cor.borda}; color: ${cor.textoSub}; }
+.bt-tl-selo.matriz { border-color: ${cor.ouro}; color: ${cor.ouroTexto}; }
+.bt-tl-selo.email { border-color: ${cor.acaoClara}; color: ${cor.acao}; }
+.bt-tl-quando { font-size: 11.5px; color: ${cor.textoFraco}; font-variant-numeric: tabular-nums; }
+.bt-tl-titulo { font-size: 12.5px; font-weight: 600; color: ${cor.tinta}; margin-top: 3px; overflow-wrap: anywhere; }
+.bt-tl-quem, .bt-tl-trouxe { font-size: 11.5px; color: ${cor.textoSub}; margin-top: 2px; overflow-wrap: anywhere; }
+
 @container (max-width: 980px) {
   .bt-grade { grid-template-columns: minmax(0,1fr); }
 }
@@ -288,6 +310,10 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
   const [subindo, setSubindo] = useState(false)
   const [arrastando, setArrastando] = useState(false)
   const seletor = useRef<HTMLInputElement>(null)
+  // Por onde o documento avulso chegou: sem e-mail, é isto que deixa histórico.
+  const [meio, setMeio] = useState('')
+  // Sobe a cada entrada nova, para a linha do tempo recarregar.
+  const [versaoChegadas, setVersaoChegadas] = useState(0)
 
   /* Documentos e checklist, sem tocar no rascunho do passo 1: é o que recarrega
      quando o PDF do Serasa chega, com a pessoa talvez digitando lá em cima. */
@@ -443,29 +469,124 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
   /* PASSO 2. Os arquivos que chegaram depois do e-mail. A classe é escolhida
      ANTES de soltar o arquivo, de propósito: é ela que faz o item do checklist
      cair, e adivinhar pelo nome é justamente o que erra. */
-  const anexar = useCallback(async (arquivos: FileList | File[]) => {
-    const lista = Array.from(arquivos)
-    if (!lista.length) return
-    setSubindo(true); setErro(''); setRecado('')
-    const corpo = new FormData()
-    corpo.append('classe', classeNova)
-    for (const a of lista) corpo.append('arquivo', a)
-    try {
-      const r = await fetch(`/api/casos/${id}/documentos`, { method: 'POST', body: corpo })
-      const j = await r.json()
-      if (!r.ok) { setErro(j.erro ?? 'Não consegui anexar.'); setSubindo(false); return }
-      setRecado(
-        `${j.entraram} documento(s) anexado(s)` +
-        (j.itens_marcados?.length ? ', e a exigência correspondente foi marcada como recebida.' : '.') +
-        (j.no_tomador ? ' Como a triagem já foi concluída, eles nasceram direto na ficha do tomador.' : ''),
-      )
-      if (j.aviso) setErro(j.aviso)
-      await carregar()
-    } catch {
-      setErro('A conexão caiu no meio do envio. Confira a lista e tente de novo.')
+  /* E-MAIL SOLTO AQUI VIRA E-MAIL DO CASO (30/09/2026), e não "outro
+     documento". Pedido dele: a resposta da corretora com o que faltava entra
+     NO MESMO card, com os anexos abertos e o texto guardado. Quem decide se é
+     e-mail é o servidor, pelo conteúdo; aqui só se separa pelo nome o que vai
+     para cada rota. Sem extensão (o arrasto do Outlook clássico) vai como
+     e-mail: é o formato que ele monta. */
+  const pareceEmail = (f: File) => /\.(msg|eml)$/i.test(f.name) || !/\.[^.\s]+$/.test(f.name)
+
+  const recadoDoJuntar = (j: {
+    documentos?: number; resolveu?: string[]; analise_concluida?: boolean; ja_estava?: boolean
+    caso?: { numero?: number }; falhas?: string[]
+  }) => {
+    if (j.ja_estava) return 'Este e-mail já estava neste caso: nada foi duplicado.'
+    return `E-mail juntado ao caso, com ${j.documentos ?? 0} anexo(s)` +
+      (j.resolveu?.length ? `. Resolveu: ${j.resolveu.join(', ')}.` : '.') +
+      (j.analise_concluida
+        ? ' A análise deste caso já está pronta: os documentos foram para a ficha do tomador. Para lê-los contra a análise, use a Análise complementar no relatório.'
+        : ' A esteira baixa os arquivos para a pasta e refaz a triagem sozinha.')
+  }
+
+  const juntarEmails = useCallback(async (emails: File[] | null, bilhete?: string) => {
+    const recados: string[] = []
+    const erros: string[] = []
+    /* Arquivo sem extensão que o servidor disse NÃO ser e-mail volta para o
+       caminho do documento avulso, em vez de se perder com um erro. */
+    const naoEram: File[] = []
+    const pedidos: { rotulo: string; arquivo?: File; init: RequestInit }[] = bilhete
+      ? [{ rotulo: 'e-mail do Outlook', init: { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ arrasto: bilhete }) } }]
+      : (emails ?? []).map((f) => {
+          const corpo = new FormData()
+          corpo.append('email', f)
+          return { rotulo: f.name || 'e-mail', arquivo: f, init: { method: 'POST', body: corpo } }
+        })
+    for (const p of pedidos) {
+      try {
+        const r = await fetch(`/api/casos/${id}/email`, p.init)
+        const j = await r.json()
+        if (!r.ok && p.arquivo && !/\.(msg|eml)$/i.test(p.arquivo.name) && /não é um e-mail/.test(j.erro ?? '')) {
+          naoEram.push(p.arquivo)
+          continue
+        }
+        if (!r.ok) {
+          erros.push(j.conectar
+            ? 'Sua caixa do Outlook ainda não está ligada ao CRM. Salve o e-mail e solte o arquivo aqui, ou ligue a caixa na Entrada de pedidos.'
+            : `${p.rotulo}: ${j.erro ?? 'não consegui juntar.'}`)
+          continue
+        }
+        recados.push(recadoDoJuntar(j))
+        if (j.falhas?.length) erros.push(`Ficaram de fora: ${j.falhas.join(' · ')}`)
+      } catch {
+        erros.push(`${p.rotulo}: a conexão caiu no meio do envio.`)
+      }
     }
+    return { recados, erros, naoEram }
+  }, [id])
+
+  const anexar = useCallback(async (arquivos: FileList | File[], bilhete?: string) => {
+    const lista = Array.from(arquivos)
+    if (!lista.length && !bilhete) return
+    setSubindo(true); setErro(''); setRecado('')
+    const emails = lista.filter(pareceEmail)
+    const avulsos = lista.filter((f) => !pareceEmail(f))
+    const recados: string[] = []
+    const erros: string[] = []
+
+    if (emails.length || bilhete) {
+      const r = await juntarEmails(emails, bilhete)
+      recados.push(...r.recados); erros.push(...r.erros)
+      avulsos.push(...r.naoEram)
+    }
+
+    if (avulsos.length) {
+      const corpo = new FormData()
+      corpo.append('classe', classeNova)
+      if (meio) corpo.append('meio', meio)
+      for (const a of avulsos) corpo.append('arquivo', a)
+      try {
+        const r = await fetch(`/api/casos/${id}/documentos`, { method: 'POST', body: corpo })
+        const j = await r.json()
+        if (!r.ok) erros.push(j.erro ?? 'Não consegui anexar.')
+        else {
+          recados.push(
+            `${j.entraram} documento(s) anexado(s)` +
+            (j.itens_marcados?.length ? ', e a exigência correspondente foi marcada como recebida.' : '.') +
+            (j.no_tomador ? ' Como a triagem já foi concluída, eles nasceram direto na ficha do tomador.' : ''),
+          )
+          if (j.aviso) erros.push(j.aviso)
+        }
+      } catch {
+        erros.push('A conexão caiu no meio do envio. Confira a lista e tente de novo.')
+      }
+    }
+
+    setRecado(recados.join(' '))
+    setErro(erros.join(' '))
+    setVersaoChegadas((v) => v + 1)
+    await carregar()
     setSubindo(false)
-  }, [classeNova, id, carregar])
+  }, [classeNova, meio, id, carregar, juntarEmails])
+
+  /* O QUE CAIU NA ÁREA, procurado nos DOIS lugares, como na Entrada de
+     pedidos: o e-mail do Outlook clássico às vezes só vem em `items`, e o do
+     Novo Outlook não vem como arquivo, vem como bilhete com o id da mensagem. */
+  const soltou = (dt: DataTransfer) => {
+    const caiu: File[] = dt.files?.length ? Array.from(dt.files) : []
+    if (!caiu.length) {
+      for (const item of Array.from(dt.items ?? [])) {
+        if (item.kind !== 'file') continue
+        const f = item.getAsFile()
+        if (f) caiu.push(f)
+      }
+    }
+    if (caiu.length) { anexar(caiu); return }
+    let bilhete = ''
+    try { bilhete = dt.getData(FORMATO_ARRASTO) } catch { /* segue */ }
+    if (lerArrastoDoOutlook(bilhete).length) { anexar([], bilhete); return }
+    setErro('Nada chegou do que foi solto. Se veio do Outlook, salve o e-mail e solte o arquivo, ou use o clique para escolher.')
+  }
 
   // As duas funções abaixo pintam a tela antes de a gravação voltar (a espera
   // por clique tornaria o checklist arrastado). Mas se a gravação falhar, a tela
@@ -821,7 +942,9 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
           {/* ══ PASSO 2 · OS DOCUMENTOS ════════════════════════════════════ */}
           <div className="bt-bloco">
             <Passo n={2} titulo="Os documentos" pronto={docs.length > 0}>
-              O que veio no e-mail já está aqui. O Serasa e o que faltar, você solta abaixo.
+              O que veio no e-mail já está aqui. A resposta da corretora com o que faltava, solte o
+              e-mail inteiro: ele entra neste caso, não abre análise nova. Veio por outro meio? Solte o
+              arquivo e diga por onde chegou.
             </Passo>
 
             {podeEditar && (
@@ -829,19 +952,27 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
                 className={`bt-solta${arrastando ? ' em' : ''}`}
                 onDragOver={(e) => { e.preventDefault(); setArrastando(true) }}
                 onDragLeave={() => setArrastando(false)}
-                onDrop={(e) => { e.preventDefault(); setArrastando(false); anexar(e.dataTransfer.files) }}
+                onDrop={(e) => { e.preventDefault(); setArrastando(false); soltou(e.dataTransfer) }}
                 onClick={() => seletor.current?.click()}
                 style={{ cursor: subindo ? 'progress' : 'pointer' }}
               >
                 <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-                  <b>{subindo ? 'Enviando…' : 'Solte os arquivos aqui, ou clique para escolher'}</b>
-                  <div><span>PDF, Excel, imagem. Até 50 MB cada. Vários de uma vez.</span></div>
+                  <b>{subindo ? 'Enviando…' : 'Solte o e-mail ou os arquivos aqui, ou clique para escolher'}</b>
+                  <div><span>E-mail direto do Outlook (.msg, .eml). PDF, Excel, imagem. Até 50 MB cada.</span></div>
                 </div>
                 {/* A classe é escolhida ANTES de soltar: é ela que marca o item do checklist. */}
-                <label className="bt-campo" onClick={(e) => e.stopPropagation()} style={{ flex: '0 1 220px' }}>
+                <label className="bt-campo" onClick={(e) => e.stopPropagation()} style={{ flex: '0 1 200px' }}>
                   <span style={{ fontSize: 11.5, color: cor.textoFraco }}>O que você vai anexar</span>
                   <select className="bt-in mini" value={classeNova} onChange={(e) => setClasseNova(e.target.value)}>
                     {CLASSES.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo}</option>)}
+                  </select>
+                </label>
+                {/* Só vale para arquivo avulso: o e-mail já carrega o próprio histórico. */}
+                <label className="bt-campo" onClick={(e) => e.stopPropagation()} style={{ flex: '0 1 180px' }}>
+                  <span style={{ fontSize: 11.5, color: cor.textoFraco }}>Chegou por (sem e-mail)</span>
+                  <select className="bt-in mini" value={meio} onChange={(e) => setMeio(e.target.value)}>
+                    <option value="">Não informar</option>
+                    {MEIOS.map((m) => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </label>
                 <input
@@ -887,6 +1018,17 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
                 </table>
               </div>
             )}
+          </div>
+
+          {/* ══ O QUE CHEGOU · a matriz com o selo, os e-mails juntados e os avulsos ══ */}
+          <div className="bt-bloco">
+            <div className="bt-passo" style={{ marginBottom: 10 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <h4>O que chegou para este caso</h4>
+                <p>O e-mail que abriu o caso leva o selo de matriz. Tudo que chega depois fica aqui, com quem trouxe e o que veio.</p>
+              </div>
+            </div>
+            <ChegouParaOCaso casoId={id} versao={versaoChegadas} />
           </div>
         </div>
 
@@ -957,6 +1099,13 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
                 {salvando ? 'Mandando…' : 'Mandar para a análise'}
               </button>
             )}
+          </div>
+
+          {/* LEMBRETES DO CASO (30/09/2026): o do robô nasce do documento que falta
+              aqui no checklist e fecha sozinho quando ele chega. Com o tomador já
+              cadastrado, mostra também os lembretes da ficha dele. */}
+          <div className="bt-bloco">
+            <Lembretes casoId={id} tomadorId={caso.tomador_id} titulo="Lembretes" />
           </div>
 
           {/* O e-mail que abriu o caso: é onde moram corretora, produto e condições.

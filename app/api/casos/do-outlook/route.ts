@@ -27,10 +27,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { recusarOutraOrigem } from '@/lib/seguranca/mesma-origem'
-import { configMS, renovar, decifrar, cifrar, baixarMIME } from '@/lib/ms/graph'
+import { baixarMIME } from '@/lib/ms/graph'
+import { acessoDaPessoa } from '@/lib/ms/acesso'
 import { lerArrastoDoOutlook, MAX_BYTES_ARRASTO } from '@/lib/email/arrasto-outlook'
 import { abrirCasoPorEmail } from '@/lib/casos/abrir-por-email'
-import { lerApp } from '@/lib/ms/app'
 
 export const runtime = 'nodejs'
 /* Baixar um e-mail de 50 MB do Microsoft 365 e guardar anexo por anexo passa
@@ -59,61 +59,15 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const admin = await createAdminClient()
-  const cfg = configMS(undefined, await lerApp(admin))
-  if (!cfg.ok) {
-    return NextResponse.json(
-      { erro: 'A busca no Outlook ainda não foi ligada neste CRM.', falta: cfg.falta },
-      { status: 503 },
-    )
-  }
-  const { data: conexao } = await admin
-    .from('ms_conexoes')
-    .select('conta, refresh_cifrado')
-    .eq('auth_id', user.id)
-    .maybeSingle()
-
-  if (!conexao) {
-    return NextResponse.json(
-      { erro: 'Sua caixa do Outlook ainda não está ligada ao CRM.', conectar: true },
-      { status: 428 },
-    )
-  }
-
-  // ── o token de acesso, pedido agora e esquecido depois ────────────────────
-  let acesso: string
-  try {
-    const tok = await renovar(cfg.cfg, decifrar(conexao.refresh_cifrado as string))
-    if (tok.error || !tok.access_token) {
-      await admin.from('ms_conexoes')
-        .update({ falha: tok.error_description ?? tok.error ?? 'refresh recusado' })
-        .eq('auth_id', user.id)
-      return NextResponse.json(
-        { erro: 'A permissão da sua caixa expirou. Conecte de novo (é um clique).', conectar: true },
-        { status: 428 },
-      )
-    }
-    acesso = tok.access_token
-    /* A Microsoft costuma devolver um refresh NOVO a cada renovação, e o
-       antigo morre em algumas rodadas. Não guardar o novo é ver a conexão
-       "expirar sozinha" dali a alguns dias, sem explicação. */
-    if (tok.refresh_token) {
-      await admin.from('ms_conexoes')
-        .update({ refresh_cifrado: cifrar(tok.refresh_token), usado_em: new Date().toISOString(), falha: null })
-        .eq('auth_id', user.id)
-    } else {
-      await admin.from('ms_conexoes').update({ usado_em: new Date().toISOString(), falha: null }).eq('auth_id', user.id)
-    }
-  } catch (e) {
-    return NextResponse.json(
-      { erro: 'Não consegui usar a permissão guardada. Conecte a caixa de novo.', conectar: true, detalhe: e instanceof Error ? e.message : '' },
-      { status: 428 },
-    )
-  }
+  /* O token da pessoa: renovado, guardado e esquecido em `lib/ms/acesso.ts`,
+     a mesma peça que o "juntar e-mail ao caso" usa. */
+  const ms = await acessoDaPessoa(await createAdminClient(), user.id)
+  if (!ms.ok) return NextResponse.json(ms.corpo, { status: ms.status })
+  const acesso = ms.acesso
 
   const { data: quem } = await supabase.from('usuarios').select('nome').eq('auth_id', user.id).maybeSingle()
   const autor = { auth_id: user.id, nome: (quem as { nome: string | null } | null)?.nome ?? user.email ?? null }
-  const minhaCaixa = String(conexao.conta ?? '').toLowerCase()
+  const minhaCaixa = ms.conta
 
   const recibos: unknown[] = []
   for (const alvo of arrastados) {

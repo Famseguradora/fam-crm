@@ -364,7 +364,7 @@ async function trazer(c, pendentes) {
       form.append('email', new Blob([buf]), path.basename(s.caminho))
       const resp = await crm(c, '/api/carteiro/trazer', form)
       if (resp.ok) {
-        console.log(`    Caso #${resp.caso?.numero ?? '?'} aberto, ${resp.documentos ?? 0} documento(s).`)
+        console.log(`    Caso #${resp.caso?.numero ?? '?'} ${resp.juntado ? 'recebeu o e-mail' : 'aberto'}, ${resp.documentos ?? 0} documento(s).`)
         if (resp.falhas?.length) console.log('    Não subiram:', resp.falhas.join(' · '))
       } else {
         console.error('   ', resp.erro)

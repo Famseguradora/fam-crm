@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "outDir": "../.tmp-sugerir",
+    "rootDir": "..",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "jsx": "react-jsx",
+    "plugins": []
+  },
+  "include": ["../lib/casos/sugerir-caso.ts"],
+  "exclude": []
+}

@@ -12,6 +12,7 @@ import InstallPrompt from './InstallPrompt'
 import NewsTicker from './NewsTicker'
 import MarketTicker from './MarketTicker'
 import GestorGlobal from '@/components/ia/GestorGlobal'
+import Sino from '@/components/lembretes/Sino'
 
 const IS_SANDBOX = process.env.NEXT_PUBLIC_SANDBOX === 'true'
 
@@ -179,6 +180,16 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
   async function handleLogout() {
     // No sandbox não há login real; "sair" apenas recarrega o ambiente fake.
     if (IS_SANDBOX) { window.location.reload(); return }
+    /* Quem sai leva os lembretes do celular junto (30/09/2026): o próximo a
+       entrar neste aparelho não recebe os avisos de quem saiu. */
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration()
+      const insc = await reg?.pushManager?.getSubscription()
+      if (insc) {
+        await fetch('/api/push/inscricao', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint: insc.endpoint }) })
+        await insc.unsubscribe()
+      }
+    } catch { /* sem push neste navegador: nada a desligar */ }
     await supabase.auth.signOut()
     router.push('/login')
     router.refresh()
@@ -433,10 +444,12 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
               >Resetar</button>
             </div>
           )}
+          {/* O sino dos lembretes (30/09/2026): pessoal, ao vivo, e é ele que liga o aviso no celular. */}
+          {!IS_SANDBOX && <Sino userId={userId} />}
           {!isMobile && <div style={{ color: '#a0c0e8', fontSize: 13 }}>{hoje}</div>}
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
-            borderLeft: '1px solid rgba(255,255,255,.15)', paddingLeft: 20,
+            borderLeft: '1px solid rgba(255,255,255,.15)', paddingLeft: isMobile ? 10 : 20,
           }}>
             <div style={{
               width: 32, height: 32,
@@ -448,12 +461,14 @@ export default function DashboardShell({ nomeUsuario, perfilUsuario, proprietari
             }}>
               {nomeUsuario.charAt(0).toUpperCase()}
             </div>
-            <div style={{
-              color: '#e8b84b', fontSize: 12, fontWeight: 700,
-              textTransform: 'uppercase', letterSpacing: '1px',
-            }}>
-              {isAdmin ? 'Admin.' : perfilUsuario === 'leitura' ? '👁 Só leitura' : 'Usuário'}
-            </div>
+            {!isMobile && (
+              <div style={{
+                color: '#e8b84b', fontSize: 12, fontWeight: 700,
+                textTransform: 'uppercase', letterSpacing: '1px',
+              }}>
+                {isAdmin ? 'Admin.' : perfilUsuario === 'leitura' ? '👁 Só leitura' : 'Usuário'}
+              </div>
+            )}
             <button
               onClick={handleLogout}
               title="Sair"

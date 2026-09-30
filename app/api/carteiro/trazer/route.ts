@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { abrirCasoPorEmail, MAX_BYTES_EMAIL } from '@/lib/casos/abrir-por-email'
 import { ehArquivoDeEmail } from '@/lib/email/ler-email'
+import { juntarEmailAoCaso } from '@/lib/casos/juntar-email'
 
 export const runtime = 'nodejs'
 
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
      a esteira encheria por fora da decisão de uma pessoa. */
   const { data: linha } = await sb
     .from('emails_caixa')
-    .select('id, estado, caso_id, assunto')
+    .select('id, estado, caso_id, assunto, juntar_ao_caso')
     .eq('id', caixaId)
     .maybeSingle()
   if (!linha) return NextResponse.json({ erro: 'E-mail não está na caixa.' }, { status: 404 })
@@ -66,6 +67,32 @@ export async function POST(req: NextRequest) {
   }
   if (linha.estado !== 'a_trazer') {
     return NextResponse.json({ erro: `Ninguém pediu para trazer este e-mail (está "${linha.estado}").` }, { status: 409 })
+  }
+
+  /* PEDIRAM PARA JUNTAR, NÃO PARA ABRIR (30/09/2026). A pessoa escolheu na
+     Caixa o caso a que este e-mail pertence: ele entra lá como e-mail filho,
+     e nenhum caso novo nasce. */
+  if (linha.juntar_ao_caso) {
+    const junto = await juntarEmailAoCaso(sb, {
+      casoId: linha.juntar_ao_caso as string,
+      bruto: Buffer.from(await arquivo.arrayBuffer()),
+      nomeArquivo: arquivo.name,
+      autor: { auth_id: null, nome: quem },
+      emailCaixaId: caixaId,
+    })
+    if (!junto.ok) {
+      await sb
+        .from('emails_caixa')
+        .update({
+          estado: 'erro',
+          estado_em: new Date().toISOString(),
+          estado_erro: (junto.erro ?? 'Não consegui juntar ao caso.').slice(0, 500),
+          juntar_ao_caso: null,
+        })
+        .eq('id', caixaId)
+      return NextResponse.json({ erro: junto.erro }, { status: 422 })
+    }
+    return NextResponse.json({ ok: true, juntado: true, caso: junto.caso, documentos: junto.documentos, falhas: junto.falhas })
   }
 
   const recibo = await abrirCasoPorEmail(sb, {

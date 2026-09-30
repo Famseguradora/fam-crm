@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
        na mesma tela, abririam dois casos do mesmo pedido. */
     const { data, error } = await supabase
       .from('emails_caixa')
-      .update({ estado: 'a_trazer', estado_em: agora, estado_por: nome, estado_erro: null })
+      .update({ estado: 'a_trazer', estado_em: agora, estado_por: nome, estado_erro: null, juntar_ao_caso: null })
       .in('id', ids)
       .is('caso_id', null)
       .in('estado', ['novo', 'tratado', 'erro'])
@@ -61,6 +61,38 @@ export async function POST(req: NextRequest) {
       )
     }
     return NextResponse.json({ ok: true, marcados: data.length, de: ids.length })
+  }
+
+  if (acao === 'juntar') {
+    /* JUNTAR AO CASO QUE JÁ EXISTE (30/09/2026). Mesmo desenho do "trazer":
+       a tela só marca a intenção, e o Carteiro, que tem o .msg na máquina,
+       sobe o arquivo. A diferença é `juntar_ao_caso`, que a rota
+       /api/carteiro/trazer lê para juntar em vez de abrir caso novo.
+       Um e-mail por vez: juntar é decisão sobre UM pedido. */
+    const casoId = String(corpo.caso_id ?? '')
+    if (ids.length !== 1 || !casoId) {
+      return NextResponse.json({ erro: 'Diga qual e-mail e a qual caso ele vai.' }, { status: 422 })
+    }
+    const { data: caso } = await supabase.from('casos').select('id, numero, etapa').eq('id', casoId).maybeSingle()
+    if (!caso) return NextResponse.json({ erro: 'Caso não encontrado.' }, { status: 404 })
+    if (caso.etapa === 'descartado' || caso.etapa === 'encerrado') {
+      return NextResponse.json({ erro: `O caso #${caso.numero} foi ${caso.etapa}.` }, { status: 409 })
+    }
+    const { data, error } = await supabase
+      .from('emails_caixa')
+      .update({ estado: 'a_trazer', estado_em: agora, estado_por: nome, estado_erro: null, juntar_ao_caso: caso.id })
+      .in('id', ids)
+      .is('caso_id', null)
+      .in('estado', ['novo', 'tratado', 'erro'])
+      .select('id')
+    if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
+    if (!data?.length) {
+      return NextResponse.json(
+        { erro: 'Nada mudou. Ou você não tem permissão de escrita, ou o e-mail já está num caso.' },
+        { status: 403 },
+      )
+    }
+    return NextResponse.json({ ok: true, caso: { id: caso.id, numero: caso.numero } })
   }
 
   if (acao === 'tratar') {

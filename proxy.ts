@@ -48,7 +48,9 @@ import { NextResponse, type NextRequest } from 'next/server'
 // alguém deu na tela. Mesma armadilha, mesma linha.
 // De novo: "não exige cookie" NÃO é "aberta". As duas rotas conferem o segredo
 // `CARTEIRO_TOKEN`, e sem a variável configurada respondem 503, nunca 200.
-const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi', '/api/analise/evento', '/api/agente/evento', '/api/analise/pedido', '/api/analise/tomador', '/api/analise/corretoras', '/api/carteiro', '/api/esteira']
+// '/api/lembretes/push' (30/09/2026) é o relógio do Supabase (pg_cron) pedindo
+// o push dos lembretes: sem cookie, com o segredo `LEMBRETES_TOKEN`.
+const publicRoutes = ['/login', '/auth/callback', '/alterar-senha', '/onboarding', '/manifest.webmanifest', '/sw.js', '/api/whatsapp', '/voto', '/api/voto', '/api/axi', '/api/analise/evento', '/api/agente/evento', '/api/analise/pedido', '/api/analise/tomador', '/api/analise/corretoras', '/api/carteiro', '/api/esteira', '/api/lembretes/push']
 
 export async function proxy(request: NextRequest) {
   // MODO SANDBOX: não há sessão Supabase, então o gate de login abaixo

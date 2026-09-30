@@ -179,3 +179,6 @@ propostas/**/node_modules/
 
 # A saida compilada do ensaio da reanalise (npm run reanalise:test)
 .tmp-reanalise/
+.tmp-juntar/
+.tmp-sugerir/
+.tmp-push/
