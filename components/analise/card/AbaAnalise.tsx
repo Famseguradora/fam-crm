@@ -22,7 +22,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { ORDEM, ETAPAS, andamentoDaEtapa, SITUACAO, ordemVale, type Ordem } from '@/lib/analise/esteira'
+import { ORDEM, ETAPAS, andamentoDaEtapa, SITUACAO, ordemVale, eOrdemDoAnalista, type Ordem } from '@/lib/analise/esteira'
 import { dataCurta, desde } from '@/lib/analise/mesa'
 import { maskCNPJ } from '@/lib/utils'
 import { type PropsAba } from './comum'
@@ -131,6 +131,9 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
   const forasDaLista = a ? a.arquivos.filter(x => !escolhidos.includes(x)) : []
   const temPasta = !f.arquivada && a?.onde !== null && !!a
   const podeMandar = quem.podeEscrever && !f.ordem
+  /* Iniciar, refazer, parar: só o analista (ORDENS_DO_ANALISTA, 30/09/2026).
+     Reler a pasta e liberar a triagem continuam com quem ajuda. */
+  const pode = (o: Ordem) => podeMandar && (quem.analista || !eOrdemDoAnalista(o))
   const impedido = rodando || perguntando || (a ? escolhidos.length === 0 : false)
   const oks = (cad?.itens ?? []).filter(i => i.situacao === 'ok' || i.situacao === 'dispensado').length
   const faltam = (cad?.itens ?? []).filter(i => !(i.situacao === 'ok' || i.situacao === 'dispensado'))
@@ -328,7 +331,7 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
           {quem.podeEscrever && ca.status !== 'ok' && (
             <div className="an-bt-linha" style={{ marginTop: 8 }}>
               {ordemVale('iniciar', f.situacao) && (
-                <button type="button" className="an-bt ouro" disabled={!podeMandar || !!ocupado}
+                <button type="button" className="an-bt ouro" disabled={!pode('iniciar') || !!ocupado}
                   onClick={() => { if (window.confirm('Mandar para a análise de crédito com o cadastro parado?\n\nFica registrado que a decisão foi sua.')) mandar('iniciar') }}>
                   Autorizar e mandar para o Crédito
                 </button>
@@ -409,7 +412,7 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
                     placeholder="Ex.: seguir com a opção B, o imóvel entra como ressalva. Em branco, segue com o que está na pasta." />
                 </div>
                 <div className="an-bt-linha">
-                  <button type="button" className="an-bt ouro" disabled={!podeMandar || !!ocupado} onClick={liberar}>
+                  <button type="button" className="an-bt ouro" disabled={!pode('iniciar') || !!ocupado} onClick={liberar}>
                     {ocupado === 'liberar' ? 'Mandando…' : 'Liberar para análise'}
                   </button>
                   <span className="an-bt-nota">
@@ -432,7 +435,7 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
           <div className="an-dica">Etapa {Math.max(1, ETAPAS.findIndex(([id]) => id === f.etapa) + 1)} de {ETAPAS.length - 1}. O andamento aparece na Mesa, na faixa de cima.</div>
           {quem.podeEscrever && (
             <div className="an-bt-linha" style={{ marginTop: 10 }}>
-              <button type="button" className="an-bt forcar" disabled={!podeMandar || !!ocupado} onClick={() => mandar('parar')}>Interromper agora</button>
+              <button type="button" className="an-bt forcar" disabled={!pode('parar') || !!ocupado} onClick={() => mandar('parar')}>Interromper agora</button>
               <span className="an-bt-nota">Derruba a execução e devolve a pasta para a fila, sem apagar nada.</span>
             </div>
           )}
@@ -452,7 +455,7 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
           <h4>Parada por você</h4>
           <div className="an-aviso aviso"><span>⏸</span><span>{f.motivo}</span></div>
           {quem.podeEscrever && <div className="an-bt-linha" style={{ marginTop: 8 }}>
-            <button type="button" className="an-bt" disabled={!podeMandar || !!ocupado} onClick={() => mandar('retomar')}>Voltar para a fila</button>
+            <button type="button" className="an-bt" disabled={!pode('retomar') || !!ocupado} onClick={() => mandar('retomar')}>Voltar para a fila</button>
           </div>}
         </div>
       )}
@@ -500,7 +503,7 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
                   Autorizar e seguir para o Cadastro
                 </button>
               ) : (
-                <button type="button" className="an-bt forcar" disabled={!podeMandar || !!ocupado}
+                <button type="button" className="an-bt forcar" disabled={!pode('forcar') || !!ocupado}
                   onClick={() => { if (window.confirm(`Analisar sem ${(cad?.bloqueios ?? []).map(b => b.nome).join(' e ') || 'os documentos obrigatórios'}?\n\nVou reler a pasta primeiro. Se mesmo assim não achar, começo a análise do mesmo jeito e ela sai apontando o que faltou. Fica registrado que a liberação foi sua.`)) mandar('forcar') }}>
                   Analisar mesmo assim
                 </button>
@@ -549,7 +552,7 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
             </div>
 
             <div className="an-bt-linha">
-              <button type="button" className={`an-bt grande ${bloqueado ? 'forcar' : 'ouro'}`} disabled={!podeMandar || impedido || !!ocupado}
+              <button type="button" className={`an-bt grande ${bloqueado ? 'forcar' : 'ouro'}`} disabled={!pode(ordemPrincipal) || impedido || !!ocupado}
                 onClick={() => {
                   if ((ordemPrincipal === 'forcar' || ordemPrincipal === 'liberar_triagem') && !window.confirm('Seguir mesmo faltando documento obrigatório? Fica registrado que a liberação foi sua.')) return
                   mandar(ordemPrincipal, ordemPrincipal === 'refazer' ? { escopo: 'completa' } : {})
@@ -557,7 +560,8 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
                 {ocupado === ordemPrincipal ? 'Mandando…' : rotuloPrincipal}
               </button>
               <span className="an-bt-nota">
-                {rodando ? 'Já tem uma análise desta pasta rodando.'
+                {quem.podeEscrever && !pode(ordemPrincipal) && !f.ordem ? 'Só o executivo de crédito (ou quem ele liberou) inicia ou refaz a análise.'
+                  : rodando ? 'Já tem uma análise desta pasta rodando.'
                   : perguntando ? 'Responda a pergunta lá em cima: é o "Liberar para análise" que faz ela voltar a rodar.'
                   : f.ordem ? `Esperando o notebook executar "${ORDEM[f.ordem].rotulo.toLowerCase()}".`
                     : a && !escolhidos.length ? 'Marque ao menos um arquivo na aba Arquivos.'
@@ -568,14 +572,14 @@ export default function AbaAnalise({ f, quem, recarregar, aoMandar }: PropsAba &
             </div>
             {f.situacao === 'concluida' && !f.ordem && (
               <div className="an-bt-linha" style={{ marginTop: 6 }}>
-                <button type="button" className="an-bt mini" disabled={!!ocupado} onClick={() => mandar('refazer', { escopo: 'parcial' })}>Refazer só as partes relacionadas</button>
+                <button type="button" className="an-bt mini" disabled={!pode('refazer') || !!ocupado} onClick={() => mandar('refazer', { escopo: 'parcial' })}>Refazer só as partes relacionadas</button>
                 <span className="an-bt-nota">Reaproveita a leitura dos documentos. Score, limite, rating e conclusão são sempre recalculados.</span>
               </div>
             )}
             {!bloqueado && !rodando && f.situacao !== 'concluida' && (
               <div className="an-bt-linha" style={{ marginTop: 6 }}>
                 <button type="button" className="an-bt mini" disabled={!podeMandar || !!ocupado} onClick={() => mandar('reconferir')}>Reler a pasta agora</button>
-                {f.situacao !== 'pausada' && <button type="button" className="an-bt mini" disabled={!podeMandar || !!ocupado} onClick={() => mandar('pausar')}>Parar</button>}
+                {f.situacao !== 'pausada' && <button type="button" className="an-bt mini" disabled={!pode('pausar') || !!ocupado} onClick={() => mandar('pausar')}>Parar</button>}
               </div>
             )}
           </>

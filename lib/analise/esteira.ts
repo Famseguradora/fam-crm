@@ -175,6 +175,16 @@ export const SLA_PADRAO: Record<Fase, number> = { entrada: 1, conferencia: 3, li
 export const ORDENS = ['iniciar', 'pausar', 'retomar', 'parar', 'reconferir', 'forcar', 'ler_pasta', 'refazer', 'publicar', 'liberar_triagem', 'excluir'] as const
 export type Ordem = (typeof ORDENS)[number]
 
+/* AS ORDENS QUE SÃO DO ANALISTA (30/09/2026). Ordem dele: "as análises só
+   podem ser editadas, excluídas ou iniciadas por quem tem poderes para tal".
+   Quem tem é o executivo de crédito e quem ele marcar como analista na tela
+   /usuarios (`fam_e_analista()`). O resto (reler a pasta, liberar a triagem,
+   ler a pasta) continua com quem ajuda: é o trabalho do Cadastro e do
+   Comercial, e a triagem em lote do e-mail depende disso.
+   A trava de verdade é `darOrdem`, no servidor; a tela só esconde o botão. */
+export const ORDENS_DO_ANALISTA: readonly Ordem[] = ['iniciar', 'refazer', 'forcar', 'parar', 'pausar', 'retomar', 'publicar', 'excluir']
+export const eOrdemDoAnalista = (o: string) => (ORDENS_DO_ANALISTA as readonly string[]).includes(o)
+
 export const ORDEM: Record<Ordem, { rotulo: string; de: Situacao[]; explica: string }> = {
   iniciar: {
     rotulo: 'Analisar agora',

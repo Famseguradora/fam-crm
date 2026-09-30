@@ -44,6 +44,9 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ erro: 'Sessão expirada. Entre de novo.' }, { status: 401 })
+  // Antes de criar a linha na esteira: refazer é do analista (ORDENS_DO_ANALISTA).
+  const { data: eAnalista } = await supabase.rpc('fam_e_analista')
+  if (!eAnalista) return NextResponse.json({ erro: 'Só o executivo de crédito (ou quem ele liberou como analista em Usuários) refaz uma análise.' }, { status: 403 })
 
   let corpo: Record<string, unknown> = {}
   try { corpo = await req.json() } catch { /* cai na validação */ }

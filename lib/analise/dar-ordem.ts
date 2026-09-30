@@ -11,7 +11,7 @@
    vem buscá-la. Trava: a sessão de quem chama e a RLS (`fam_pode_escrever`). */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { ORDEM, ORDENS, ordemVale, type Ordem } from '@/lib/analise/esteira'
+import { ORDEM, ORDENS, ordemVale, eOrdemDoAnalista, type Ordem } from '@/lib/analise/esteira'
 
 export type ResultadoOrdem =
   | { ok: true; fila: Record<string, unknown> }
@@ -27,6 +27,19 @@ export async function darOrdem(
      qualquer objeto, e a mensagem de erro quebrava tentando ler o rótulo dele. */
   if (!(ORDENS as readonly string[]).includes(p.ordem)) return { ok: false, status: 422, erro: 'Ordem desconhecida.' }
   const ordem = p.ordem as Ordem
+
+  /* Iniciar, refazer, parar, excluir: só o analista (ver ORDENS_DO_ANALISTA).
+     A RLS de `analise_fila` deixa quem ajuda escrever, porque o Cadastro e o
+     Comercial precisam; por isso a separação é aqui, e não no banco. */
+  if (eOrdemDoAnalista(ordem)) {
+    const { data: eAnalista } = await supabase.rpc('fam_e_analista')
+    if (!eAnalista) {
+      return {
+        ok: false, status: 403,
+        erro: `Só o executivo de crédito (ou quem ele liberou como analista em Usuários) pode ${ORDEM[ordem].rotulo.toLowerCase()}.`,
+      }
+    }
+  }
 
   const { data: alvo } = await supabase
     .from('analise_fila')

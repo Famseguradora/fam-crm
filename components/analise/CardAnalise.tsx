@@ -344,7 +344,7 @@ function RefazerDoAcervo({ f, quem, aoIrParaAba }: { f: FilaRica; quem: Quem; ao
     <div className="an-bloco" style={{ maxWidth: '80ch' }}>
       <h4>Reanalisar</h4>
       {f.analise_id ? (
-        <Reanalisar analiseId={f.analise_id} pasta={f.pasta} nome={nome} podeEscrever={quem.podeEscrever} />
+        <Reanalisar analiseId={f.analise_id} pasta={f.pasta} nome={nome} podeEscrever={quem.analista} />
       ) : (
         <div className="an-dica">Esta pasta ainda não tem análise publicada para reanalisar.</div>
       )}
@@ -793,7 +793,7 @@ export default function CardAnalise({ id }: { id: string }) {
               <button type="button" className="an-bt mini" onClick={() => router.push(`/tomadores/${f.tomador_id}`)} title="O cadastro deste tomador no CRM, com as operações">Cadastro no CRM</button>
             )}
             {/* Vindo do Acervo o card abre no Relatório: o Refazer precisa estar à vista. */}
-            {f.semEsteira && quem.podeEscrever && (
+            {f.semEsteira && quem.analista && (
               <button type="button" className="an-bt mini" onClick={() => irParaAba('analise')} title="Traz a pasta de volta de _concluidas e roda a análise de novo">Refazer a análise</button>
             )}
           </div>

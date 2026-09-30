@@ -40,6 +40,7 @@ export default function UsuariosPage() {
   const [souProprietario, setSouProprietario] = useState(false)
   const [togglingAvisoId, setTogglingAvisoId] = useState<string | null>(null)
   const [togglingAnaliseId, setTogglingAnaliseId] = useState<string | null>(null)
+  const [meuAuthId, setMeuAuthId] = useState<string | null>(null)
 
   // Supabase só é criado dentro de funções (evita SSR durante build)
   const carregarUsuarios = useCallback(async () => {
@@ -54,6 +55,7 @@ export default function UsuariosPage() {
     ])
     setUsuarios(data ?? [])
     setSouProprietario(euRes.data?.proprietario ?? false)
+    setMeuAuthId(user?.id ?? null)
     setCarregando(false)
   }, [])
 
@@ -94,6 +96,25 @@ export default function UsuariosPage() {
     } else {
       setUsuarios(prev => prev.map(x => x.id === u.id ? { ...x, acesso_analise: novo } : x))
     }
+    setTogglingAnaliseId(null)
+  }
+
+  /* LIBERA E TIRA O ANALISTA (30/09/2026). Ordem dele: "as análises de crédito
+     somente eu (executivo de Crédito) ou alguém que eu libere pode editar".
+     Analista é quem inicia, refaz, para, edita, tira da Mesa e aprova a análise
+     (`fam_e_analista()`, e ORDENS_DO_ANALISTA na esteira). Até aqui a marca só
+     mudava por UPDATE no Supabase. Só o proprietário vê o botão, e só para
+     quem já vê a Análise e não é só leitura: a constraint do banco recusa
+     analista sem acesso. Ele não tira a própria marca por aqui, para não se
+     trancar fora por um clique. */
+  async function toggleAnalista(u: Usuario) {
+    if (!souProprietario || u.auth_id === meuAuthId) return
+    const novo = !u.analista_credito
+    if (novo && !window.confirm(`Liberar ${u.nome} como analista de crédito?\n\nEle(a) passa a poder iniciar, refazer, parar, editar, tirar da Mesa e aprovar análises.`)) return
+    setTogglingAnaliseId(u.id)
+    const { error } = await createClient().from('usuarios').update({ analista_credito: novo }).eq('id', u.id)
+    if (error) setMensagem({ tipo: 'erro', texto: `Não consegui mudar a marca de analista: ${error.message}` })
+    else setUsuarios(prev => prev.map(x => x.id === u.id ? { ...x, analista_credito: novo } : x))
     setTogglingAnaliseId(null)
   }
 
@@ -592,6 +613,18 @@ export default function UsuariosPage() {
                           : u.perfil === 'leitura' ? 'Só vê'
                           : u.analista_credito ? 'Analista' : 'Ajuda'}
                       </button>
+                      {/* Libera ou tira o analista: ver toggleAnalista. */}
+                      {u.acesso_analise && u.perfil !== 'leitura' && u.auth_id !== meuAuthId && (
+                        <button onClick={() => toggleAnalista(u)} disabled={togglingAnaliseId === u.id}
+                          title={u.analista_credito ? 'Analista de crédito: inicia, refaz, edita e aprova análises. Clique para tirar.' : 'Liberar como analista de crédito'}
+                          style={{
+                            marginLeft: 6, padding: '5px 9px', borderRadius: 6, cursor: 'pointer', fontSize: 11.5, fontWeight: 600,
+                            fontFamily: "'Calibri','Segoe UI',sans-serif", background: '#fff',
+                            border: `1px solid ${u.analista_credito ? '#1e4080' : '#c5d5e8'}`, color: u.analista_credito ? '#1e4080' : '#6080a0',
+                          }}>
+                          {u.analista_credito ? 'Tirar analista' : 'Tornar analista'}
+                        </button>
+                      )}
                     </td>
                   )}
                   <td style={{ fontSize: 13, color: '#6080a0' }}>{fmtData(u.created_at)}</td>

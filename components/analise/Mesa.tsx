@@ -81,7 +81,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
      enxerga a Mesa inteira e não arrasta card, que foi o pedido literal dele.
      Um `const` só, para as dezenas de usos abaixo não mudarem de forma.
      A trava de verdade é a RLS `fam_ajuda_analise()`. */
-  const { ajudaAnalise } = usePermissoes()
+  const { ajudaAnalise, editaAnalise } = usePermissoes()
   const somenteLeitura = !ajudaAnalise
   const [fila, setFila] = useState<FilaRica[]>([])
   /* OS CASOS EM TRIAGEM  ·  28/09/2026. A coluna "Triagem / Cadastro" saiu do
@@ -431,7 +431,7 @@ export default function Mesa({ aoAbrirAcervo }: { aoAbrirAcervo?: () => void }) 
 
   const parar = async (pasta: string, nome: string) => {
     const alvo = fichaDaPasta(pasta)
-    if (!alvo || somenteLeitura || parando) return
+    if (!alvo || !editaAnalise || parando) return
     if (!window.confirm(`Interromper a análise de ${nome} agora?
 
 Nada do que já foi salvo se perde.`)) return
@@ -1065,7 +1065,8 @@ Nada do que já foi salvo se perde.`)) return
                       </div>
                     )}
 
-                    {!somenteLeitura && alvo && (
+                    {/* Parar é ordem do analista (ORDENS_DO_ANALISTA, 30/09/2026). */}
+                    {editaAnalise && alvo && (
                       <div className="pe">
                         <button type="button" className="an-bt forcar" disabled={parando === x.pasta}
                           onClick={() => parar(x.pasta, x.razao)}>

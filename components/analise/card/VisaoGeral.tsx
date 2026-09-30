@@ -159,15 +159,19 @@ export default function VisaoGeral({ f, ficha, quem, local, recarregar, aoIrPara
         } : undefined}
         acoes={(chaveAnalise && local) || ficha ? (
           <>
-            {chaveAnalise && local && (
+            {/* EDITAR É DO ANALISTA (30/09/2026): o template e o "Editar a
+                análise" só aparecem para ele e para quem ele liberou em
+                /usuarios. Os outros leem o relatório. A trava de verdade é a
+                RLS de `analises` (`fam_e_analista()`). */}
+            {chaveAnalise && local && quem.analista && (
               <a className="pf-bt ouro" href={`${SISTEMA_LOCAL}/analise/${encodeURIComponent(chaveAnalise)}`} target="_blank" rel="noopener"
                 title="Abre a análise no template, onde ela é editada. Só nesta máquina.">Abrir no template</a>
             )}
-            {ficha && !local && (
+            {ficha && (!local || !quem.analista) && (
               <button type="button" className="pf-bt ouro" onClick={() => aoIrParaAba('relatorio')}
                 title="O relatório inteiro, lendo o banco do CRM">Abrir o relatório</button>
             )}
-            {ficha && (
+            {ficha && quem.analista && (
               <button type="button" className="pf-bt" onClick={() => router.push(`/analises/${ficha.id}`)}
                 title="Corrigir os dados desta análise (limite, decisão, rating) e ler o relatório inteiro, sem abrir o template.">Editar a análise</button>
             )}
