@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
+import { recusarCaixaNoAr } from '@/lib/email/so-no-notebook'
 import { custoDoUso } from '@/lib/ia/servidor'
 import { lerVersao, normalizar, reguaVigente, type ParametrosRegua } from '@/lib/email/regua'
 import type { Operacao } from '@/lib/email/comandos'
@@ -108,6 +109,8 @@ function conferir(bruto: unknown, modalidades: string[]): Operacao[] {
 }
 
 export async function POST(req: NextRequest) {
+  const noAr = recusarCaixaNoAr()
+  if (noAr) return noAr
   const recusa = recusarOutraOrigem(req)
   if (recusa) return recusa
   const supabase = await createClient()

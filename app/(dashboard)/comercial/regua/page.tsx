@@ -1,15 +1,13 @@
-'use client'
+/* A RÉGUA DO E-MAIL. A tela mora em ReguaCliente.tsx; no site publicado ela
+   fica fechada junto com a caixa (lib/email/so-no-notebook.ts). */
 
-/* A RÉGUA DO E-MAIL · os parâmetros do Carteiro gerencial.
-   A tela inteira mora em components/comercial/ReguaEmail.tsx; a página só
-   dá o lugar dela no CRM, ao lado da Entrada do Comercial. */
+import { caixaForaDoAr } from '@/lib/email/so-no-notebook'
+import CaixaFechadaNoAr from '@/components/comercial/CaixaFechadaNoAr'
+import ReguaCliente from './ReguaCliente'
 
-import ReguaEmail from '@/components/comercial/ReguaEmail'
+export const dynamic = 'force-dynamic'
 
 export default function ReguaDoEmailPage() {
-  return (
-    <div style={{ padding: '20px 0' }}>
-      <ReguaEmail />
-    </div>
-  )
+  if (caixaForaDoAr()) return <CaixaFechadaNoAr titulo="Régua do e-mail" />
+  return <ReguaCliente />
 }

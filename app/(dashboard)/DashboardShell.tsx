@@ -137,7 +137,7 @@ const CONFIG_ITEMS: {
   proprietarioOnly?: boolean; emailOnly?: string; avisosOnly?: boolean; disabled?: boolean
 }[] = [
   { label: 'Central de Avisos', href: '/configuracoes/avisos', icon: '📢', avisosOnly: true },
-  { label: 'Skills de IA', href: '/configuracoes/skills',  icon: '🧠', proprietarioOnly: false, emailOnly: 'marcodragone@gmail.com', disabled: true },
+  { label: 'Skills de IA', href: '/configuracoes/skills',  icon: '🧠', proprietarioOnly: false, emailOnly: 'marco.dragone@famseguradora.com.br', disabled: true },
   { label: 'Sistema',      href: '/configuracoes/sistema', icon: '⚙️', proprietarioOnly: true },
 ]
 

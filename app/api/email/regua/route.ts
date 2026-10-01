@@ -15,12 +15,15 @@
 // ============================================================================
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { recusarCaixaNoAr } from '@/lib/email/so-no-notebook'
 import { diferencas, validarParametros, type ParametrosRegua } from '@/lib/email/regua'
 import { recusarOutraOrigem } from '@/lib/seguranca/mesma-origem'
 
 export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
+  const noAr = recusarCaixaNoAr()
+  if (noAr) return noAr
   const recusa = recusarOutraOrigem(req)
   if (recusa) return recusa
   const supabase = await createClient()

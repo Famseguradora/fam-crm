@@ -10,6 +10,7 @@
 // ============================================================================
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { recusarCaixaNoAr } from '@/lib/email/so-no-notebook'
 import { sugerirCasos, type CasoCandidato } from '@/lib/casos/sugerir-caso'
 
 export const runtime = 'nodejs'
@@ -17,6 +18,8 @@ export const runtime = 'nodejs'
 const CAMPOS = 'id, numero, assunto, cnpj, razao_social, etapa'
 
 export async function GET(req: NextRequest) {
+  const noAr = recusarCaixaNoAr()
+  if (noAr) return noAr
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ erro: 'Sessão expirada.' }, { status: 401 })

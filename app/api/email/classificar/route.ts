@@ -19,6 +19,7 @@
 // ============================================================================
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { recusarCaixaNoAr } from '@/lib/email/so-no-notebook'
 import { recusarOutraOrigem } from '@/lib/seguranca/mesma-origem'
 
 export const runtime = 'nodejs'
@@ -27,6 +28,8 @@ const TIPOS = ['operacao', 'so_credito', 'nao_demanda', 'sem_apetite'] as const
 type Tipo = (typeof TIPOS)[number]
 
 export async function POST(req: NextRequest) {
+  const noAr = recusarCaixaNoAr()
+  if (noAr) return noAr
   const recusa = recusarOutraOrigem(req)
   if (recusa) return recusa
   const supabase = await createClient()

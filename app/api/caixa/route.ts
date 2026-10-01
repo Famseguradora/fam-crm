@@ -18,10 +18,13 @@
 // ============================================================================
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { recusarCaixaNoAr } from '@/lib/email/so-no-notebook'
 
 export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
+  const noAr = recusarCaixaNoAr()
+  if (noAr) return noAr
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ erro: 'Sessão expirada. Entre de novo.' }, { status: 401 })

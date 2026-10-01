@@ -35,6 +35,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient as criarSupabase } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
+import { recusarCaixaNoAr } from '@/lib/email/so-no-notebook'
 import { custoDoUso, PRECO } from '@/lib/ia/servidor'
 import { gastoDoDia, semApi, travasDaIA } from '@/lib/ia/travas'
 import { recusarOutraOrigem } from '@/lib/seguranca/mesma-origem'
@@ -70,6 +71,8 @@ function traduzirErro(e: unknown): Falha {
 }
 
 export async function POST(req: NextRequest) {
+  const noAr = recusarCaixaNoAr()
+  if (noAr) return noAr
   const recusa = recusarOutraOrigem(req)
   if (recusa) return recusa
 
