@@ -19,6 +19,7 @@ import { createClient } from '@/lib/supabase/client'
 import { ATALHOS_CARD, esperandoDemais, type PedidoIA } from '@/lib/ia/gestao'
 import { dataCurta } from '@/lib/analise/mesa'
 import { type PropsAba } from './comum'
+import { cor, raio } from '@/lib/ui/painel'
 
 const CAMPOS = 'id, pergunta, resposta, erro, estado, motor, maquina, criado_por_nome, criado_em, respondido_em'
 
@@ -31,13 +32,41 @@ export default function AbaIA({ f, ficha, quem }: PropsAba) {
   /* Quem responde: a API (ligada e com chave) ou o notebook. Muda o texto e o
      que conta como material; a decisão de verdade é da rota, a cada pergunta. */
   const [pelaApi, setPelaApi] = useState(false)
+  /* O SELETOR DO MOTOR (01/10/2026). Pedido do Marco: enquanto o gasto da API
+     não é aprovado, a pergunta tem que poder ir para o notebook dele (a
+     assinatura, sem custo por pergunta), e voltar para a API depois. É o MESMO
+     interruptor do Ctrl+I (`ia_config.api_ligada`), por isso vale para o CRM
+     inteiro, e só o proprietário mexe. */
+  const [podeMexer, setPodeMexer] = useState(false)
+  const [temChave, setTemChave] = useState(false)
+  const [trocando, setTrocando] = useState(false)
+  const [aviso, setAviso] = useState('')
   const fim = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    let vivo = true
-    fetch('/api/ia/config').then((r) => r.json()).then((j) => { if (vivo) setPelaApi(!!(j?.config?.api_ligada && j?.tem_chave)) }).catch(() => {})
-    return () => { vivo = false }
+  const lerConfig = useCallback(async () => {
+    try {
+      const j = await (await fetch('/api/ia/config')).json()
+      setPelaApi(!!(j?.config?.api_ligada && j?.tem_chave))
+      setTemChave(!!j?.tem_chave)
+      setPodeMexer(!!j?.pode_mexer)
+    } catch { /* sem config, fica no notebook */ }
   }, [])
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { lerConfig() }, [lerConfig])
+
+  const escolherMotor = async (api: boolean) => {
+    if (trocando || api === pelaApi) return
+    setTrocando(true); setErro(''); setAviso('')
+    try {
+      const r = await fetch('/api/ia/config', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ api_ligada: api }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) setErro(j.erro ?? 'Não consegui trocar quem responde.')
+      await lerConfig()
+    } finally { setTrocando(false) }
+  }
 
   const temAnalise = !!(ficha?.id || f.analise_id)
   // Pela API o material é o banco, que todo card tem; pelo notebook, a análise ou a pasta na raiz.
@@ -70,13 +99,15 @@ export default function AbaIA({ f, ficha, quem }: PropsAba) {
   const perguntar = async (q: string) => {
     const pergunta = q.trim()
     if (!pergunta || enviando) return
-    setEnviando(true); setErro(''); setEmResposta(pergunta); setTexto('')
+    setEnviando(true); setErro(''); setAviso(''); setEmResposta(pergunta); setTexto('')
     try {
       const r = await fetch('/api/ia/card', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ fila_id: f.id, pergunta }),
       })
       const j = await r.json().catch(() => ({}))
+      // Crédito da API acabado: a rota já pôs a pergunta na fila do notebook.
+      if (j.na_fila) { setAviso(j.aviso ?? 'A pergunta foi para a fila do notebook.'); await carregar(); return }
       if (r.ok || j.motor !== 'notebook') {
         if (!r.ok) { setErro(j.erro ?? 'A IA não conseguiu responder.'); setTexto(pergunta) }
         await carregar()
@@ -101,7 +132,31 @@ export default function AbaIA({ f, ficha, quem }: PropsAba) {
 
   return (
     <div className="an-bloco">
-      <h4>Perguntar sobre este tomador</h4>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <h4 style={{ margin: 0 }}>Perguntar sobre este tomador</h4>
+        {podeMexer && (
+          <div title="Vale para o CRM inteiro, inclusive o Ctrl+I. Só o proprietário troca."
+            style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: cor.textoSub }}>
+            Quem responde
+            <div style={{ display: 'flex', border: `1px solid ${cor.borda}`, borderRadius: raio.controle, overflow: 'hidden' }}>
+              {([[true, 'API'], [false, 'Notebook do Marco']] as const).map(([api, rotulo]) => {
+                const ativo = api === pelaApi
+                const travado = trocando || (api && !temChave)
+                return (
+                  <button key={rotulo} type="button" onClick={() => escolherMotor(api)} disabled={travado && !ativo}
+                    title={api && !temChave ? 'A chave da API não está no ambiente deste CRM.' : undefined}
+                    style={{
+                      border: 'none', padding: '5px 12px', fontSize: 12, fontWeight: 600,
+                      cursor: ativo || travado ? 'default' : 'pointer',
+                      background: ativo ? cor.acao : cor.papel, color: ativo ? cor.branco : cor.texto,
+                      opacity: travado && !ativo ? 0.5 : 1,
+                    }}>{rotulo}</button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
       <div className="an-ia-onde">
         {pelaApi
           ? <><b>Quem responde é a IA pela API, de qualquer computador.</b> Ela lê o que o CRM tem deste tomador: {temAnalise ? 'a análise publicada e os exercícios, ' : ''}o retrato da biblioteca, a lista de documentos, o caso e as operações. Os arquivos da pasta ela não abre: quando a resposta depender de um documento, ela diz. Cada pergunta tem o custo registrado.</>
@@ -113,6 +168,7 @@ export default function AbaIA({ f, ficha, quem }: PropsAba) {
       {!temMaterial && (
         <div className="an-aviso aviso"><span>⚠</span><span>Sem pasta na raiz e sem análise no banco, não há material para ele ler.</span></div>
       )}
+      {aviso && <div className="an-aviso aviso"><span>⚠</span><span>{aviso}</span></div>}
       {erro && <div className="an-aviso erro"><span>⛔</span><span>{erro}</span></div>}
 
       <div className="an-fio">

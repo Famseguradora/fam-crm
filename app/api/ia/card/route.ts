@@ -13,6 +13,10 @@
 //  biblioteca e a lista de documentos da fila, o caso, o tomador, as
 //  operações), e é instruída a dizer quando a pergunta precisa de um documento.
 //
+//  QUEM ESCOLHE O MOTOR é o interruptor do proprietário (`ia_config.api_ligada`),
+//  que agora também fica na própria aba IA ("API" ou "Notebook do Marco"). E
+//  crédito acabado na conta da API cai sozinho para o notebook (01/10/2026).
+//
 //  GOVERNANÇA: cliente da sessão, como toda IA do CRM.
 // ============================================================================
 import { NextRequest, NextResponse } from 'next/server'
@@ -95,6 +99,18 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error('[ia/card]', e instanceof Error ? e.message : e)
     r = { ok: false, erro: QUEDA_NO_MEIO, status: 502 }
+  }
+
+  /* CONTA DA API SEM CRÉDITO (402), 01/10/2026: a pergunta não morre em erro.
+     Ela vira pergunta do notebook (o claude.exe da assinatura) na mesma linha,
+     sem duplicar, e a tela avisa por que mudou de motor. */
+  if (!r.ok && r.status === 402) {
+    const { data: virou } = await supabase.from('ia_pedidos')
+      .update({ motor: 'notebook', estado: 'pendente', modelo: null, pegue_em: null, erro: null })
+      .eq('id', pedido.id).select('id')
+    if (virou?.length) {
+      return NextResponse.json({ ok: true, motor: 'notebook', na_fila: true, pedido_id: pedido.id, aviso: `${r.erro} A pergunta foi para a fila do notebook.` })
+    }
   }
 
   if (!r.ok) {
