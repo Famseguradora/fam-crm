@@ -298,10 +298,13 @@ export interface AnaliseDaMesa {
   mesa_coluna_id: string | null
   fora_da_mesa_em: string | null
   aprovado_definitivo_em: string | null
+  /** A posição na coluna quando o card não tem pasta (01/10/2026). */
+  mesa_prioridade?: number | null
+  mesa_prioridade_por?: string | null
 }
 
 export const COLUNAS_ANALISE_MESA =
-  'id, chave_local, cnpj, razao_social, nome_curto, tomador_id, corretora, data_analise, recomendacao, revisada, mesa_coluna_id, fora_da_mesa_em, aprovado_definitivo_em'
+  'id, chave_local, cnpj, razao_social, nome_curto, tomador_id, corretora, data_analise, recomendacao, revisada, mesa_coluna_id, fora_da_mesa_em, aprovado_definitivo_em, mesa_prioridade, mesa_prioridade_por'
 
 const semAcentoMin = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
@@ -351,6 +354,8 @@ export function analiseVirandoFicha(a: AnaliseDaMesa, colunaId: string): FilaRic
     docs: null, cadastro: null, arquivos: null, biblioteca: null, linha: [], parado_desde: null,
     analise_chave: a.chave_local, substatus: a.recomendacao, substatus_por: null, substatus_em: null,
     coluna_id: colunaId,
+    // Sem pasta, a ordem arrastada mora na própria análise (supabase-migration-mesa-prioridade-analise.sql).
+    prioridade: a.mesa_prioridade ?? null, prioridade_por: a.mesa_prioridade_por ?? null,
     instrucao: null, modo: null, arquivos_fora: [], arquivos_fora_em: null, arquivada: true,
     sincronizado_em: null, ultima_ordem_resultado: null, ultima_ordem_em: null,
   }

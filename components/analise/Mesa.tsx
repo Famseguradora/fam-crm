@@ -461,13 +461,14 @@ Nada do que já foi salvo se perde.`)) return
      O número muda na tela ANTES da resposta do banco (`setFila` aqui embaixo).
      Arrastar um card e vê-lo voltar para o lugar por meio segundo é a coisa
      que mais faz alguém achar que não funcionou — e aí arrasta de novo. */
-  const reordenar = async (nova: GrupoEmpresa[]) => {
-    if (somenteLeitura || reordenando) return
+  const reordenar = async (nova: GrupoEmpresa[]): Promise<boolean> => {
+    if (somenteLeitura || reordenando) return false
     const ordem = renumerar(nova)
     const porId = new Map<string, number>()
     for (const p of ordem) for (const id of p.ids) porId.set(id, p.prioridade)
     setFila(antes => antes.map(f => (porId.has(f.id) ? { ...f, prioridade: porId.get(f.id)! } : f)))
     setReordenando(true); setErro('')
+    let gravou = false
     try {
       const r = await fetch('/api/esteira/prioridade', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -475,11 +476,13 @@ Nada do que já foi salvo se perde.`)) return
       })
       const j = await r.json()
       if (!r.ok) setErro(j.erro ?? 'Não consegui gravar a ordem da coluna.')
+      gravou = r.ok
     } catch {
       setErro('A conexão caiu: a ordem não foi gravada.')
     }
     setReordenando(false)
     carregar()
+    return gravou
   }
 
   /* DEVOLVER A COLUNA AO AUTOMÁTICO. O mesmo princípio do "Deixar o sistema
@@ -686,9 +689,20 @@ Nada do que já foi salvo se perde.`)) return
           const naFila = modo === 'fila'
           const das = ordenarPor(grupos.filter(g => colunaDa(g.principal).id === col.id), modo)
           const temMao = das.some(g => prioridadeDoGrupo(g) !== null)
-          /* ARRASTAR E AS SETAS SÓ VALEM NA "ORDEM DA FILA": numa coluna
-             ordenada por data, a posição que se vê não é a que se grava. */
-          const podeArrastar = !somenteLeitura && das.length > 1 && naFila
+          /* ARRASTAR E AS SETAS VALEM EM QUALQUER ORDENAÇÃO (01/10/2026, ordem
+             dele: "não importa a ordenação, é possível arrastar o card dentro
+             da mesma coluna"). Antes só valiam na "Ordem da fila", porque numa
+             coluna ordenada por data a posição que se vê não é a que se grava.
+             Agora quem arrasta numa coluna ordenada grava a ordem QUE ESTÁ
+             VENDO, e a coluna volta para a "Ordem da fila": o que fica na tela
+             é exatamente o que foi gravado. Mudar de coluna continua sendo o
+             "Mudar o substatus" do card. */
+          const podeArrastar = !somenteLeitura && das.length > 1
+          const gravarOrdem = async (nova: GrupoEmpresa[]) => {
+            if (!naFila) ordenarColuna(col.id, 'fila')
+            // Não gravou (sem permissão, rede): a coluna volta para a ordenação de antes.
+            if (!(await reordenar(nova)) && !naFila) ordenarColuna(col.id, modo)
+          }
           const menu = menuAberto === col.id
           const soltos = col.fase === 'entrada' ? casosSoltos : []
           return (
@@ -734,7 +748,7 @@ Nada do que já foi salvo se perde.`)) return
               {das.length ? das.map((g, i) => {
                 const naMao = arrastando?.chave === g.chave
                 const souAlvo = !!arrastando && arrastando.coluna === col.id && alvo === g.chave && !naMao
-                const mexer = (de: number, para: number) => reordenar(mover(das, de, para))
+                const mexer = (de: number, para: number) => gravarOrdem(mover(das, de, para))
                 return (
                   <div
                     key={g.chave}
@@ -766,7 +780,7 @@ Nada do que já foi salvo se perde.`)) return
                       const para = das.findIndex(x => x.chave === g.chave)
                       setArrastando(null); setAlvo(null)
                       if (de < 0 || para < 0 || de === para) return
-                      reordenar(mover(das, de, para))
+                      gravarOrdem(mover(das, de, para))
                     }}
                   >
                     {/* O NÚMERO É A POSIÇÃO NA COLUNA. Dourado quando alguém

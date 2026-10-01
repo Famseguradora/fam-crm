@@ -307,6 +307,8 @@ export default function EstiloAnalises() {
    setas, a prioridade seria uma função que só funciona sentado. */
 .an-fi-box { position:relative; }
 .an-fi-box.arrastando { opacity:.45; }
+.an-fi-box[draggable="true"] { cursor:grab; }
+.an-fi-box[draggable="true"]:active { cursor:grabbing; }
 .an-fi-box.alvo .an-ficha { border-color:#3070c8; box-shadow:0 -3px 0 -1px #3070c8; }
 .an-fi-num { position:absolute; top:-5px; left:-5px; z-index:2; min-width:19px; height:19px; padding:0 5px;
   border-radius:10px; background:#5a7290; color:#fff; font-size:11px; font-weight:700; line-height:19px;
@@ -339,9 +341,12 @@ export default function EstiloAnalises() {
 .an-selo.gr { width:52px; height:52px; border-radius:13px; font-size:18px; }
 /* O logo do tomador no lugar do selo: mesma altura do selo, largura até o
    dobro (logo costuma ser retangular), fundo branco e borda fina. */
-.an-card-logo { height:52px; min-width:52px; max-width:120px; flex:none; display:grid; place-items:center;
+/* O logo cabe na moldura qualquer que seja o formato (01/10/2026: o da JCR,
+   alto, vazava por baixo). A moldura tem medida fixa e a imagem preenche a
+   area util com contain: max-height em % dentro de grid nao segurava nada. */
+.an-card-logo { height:52px; width:112px; flex:none; display:block; overflow:hidden;
   background:#fff; border:1px solid #dbe6f3; border-radius:11px; padding:5px 8px; box-sizing:border-box; }
-.an-card-logo img { max-height:100%; max-width:100%; object-fit:contain; display:block; }
+.an-card-logo img { width:100%; height:100%; object-fit:contain; display:block; }
 .an-card-site { color:#1e4080; font-weight:600; text-decoration:none; }
 .an-card-site:hover { text-decoration:underline; }
 .an-fi-nome { min-width:0; }

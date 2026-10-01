@@ -143,8 +143,12 @@ export async function DELETE(req: NextRequest) {
     .select('id')
 
   if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
-  if (!data?.length) {
+  /* O card SEM PASTA guarda a posição na própria análise (01/10/2026). */
+  const { data: semPasta, error: erroSemPasta } = await supabase.rpc('analise_mesa_limpar_prioridade', { p_ids: ids })
+  if (erroSemPasta) return NextResponse.json({ erro: erroSemPasta.message }, { status: 500 })
+  const total = (data?.length ?? 0) + (Number(semPasta) || 0)
+  if (!total) {
     return NextResponse.json({ erro: 'Você não tem permissão para reordenar a fila da análise.' }, { status: 403 })
   }
-  return NextResponse.json({ ok: true, pastas: data.length })
+  return NextResponse.json({ ok: true, pastas: total })
 }
