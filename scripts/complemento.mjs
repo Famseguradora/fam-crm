@@ -86,10 +86,22 @@ function planilhaParaCsv(arquivo) {
   }
 }
 
+// Tenta, em ordem: cada bloco ```json (do último para o primeiro), o trecho do
+// primeiro "{" ao último "}", e as duas coisas sem vírgula sobrando antes de } ou ].
+// Uma só tentativa derrubou a leitura da JCR em 01/10 com o JSON quase certo.
 function jsonDaResposta(texto) {
-  const bloco = String(texto || '').match(/```json\s*([\s\S]*?)```/)
-  const cru = bloco ? bloco[1] : String(texto || '').slice(String(texto || '').indexOf('{'), String(texto || '').lastIndexOf('}') + 1)
-  return JSON.parse(cru)
+  const t = String(texto || '')
+  const candidatos = [...t.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]).reverse()
+  if (t.includes('{')) candidatos.push(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1))
+  for (const c of candidatos) {
+    for (const v of [c, c.replace(/,\s*([}\]])/g, '$1')]) {
+      try {
+        const j = JSON.parse(v.trim())
+        if (j && typeof j === 'object' && j.veredito) return j
+      } catch { }
+    }
+  }
+  throw new Error('sem JSON')
 }
 
 /** Chamado solto a cada rodada da esteira. `crm` é a ponte já autenticada. */
@@ -130,36 +142,61 @@ export async function atenderComplementos({ crm, raiz, maquina }) {
     const { rodar, eventoDaFerramenta, fraseDoEvento } = await import(pathToFileURL(path.join(raiz, '_sistema', 'ponte.mjs')).href)
     const entrada = PROMPT + (r.pedido.instrucoes ? `\n\nO ANALISTA PEDIU PARA CONFERIR EM ESPECIAL:\n${r.pedido.instrucoes}` : '')
 
-    let resposta = ''
-    let ultimoAviso = 0
-    const res = await rodar({
-      dir,
-      args: [
-        '--model', 'opus',
-        '--permission-mode', 'default',
-        '--allowedTools', 'Read', 'Grep', 'Glob',
-        '--output-format', 'stream-json', '--verbose',
-        '-p',
-      ],
-      entrada,
-      limiteMs: LIMITE_MS,
-      aoLinha: (ev) => {
-        if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
-          for (const b of ev.message.content) {
-            const e = eventoDaFerramenta(b)
-            if (!e || Date.now() - ultimoAviso < 8000) continue
-            ultimoAviso = Date.now()
-            crm('/api/esteira/complementos', { acao: 'progresso', id, mensagem: fraseDoEvento(e) || 'Lendo.' }).catch(() => {})
+    // Uma rodada do claude.exe. Guarda a fala final (result) E todo texto que ele
+    // escreveu no caminho: às vezes o JSON sai numa fala do meio e a última é só
+    // "Pronto.". A `sessao` permite pedir a correção sem reler os documentos.
+    const rodada = async (texto, sessao) => {
+      let resposta = '', falas = '', idSessao = sessao || null, ultimoAviso = 0
+      const res = await rodar({
+        dir,
+        args: [
+          '--model', 'opus',
+          '--permission-mode', 'default',
+          '--allowedTools', 'Read', 'Grep', 'Glob',
+          '--output-format', 'stream-json', '--verbose',
+          ...(sessao ? ['--resume', sessao] : []),
+          '-p',
+        ],
+        entrada: texto,
+        limiteMs: LIMITE_MS,
+        aoLinha: (ev) => {
+          if (ev.session_id) idSessao = ev.session_id
+          if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
+            for (const b of ev.message.content) {
+              if (b.type === 'text' && b.text) falas += '\n' + b.text
+              const e = eventoDaFerramenta(b)
+              if (!e || Date.now() - ultimoAviso < 8000) continue
+              ultimoAviso = Date.now()
+              crm('/api/esteira/complementos', { acao: 'progresso', id, mensagem: fraseDoEvento(e) || 'Lendo.' }).catch(() => {})
+            }
           }
-        }
-        if (ev.type === 'result' && typeof ev.result === 'string') resposta = ev.result
-      },
-    })
-    if (!res.ok) throw new Error(res.motivo || 'O Claude não respondeu.')
-    if (!resposta.trim()) throw new Error('O Claude terminou sem resposta. ' + String(res.erro || '').slice(0, 300))
+          if (ev.type === 'result' && typeof ev.result === 'string') resposta = ev.result
+        },
+      })
+      if (!res.ok) throw new Error(res.motivo || 'O Claude não respondeu.')
+      return { resposta, falas, idSessao, erro: res.erro }
+    }
 
-    let resultado
-    try { resultado = jsonDaResposta(resposta) } catch { throw new Error('A leitura não veio no formato esperado. Tente de novo.') }
+    const tentarLer = (r) => { try { return jsonDaResposta(r.resposta) } catch { } try { return jsonDaResposta(r.falas) } catch { } return null }
+
+    let r1 = await rodada(entrada)
+    if (!r1.resposta.trim() && !r1.falas.trim()) throw new Error('O Claude terminou sem resposta. ' + String(r1.erro || '').slice(0, 300))
+    let resultado = tentarLer(r1)
+
+    if (!resultado) {
+      // Guarda o que veio, para dar para ver depois o que ele escreveu.
+      fs.writeFileSync(path.join(dir, 'resposta-1.txt'), `${r1.resposta}\n\n----- falas -----\n${r1.falas}`, 'utf8')
+      console.error('  Análise complementar: resposta fora do formato, pedindo de novo. Cópia em', path.join(dir, 'resposta-1.txt'))
+      await crm('/api/esteira/complementos', { acao: 'progresso', id, mensagem: 'Ajustando o formato da resposta.' }).catch(() => {})
+      const r2 = r1.idSessao
+        ? await rodada('Sua resposta não veio como JSON válido. Devolva AGORA somente o bloco ```json no formato pedido, com a leitura que você já fez, sem texto antes ou depois. Aspas dentro de texto vão escapadas (\\").', r1.idSessao)
+        : await rodada(entrada)
+      resultado = tentarLer(r2)
+      if (!resultado) {
+        fs.writeFileSync(path.join(dir, 'resposta-2.txt'), `${r2.resposta}\n\n----- falas -----\n${r2.falas}`, 'utf8')
+        throw new Error('A leitura não veio no formato esperado, nem na segunda tentativa. Tente de novo.')
+      }
+    }
 
     const g = await crm('/api/esteira/complementos', {
       acao: 'pronta', id, resultado, segundos: Math.round((Date.now() - inicio) / 1000),
