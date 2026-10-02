@@ -493,6 +493,18 @@ export async function POST(req: NextRequest) {
         .select('id, situacao, analise_id, tomador_id, cnpj, cnpj_confiavel, substatus, substatus_em')
         .eq('pasta', pasta).maybeSingle()
 
+      /* COM TOMADOR LIGADO, O CRM MANDA (01/10/2026, caso #93 Exto Star). O
+         "confiável" do notebook é a triagem achando a razão num documento, e lá
+         ela achou a da M Mencaroni. Card ligado a tomador teve o CNPJ decidido
+         por gente, pela Receita ou pelo Agente de Cadastro: o disco divergente
+         não troca CNPJ, nome nem chave. */
+      const cnpjDoCrm = existe?.tomador_id ? digitos(existe.cnpj) : ''
+      if (cnpjDoCrm.length === 14 && cnpjDoDisco.length === 14 && cnpjDoDisco !== cnpjDoCrm) {
+        delete doDisco.razao_social
+        delete doDisco.nome
+        delete doDisco.cnpj_confiavel
+        if (digitos(String(doDisco.chave ?? '')).length === 14) delete doDisco.chave
+      } else
       // O CNPJ sem confirmação só entra onde não havia nenhum: nunca troca um.
       if (cnpjDoDisco.length === 14 && (cnpjFirme || !digitos(existe?.cnpj))) doDisco.cnpj = cnpjDoDisco
 
@@ -513,7 +525,7 @@ export async function POST(req: NextRequest) {
         const { data: a } = await sb.from('analises').select('id').eq('chave_local', analiseChave).maybeSingle()
         if (a?.id) doDisco.analise_id = a.id
       }
-      const cnpjFinal = cnpjDoDisco.length === 14 ? cnpjDoDisco : digitos(existe?.cnpj)
+      const cnpjFinal = cnpjDoCrm.length === 14 ? cnpjDoCrm : cnpjDoDisco.length === 14 ? cnpjDoDisco : digitos(existe?.cnpj)
       const soLido = cnpjFinal === cnpjDoDisco && !cnpjFirme && !existe?.cnpj_confiavel
       if (cnpjFinal.length === 14 && !soLido && !existe?.tomador_id) {
         const { data: t } = await sb.from('tomadores').select('id').eq('cnpj', cnpjFinal).limit(2)

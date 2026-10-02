@@ -267,6 +267,16 @@ select.bt-in { padding-right: 6px; }
 /** Dia e hora curtos, no mesmo formato do aviso do Serasa (`situacaoSerasa`). */
 const hora =(iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 
+/** O pedaço da linha da esteira que a triagem precisa para saber se a análise andou. */
+type NaEsteira = {
+  pasta: string
+  situacao: string | null
+  ordem: string | null
+  analise_id: string | null
+  automatica: boolean | null
+  cadastro_agente: { status?: string; motivos?: string[] } | null
+}
+
 export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
   /** o id do caso (`casos.id`) */
   id: string
@@ -292,6 +302,10 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
   const [serasa, setSerasa] = useState<PedidoSerasa | null>(null)
   const [pedindoSerasa, setPedindoSerasa] = useState(false)
   const [pasta, setPasta] = useState<string | null>(null)
+  // Como o card está na esteira: é o que diz se a análise começou ou parou.
+  const [naEsteira, setNaEsteira] = useState<NaEsteira | null>(null)
+  // Depois do clique o botão não volta: entre o notebook aceitar e a situação virar "rodando", ele piscaria.
+  const [ordemDada, setOrdemDada] = useState(false)
   const [quem, setQuem] = useState<{ nome: string | null; analista: boolean }>({ nome: null, analista: false })
   const serasaAntes = useRef<PedidoSerasa | null>(null)
   // A contagem dos sócios, vinda da própria lista (SociosSerasa), para o cartão.
@@ -347,8 +361,11 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
     setProduto((c as Caso).produto ?? '')
     // A pasta da análise, quando a esteira já abriu uma: o PDF do Serasa também cai nela.
     if ((c as Caso).analise_fila_id) {
-      const { data: f } = await supabase.from('analise_fila').select('pasta').eq('id', (c as Caso).analise_fila_id as string).maybeSingle()
+      const { data: f } = await supabase.from('analise_fila')
+        .select('pasta, situacao, ordem, analise_id, automatica, cadastro_agente')
+        .eq('id', (c as Caso).analise_fila_id as string).maybeSingle()
       setPasta((f?.pasta as string | undefined) ?? null)
+      setNaEsteira((f as NaEsteira | null) ?? null)
     }
     await carregarDocumentos()
     setCarregando(false)
@@ -660,6 +677,30 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
     setSalvando(false)
   }
 
+  /* INICIAR DAQUI (01/10/2026). Caso #93: o Agente de Cadastro falhou, a
+     ordem de analisar nunca saiu e esta tela dizia "Já foi", sem botão. A
+     ordem é a mesma do card da Mesa (`/api/esteira/ordem`), com a mesma regra. */
+  async function iniciarAnalise() {
+    if (!caso?.analise_fila_id) return
+    if (!window.confirm('Iniciar a análise de crédito agora?\n\nFica registrado que a ordem foi sua.')) return
+    setSalvando(true); setErro(''); setRecado('')
+    try {
+      const r = await fetch('/api/esteira/ordem', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: caso.analise_fila_id, ordem: 'iniciar', dados: { escopo: 'completa', motivo: 'Mandada da tela de triagem.' } }),
+      })
+      const j = await r.json()
+      if (!r.ok) { setErro(j.erro ?? 'Não consegui dar a ordem de iniciar.'); setSalvando(false); return }
+      setRecado('Ordem dada. O notebook começa a análise em alguns segundos.')
+      setOrdemDada(true)
+      await carregar()
+      aoMudar?.()
+    } catch {
+      setErro('A conexão caiu. Tente de novo.')
+    }
+    setSalvando(false)
+  }
+
   /* EXCLUIR (10/09/2026): "às vezes vem tomadores repetidos". Só na triagem,
      com a trava repetida no servidor. O caso sai do funil e fica no histórico;
      a pasta do notebook vai para _excluidas; o tomador não é apagado. */
@@ -721,6 +762,15 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
   const bloqueando = pendentes.filter((i) => i.caso_item_catalogo.exigencia === 'bloqueia')
   const avisoSerasa = serasa ? situacaoSerasa(serasa, 'nos documentos do passo 2') : null
 
+  /* A ANÁLISE NÃO COMEÇOU, E NINGUÉM VAI COMEÇAR SOZINHO: o card está na
+     esteira, sem ordem, sem análise, e ou o Agente de Cadastro parou ou o card
+     não é da esteira automática (esse sempre esperou um clique). */
+  const agente = naEsteira?.cadastro_agente ?? null
+  const agenteParou = !!agente?.status && agente.status !== 'ok'
+  const analiseParada = naAnalise && !!naEsteira && naEsteira.situacao === 'pendente'
+    && !naEsteira.ordem && !naEsteira.analise_id && (agenteParou || !naEsteira.automatica)
+  const linkEsteira = caso.analise_fila_id ? `/analises/mesa/${caso.analise_fila_id}` : '/analises'
+
   /* ── O QUE A FAIXA E OS INSTRUMENTOS DIZEM ─────────────────────────────────
      Tudo derivado do que esta tela JÁ lia: caso, documentos, checklist, pedido
      do Serasa e a lista de sócios. Nenhuma consulta nova, nenhum dado novo. */
@@ -747,6 +797,7 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
       const s = SITUACOES.find((x) => x.valor === i.situacao) ?? SITUACOES[4]
       pontos.push(`${i.caso_item_catalogo.nome}: ${s.rotulo.toLowerCase()}`)
     }
+    if (analiseParada) pontos.unshift(agenteParou ? 'A análise NÃO começou: o Agente de Cadastro parou' : 'A análise NÃO começou: falta a ordem de iniciar')
     if (!pontos.length) pontos.push(naAnalise ? 'Tudo recebido. A próxima área é o Crédito' : 'Nada pendente nesta bancada')
   }
 
@@ -800,9 +851,10 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
                 Abrir a ficha do tomador
               </button>
             )}
-            {!embutida && !naAnalise && caso.analise_fila_id && (
-              <button type="button" className="pf-bt" onClick={() => router.push(`/analises/mesa/${caso.analise_fila_id}`)}>
-                Acompanhar na esteira
+            {!embutida && caso.analise_fila_id && (
+              <button type="button" className="pf-bt" onClick={() => router.push(linkEsteira)}
+                title="O card deste tomador na esteira, com a régua das áreas">
+                Ver o card na esteira
               </button>
             )}
             {naTriagem && !somenteLeitura && (
@@ -1041,8 +1093,10 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
 
           {/* ══ PASSO 3 · PARA A ANÁLISE ══════════════════════════════════════ */}
           <div className={`bt-bloco${!naAnalise && !excluido && cadastrado ? ' ouro' : ''}`}>
-            <Passo n={3} titulo="Mandar para a análise de crédito" pronto={naAnalise}>
-              {naAnalise
+            <Passo n={3} titulo="Mandar para a análise de crédito" pronto={naAnalise && !analiseParada}>
+              {analiseParada
+                ? 'O caso está na esteira, mas a análise não começou.'
+                : naAnalise
                 ? 'Já foi. A análise é feita no Sistema de Análise, dentro do CRM.'
                 : caso.analise_fila_id
                   ? 'A esteira automática já está com este caso: a pasta foi criada no notebook, e a triagem, o cadastro e a análise andam sozinhos. Este botão só é preciso para concluir à mão.'
@@ -1091,9 +1145,29 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
                 {!salvo && <div className="bt-nota" style={{ marginTop: 6 }}>Termine o passo 1 primeiro.</div>}
               </>
             ) : caso.analise_fila_id ? (
-              embutida
-                ? <span className="bt-nota">O caso já está na esteira: a próxima área é o Crédito, na régua acima.</span>
-                : <button type="button" className="bt-bt" onClick={() => router.push('/analises')}>Ver na esteira da análise</button>
+              <>
+                {analiseParada && (
+                  <div className="bt-aviso at" style={{ margin: '0 0 12px' }}>
+                    {agenteParou
+                      ? <>O Agente de Cadastro parou e a análise não começou{agente?.motivos?.length ? `: ${agente.motivos.join(' · ')}` : '.'} Confira os dados e inicie à mão.</>
+                      : <>O caso está na esteira, mas a análise ainda não recebeu a ordem de começar.</>}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {/* Iniciar é ordem de analista (`ORDENS_DO_ANALISTA`); os outros veem o aviso. */}
+                  {analiseParada && quem.analista && (
+                    <button type="button" className="bt-bt cheio" onClick={iniciarAnalise} disabled={somenteLeitura || salvando || ordemDada}>
+                      {salvando ? 'Mandando…' : ordemDada ? 'Ordem dada' : 'Iniciar a análise'}
+                    </button>
+                  )}
+                  {analiseParada && !quem.analista && (
+                    <span className="bt-nota">Quem inicia é um analista de crédito.</span>
+                  )}
+                  {embutida
+                    ? !analiseParada && <span className="bt-nota">O caso já está na esteira: a próxima área é o Crédito, na régua acima.</span>
+                    : <button type="button" className="bt-bt" onClick={() => router.push(linkEsteira)}>Ver o card na esteira</button>}
+                </div>
+              </>
             ) : (
               <button type="button" className="bt-bt cheio" onClick={mandarParaAnalise} disabled={somenteLeitura || salvando}>
                 {salvando ? 'Mandando…' : 'Mandar para a análise'}

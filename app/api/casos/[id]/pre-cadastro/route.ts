@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { acharOuCriarTomadorPorCnpj } from '@/lib/tomador/criar-por-cnpj'
+import { costurarFilaAoCaso } from '@/lib/analise/abrir-fila'
 import { soDigitos } from '@/lib/analise/cnpj'
 import { validarCNPJ } from '@/lib/utils'
 
@@ -114,6 +115,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       { status: 500 },
     )
   }
+
+  // O card da esteira, se a esteira automática já abriu um, passa a ter este CNPJ.
+  await costurarFilaAoCaso(supabase, { id, cnpj, razao_social: r.tomador.razao_social, tomador_id: r.tomador.id })
 
   return NextResponse.json({
     ok: true,

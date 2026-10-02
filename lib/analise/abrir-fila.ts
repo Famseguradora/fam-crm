@@ -66,7 +66,10 @@ export async function abrirNaFila(
     .select('id, pasta')
     .eq('caso_id', caso.id)
     .maybeSingle()
-  if (ja) return { ok: true, fila: ja, ja_existia: true }
+  if (ja) {
+    await costurarFilaAoCaso(supabase, caso)
+    return { ok: true, fila: ja, ja_existia: true }
+  }
 
   const desejado = nomeDaPasta(caso)
 
@@ -126,4 +129,34 @@ export async function abrirNaFila(
   await supabase.from('casos').update({ analise_fila_id: data.id }).eq('id', caso.id)
 
   return { ok: true, fila: data, ja_existia: false }
+}
+
+/* O CNPJ DO CASO DESCE PARA O CARD DA ESTEIRA (01/10/2026). Caso #93, Exto
+   Star: a esteira automática abriu o card antes de ele digitar o CNPJ, a
+   triagem do notebook chutou o da M Mencaroni (o CNPJ que mais aparecia nos
+   documentos) e o card ficou com o nome errado. Quando a pessoa salvou o CNPJ
+   certo no passo 1, ninguém repassou ao card. A Mesa mostrava "M Mencaroni",
+   o Agente de Cadastro parou e a análise nunca começou.
+
+   Regra: com tomador no CRM, o CNPJ do caso foi decidido por gente (ou pela
+   Receita) e vence o que o notebook leu. Card já analisado não muda: ali quem
+   batizou foi a análise. */
+export async function costurarFilaAoCaso(
+  supabase: SupabaseClient,
+  caso: Pick<CasoParaAnalise, 'id' | 'cnpj' | 'razao_social' | 'tomador_id'>,
+) {
+  const cnpj = String(caso.cnpj ?? '').replace(/\D/g, '')
+  if (!caso.tomador_id || cnpj.length !== 14) return
+  const mudanca: Record<string, unknown> = { cnpj, cnpj_confiavel: true, tomador_id: caso.tomador_id }
+  if (caso.razao_social) Object.assign(mudanca, { razao_social: caso.razao_social, nome: caso.razao_social })
+  /* Quem não tem a marca "Análise" não escreve na fila (RLS) e isto não grava
+     nada. Não trava o pré-cadastro: o Agente de Cadastro vê o caso ligado a
+     outro CNPJ, para com o motivo escrito, e a triagem mostra a parada. */
+  const { error } = await supabase.from('analise_fila').update(mudanca)
+    .eq('caso_id', caso.id).is('analise_id', null).neq('situacao', 'concluida')
+  if (error) console.warn('costurarFilaAoCaso:', error.message)
+  // A chave do tomador, quando ela é um CNPJ (o chute antigo), acompanha.
+  await supabase.from('analise_fila').update({ chave: cnpj })
+    .eq('caso_id', caso.id).is('analise_id', null).neq('situacao', 'concluida')
+    .filter('chave', 'match', '^[0-9]{14}$')
 }
