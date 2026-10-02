@@ -10,16 +10,35 @@
    O "celular" é o push do próprio CRM (lib/push/webpush.ts, sem biblioteca).
    Ele liga aqui, uma vez por aparelho, com a permissão pedida no clique: o
    iPhone só aceita com o CRM instalado na tela de início (Compartilhar >
-   Adicionar à Tela de Início), e só a partir do iOS 16.4. */
+   Adicionar à Tela de Início), e só a partir do iOS 16.4.
+
+   02/10/2026: O SINO VIROU CAIXINHA. Em 01/10 ele abria a agenda inteira numa
+   janela de 1240 px com fundo escuro, e o Marco achou "estática, toma a tela
+   toda, impactante demais". Agora é o modelo do GitHub, do Outlook e do Asana:
+   uma caixa pequena presa ao sino, sem escurecer a tela, que fecha ao clicar
+   fora. Mostra o que vence nos próximos dias, os atrasados num número
+   discreto, e os avisos na segunda aba. A agenda completa (lista, mês, semana
+   e o detalhe com as ações) mora na página /agenda, a um clique. */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cor, raio, sombra } from '@/lib/ui/painel'
 import { VAPID_PUBLICA } from '@/lib/push/chave-publica'
-import { quandoLegivel } from '@/lib/lembretes/regras'
+import { nomeCategoria, quandoLegivel } from '@/lib/lembretes/regras'
 
-interface Acompanhado { id: string; titulo: string; quando: string; status: string; origem: string; tomador_id: string | null; caso_id: string | null }
+interface Acompanhado {
+  id: string; titulo: string; quando: string; status: string; origem: string; categoria: string
+  tomador_id: string | null; caso_id: string | null
+  tomador: { razao_social: string | null; nome_fantasia: string | null } | null
+}
+
+// Quantos cabem na caixinha antes do "ver todos": o resto está na agenda.
+const CABEM = 8
+const nomeDoTomador = (l: Acompanhado) => l.tomador?.nome_fantasia || l.tomador?.razao_social || null
+// O título do robô repete o tomador depois do "·"; na caixinha o nome já está em cima.
+const assuntoCurto = (l: Acompanhado) => (l.titulo.includes(' · ') ? l.titulo.split(' · ')[0] : l.titulo)
 interface Notificacao { id: string; titulo: string; texto: string | null; link: string | null; criado_em: string; lida_em: string | null }
 
 const quando = (iso: string) => {
@@ -41,6 +60,7 @@ export default function Sino({ userId }: { userId: string | null }) {
   const router = useRouter()
   const [lista, setLista] = useState<Notificacao[]>([])
   const [aberto, setAberto] = useState(false)
+  const [aba, setAba] = useState<'proximos' | 'atrasados' | 'avisos'>('proximos')
   const [push, setPush] = useState<EstadoPush>('carregando')
   const [msgPush, setMsgPush] = useState('')
   const caixa = useRef<HTMLDivElement>(null)
@@ -60,13 +80,16 @@ export default function Sino({ userId }: { userId: string | null }) {
      O aviso só chega na hora marcada; esta lista mostra ANTES todo lembrete em
      aberto que a pessoa acompanha, vencidos primeiro, depois os próximos. */
   const [acompanho, setAcompanho] = useState<Acompanhado[]>([])
+  // A hora da última leitura: é ela que separa atrasado de próximo (o sino relê ao abrir).
+  const [agora, setAgora] = useState(() => Date.now())
   const carregarAcompanho = useCallback(async () => {
     if (!userId) return
     const { data } = await createClient().from('lembrete_seguidores')
-      .select('lembretes!inner(id, titulo, quando, status, origem, tomador_id, caso_id)')
+      .select('lembretes!inner(id, titulo, quando, status, origem, categoria, tomador_id, caso_id, tomador:tomadores(razao_social, nome_fantasia))')
       .eq('auth_id', userId).in('lembretes.status', ['aberto', 'parcial'])
     const lista = ((data ?? []) as unknown as { lembretes: Acompanhado }[]).map((x) => x.lembretes)
     setAcompanho(lista.sort((a, b) => a.quando.localeCompare(b.quando)))
+    setAgora(Date.now())
   }, [userId])
   useEffect(() => { carregarAcompanho() }, [carregarAcompanho])
   // Ao vivo: criou, adiou, resolveu, o robô mexeu. Rajada vira uma leitura só.
@@ -93,12 +116,14 @@ export default function Sino({ userId }: { userId: string | null }) {
     return () => { sb.removeChannel(canal) }
   }, [userId, carregar])
 
-  // Fecha ao clicar fora.
+  // Fecha no Esc e no clique fora da caixa, como todo menu.
   useEffect(() => {
     if (!aberto) return
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setAberto(false) }
     const fora = (e: MouseEvent) => { if (caixa.current && !caixa.current.contains(e.target as Node)) setAberto(false) }
+    document.addEventListener('keydown', esc)
     document.addEventListener('mousedown', fora)
-    return () => document.removeEventListener('mousedown', fora)
+    return () => { document.removeEventListener('keydown', esc); document.removeEventListener('mousedown', fora) }
   }, [aberto])
 
   /* Em que pé está o push NESTE aparelho. */
@@ -174,10 +199,12 @@ export default function Sino({ userId }: { userId: string | null }) {
   }
 
   const naoLidas = lista.filter((n) => !n.lida_em).length
-  const vencidos = acompanho.filter((l) => new Date(l.quando).getTime() < Date.now()).length
+  // `acompanho` já vem em ordem de prazo. Os atrasados, do mais recente para o mais antigo.
+  const atrasados = acompanho.filter((l) => new Date(l.quando).getTime() < agora).reverse()
+  const proximos = acompanho.filter((l) => { const t = new Date(l.quando).getTime(); return t >= agora && t < agora + 7 * 86400000 })
+  const vencidos = atrasados.length
   // O número do sino soma o que é novo e o que já venceu: os dois pedem ação.
   const noSino = naoLidas + vencidos
-  const linkDe = (l: Acompanhado) => l.tomador_id ? `/tomadores/${l.tomador_id}?g=lembretes` : `/comercial/${l.caso_id}`
   if (!userId) return null
 
   return (
@@ -205,13 +232,72 @@ export default function Sino({ userId }: { userId: string | null }) {
       </button>
 
       {aberto && (
-        <div style={{
-          position: 'fixed', top: (caixa.current?.getBoundingClientRect().bottom ?? 58) + 8, right: 12, width: 'min(380px, calc(100vw - 24px))', maxHeight: 'min(560px, calc(100vh - 80px))',
-          overflowY: 'auto', background: cor.papel, border: `1px solid ${cor.borda}`, borderRadius: raio.cartao,
-          boxShadow: sombra.janela, zIndex: 1000, color: cor.texto,
+        <div role="dialog" aria-label="Lembretes e avisos" className="sino-caixa" style={{
+          position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 'min(400px, calc(100vw - 24px))',
+          maxHeight: 'min(560px, calc(100dvh - 90px))', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          background: cor.papel, border: `1px solid ${cor.borda}`, borderRadius: raio.janela, boxShadow: sombra.janela,
+          zIndex: 1000, color: cor.texto, textAlign: 'left',
         }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px 0' }}>
+            <b style={{ fontSize: 14.5, color: cor.tinta, flex: 1 }}>Lembretes</b>
+            <Link href="/agenda" onClick={() => setAberto(false)} style={{ fontSize: 12.5, fontWeight: 600, color: cor.acao, textDecoration: 'none' }}>
+              Abrir a agenda ›
+            </Link>
+          </div>
+          {/* Abas sublinhadas, como o GitHub e o Outlook: leves, sem fundo. */}
+          <div role="tablist" style={{ display: 'flex', gap: 16, padding: '0 14px', borderBottom: `1px solid ${cor.bordaSuave}` }}>
+            {([
+              ['proximos', 'Próximos', proximos.length, false],
+              ['atrasados', 'Atrasados', atrasados.length, true],
+              ['avisos', 'Avisos', naoLidas, false],
+            ] as const).map(([id, nome, n, alerta]) => (
+              <button key={id} type="button" role="tab" aria-selected={aba === id} onClick={() => setAba(id)}
+                style={{
+                  border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600,
+                  padding: '10px 0 8px', color: aba === id ? cor.tinta : cor.textoSub,
+                  boxShadow: aba === id ? `inset 0 -2px 0 ${cor.acao}` : 'none',
+                }}>
+                {nome}
+                {n > 0 && <span style={{ marginLeft: 5, fontSize: 11.5, fontWeight: 700, color: alerta ? cor.alerta : cor.textoFraco }}>{n}</span>}
+              </button>
+            ))}
+          </div>
+          {aba !== 'avisos' ? (
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              {(aba === 'proximos' ? proximos : atrasados).length === 0 ? (
+                <div style={{ padding: '22px 14px', fontSize: 12.5, color: cor.textoSub, textAlign: 'center' }}>
+                  {aba === 'proximos' ? 'Nada vencendo nos próximos 7 dias.' : 'Nenhum lembrete atrasado.'}
+                </div>
+              ) : (aba === 'proximos' ? proximos : atrasados).slice(0, CABEM).map((l) => {
+                const q = quandoLegivel(l.quando, new Date(agora))
+                return (
+                  <Link key={l.id} href={`/agenda?id=${l.id}`} onClick={() => setAberto(false)} className="sino-linha"
+                    style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '9px 14px', textDecoration: 'none', borderBottom: `1px solid ${cor.bordaSuave}` }}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: cor.tinta, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {nomeDoTomador(l) ?? l.titulo}
+                      </span>
+                      <span style={{ display: 'block', fontSize: 11.5, color: cor.textoSub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {nomeDoTomador(l) ? assuntoCurto(l) : nomeCategoria(l.categoria)}
+                      </span>
+                    </span>
+                    <span style={{ fontSize: 11.5, whiteSpace: 'nowrap', color: q.vencido ? cor.alerta : cor.textoSub, fontWeight: q.vencido ? 600 : 500 }}>
+                      {q.txt}
+                    </span>
+                  </Link>
+                )
+              })}
+              {(aba === 'proximos' ? proximos : atrasados).length > CABEM && (
+                <Link href="/agenda" onClick={() => setAberto(false)}
+                  style={{ display: 'block', padding: '10px 14px', fontSize: 12.5, fontWeight: 600, color: cor.acao, textDecoration: 'none', textAlign: 'center' }}>
+                  Ver todos os {(aba === 'proximos' ? proximos : atrasados).length} na agenda
+                </Link>
+              )}
+            </div>
+          ) : (
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: cor.papel }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: `1px solid ${cor.bordaSuave}` }}>
-            <b style={{ fontSize: 13.5, color: cor.tinta, flex: 1 }}>Lembretes e avisos</b>
+            <b style={{ fontSize: 13.5, color: cor.tinta, flex: 1 }}>Avisos recebidos</b>
             {naoLidas > 0 && (
               <button type="button" onClick={lerTodas}
                 style={{ background: 'none', border: 'none', color: cor.acao, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: '6px 2px' }}>
@@ -220,40 +306,7 @@ export default function Sino({ userId }: { userId: string | null }) {
             )}
           </div>
 
-          {/* ── o que eu acompanho, antes de vencer ── */}
-          <div style={{ padding: '8px 14px 4px', fontSize: 12, fontWeight: 700, color: cor.tinta2 }}>
-            Acompanhando · {acompanho.length} em aberto{vencidos ? ` · ${vencidos} vencido${vencidos > 1 ? 's' : ''}` : ''}
-          </div>
-          {acompanho.length === 0 ? (
-            <div style={{ padding: '4px 14px 10px', fontSize: 12, color: cor.textoSub }}>
-              Nenhum lembrete em aberto que você acompanhe.
-            </div>
-          ) : acompanho.slice(0, 30).map((l) => {
-            const q = quandoLegivel(l.quando)
-            return (
-              <button key={l.id} type="button" onClick={() => { setAberto(false); router.push(linkDe(l)) }}
-                style={{
-                  display: 'flex', gap: 10, alignItems: 'baseline', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
-                  font: 'inherit', padding: '7px 14px', background: cor.papel, borderBottom: `1px solid ${cor.bordaSuave}`,
-                  boxShadow: q.vencido ? `inset 3px 0 0 ${cor.alerta}` : 'none',
-                }}>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: cor.tinta, overflowWrap: 'anywhere' }}>
-                  {l.origem === 'robo' && <span style={{ color: cor.ouroTexto, fontWeight: 600 }}>Robô · </span>}{l.titulo}
-                </span>
-                <span style={{ flexShrink: 0, fontSize: 11.5, whiteSpace: 'nowrap', fontWeight: q.vencido ? 700 : 500, color: q.vencido ? cor.alerta : cor.textoSub }}>
-                  {q.vencido ? `venceu ${q.txt}` : q.txt}
-                </span>
-              </button>
-            )
-          })}
-          {acompanho.length > 30 && (
-            <div style={{ padding: '6px 14px', fontSize: 11.5, color: cor.textoFraco }}>e mais {acompanho.length - 30}, nos cards.</div>
-          )}
-
           {/* ── os avisos que já tocaram ── */}
-          <div style={{ padding: '10px 14px 4px', fontSize: 12, fontWeight: 700, color: cor.tinta2, borderTop: `1px solid ${cor.borda}` }}>
-            Avisos recebidos{naoLidas ? ` · ${naoLidas} novo${naoLidas > 1 ? 's' : ''}` : ''}
-          </div>
           {lista.length === 0 ? (
             <div style={{ padding: '4px 14px 12px', fontSize: 12, color: cor.textoSub }}>
               Nada ainda. Quando um lembrete que você acompanha tocar, o aviso chega aqui.
@@ -296,6 +349,13 @@ export default function Sino({ userId }: { userId: string | null }) {
             )}
             {msgPush && <div style={{ marginTop: 6, color: cor.tinta2 }}>{msgPush}</div>}
           </div>
+          </div>
+          )}
+          <style>{`
+            .sino-linha:hover { background: ${cor.papelZebra}; }
+            /* No celular a caixa ocupa a largura, presa logo abaixo do topo. */
+            @media (max-width: 560px) { .sino-caixa { position: fixed !important; top: 58px !important; left: 12px; right: 12px !important; width: auto !important; } }
+          `}</style>
         </div>
       )}
     </div>

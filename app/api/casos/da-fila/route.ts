@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
 
   const { data: fila, error: erroFila } = await supabase
     .from('analise_fila')
-    .select('id, caso_id, cnpj, cnpj_confiavel, razao_social, nome, pasta, tomador_id, cadastro')
+    .select('id, caso_id, cnpj, cnpj_confiavel, razao_social, nome, pasta, tomador_id, cadastro, situacao')
     .eq('id', filaId).maybeSingle()
   if (erroFila) return NextResponse.json({ erro: erroFila.message }, { status: 500 })
   if (!fila) return NextResponse.json({ erro: 'Este card não está na esteira.' }, { status: 404 })
@@ -58,6 +58,11 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  /* Card de análise já concluída (a Celog, 01/10) não volta para a triagem: o
+     caso nasce em 'analise', senão o checklist 'faltando' vira lembrete de
+     documento para uma análise que já acabou. */
+  const jaAnalisada = fila.situacao === 'concluida'
+
   const nome = fila.razao_social || fila.nome || fila.pasta
   const { data: caso, error: erroCaso } = await supabase
     .from('casos')
@@ -68,7 +73,8 @@ export async function POST(req: NextRequest) {
       razao_social_confiavel: !!fila.tomador_id,
       identificado_por: 'humano',
       tomador_id: fila.tomador_id,
-      etapa: 'triagem',
+      etapa: jaAnalisada ? 'analise' : 'triagem',
+      enviado_analise_em: jaAnalisada ? new Date().toISOString() : null,
       analise_fila_id: fila.id,
       criado_por_auth_id: user.id,
       criado_por_nome: autor,

@@ -59,6 +59,11 @@ export const cor = {
   alerta: '#c0392b',
   alertaFundo: '#fbe9e9',
   alertaBorda: '#e8b4b4',
+  /** O fundo claro do que está parcial ou pede atenção sem ser alerta (o par do
+   *  `ouroTexto`). Veio da agenda dos lembretes, 01/10/2026. */
+  ouroFundo: '#fbf5e6',
+  /** O véu escuro atrás de uma janela que cobre a tela (a agenda do sino). */
+  veu: 'rgba(10,22,40,.35)',
 
   /** As superfícies. `fundo` é a área; `papel` é o cartão em cima dela. */
   fundo: '#f4f7fb',

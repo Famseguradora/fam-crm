@@ -2,6 +2,8 @@
 //  /api/lembretes  ·  o lembrete do tomador, estilo Outlook/WhatsApp
 //
 //  GET    ?tomador_id=  ou  ?caso_id=   os lembretes, com quem acompanha e a trilha
+//  GET    ?agenda=1   a agenda do sino (01/10/2026): todo lembrete em aberto da
+//         FAM e os fechados dos últimos 90 dias, com o nome do tomador
 //  POST   cria (quem cria já entra seguindo; os convidados recebem aviso na hora)
 //  PATCH  { id, acao, ... }  editar · item · parcial · resolver · reabrir ·
 //         cancelar · adiar · comentar · convidar · seguir · sair · visto
@@ -39,6 +41,21 @@ async function nomesDe(supabase: Awaited<ReturnType<typeof createClient>>, ids: 
 export async function GET(req: NextRequest) {
   const eu = await quem()
   if (!eu) return NextResponse.json({ erro: 'Sessão expirada.' }, { status: 401 })
+  /* A AGENDA: tudo o que está em aberto (de qualquer data, para os vencidos
+     aparecerem) e o que fechou nos últimos 90 dias, para o calendário mostrar
+     o histórico recente. A leitura de lembretes é de todo usuário do CRM. */
+  if (req.nextUrl.searchParams.get('agenda') === '1') {
+    const desde = new Date(Date.now() - 90 * 86400000).toISOString()
+    const campos = `${CAMPOS}, tomador:tomadores(razao_social, nome_fantasia)`
+    // Duas leituras: o teto dos fechados nunca pode cortar um lembrete em aberto.
+    const [abertos, fechados] = await Promise.all([
+      eu.supabase.from('lembretes').select(campos).in('status', ['aberto', 'parcial']).order('quando', { ascending: true }).limit(2000),
+      eu.supabase.from('lembretes').select(campos).in('status', ['resolvido', 'cancelado']).gte('quando', desde).order('quando', { ascending: false }).limit(500),
+    ])
+    const error = abertos.error ?? fechados.error
+    if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
+    return NextResponse.json({ lembretes: [...(abertos.data ?? []), ...(fechados.data ?? [])], eu: { id: eu.id, nome: eu.nome } })
+  }
   const tomador = req.nextUrl.searchParams.get('tomador_id') ?? ''
   const caso = req.nextUrl.searchParams.get('caso_id') ?? ''
   const operacao = req.nextUrl.searchParams.get('operacao_id') ?? ''

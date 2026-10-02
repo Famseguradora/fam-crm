@@ -7,6 +7,8 @@
 
 export const CATEGORIAS = [
   { id: 'documento', nome: 'Documento faltante' },
+  // Aberta pelo robô a partir da "Condição para liberação do crédito" (01/10/2026).
+  { id: 'ressalva', nome: 'Ressalva da análise de crédito' },
   { id: 'demonstrativo', nome: 'Cobrar demonstrativo' },
   { id: 'vigencia', nome: 'Fim de vigência / renovação' },
   { id: 'certidao', nome: 'Certidão (CND, CNDT, FGTS)' },
