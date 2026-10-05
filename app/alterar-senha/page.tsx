@@ -11,6 +11,11 @@ export const dynamic = 'force-dynamic'
 //  2. ESQUECI MINHA SENHA — o link do e-mail cai aqui já com a sessão de
 //     recuperação. Se o link expirou ou já foi usado, avisa em português em
 //     vez de estourar um erro seco.
+//
+//  O Supabase do CRM exige a SENHA ATUAL para trocar a senha (opção "require
+//  current password"), e só dispensa quando a sessão veio do link de
+//  recuperação. Por isso o caminho 1 pede a senha temporária e o caminho 2
+//  não pede. Sem isso o primeiro acesso falhava sempre (05/10, Felipe).
 // ============================================================================
 
 import { useState, useEffect } from 'react'
@@ -19,12 +24,25 @@ import { createClient } from '@/lib/supabase/client'
 
 type Estado = 'verificando' | 'pronto' | 'sem-sessao'
 
+// A sessão do link "esqueci minha senha" traz `recovery` no `amr` do token.
+function sessaoDeRecuperacao(accessToken: string): boolean {
+  try {
+    const b64 = accessToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    const claims = JSON.parse(atob(b64))
+    return Array.isArray(claims.amr) && claims.amr.some((a: { method?: string }) => a?.method === 'recovery')
+  } catch {
+    return false
+  }
+}
+
 export default function AlterarSenhaPage() {
   const router = useRouter()
 
   const [estado, setEstado] = useState<Estado>('verificando')
   const [primeiroAcesso, setPrimeiroAcesso] = useState(false)
   const [nome, setNome] = useState('')
+  const [pedeSenhaAtual, setPedeSenhaAtual] = useState(false)
+  const [senhaAtual, setSenhaAtual] = useState('')
   const [novaSenha, setNovaSenha] = useState('')
   const [confirmacao, setConfirmacao] = useState('')
   const [mostrarSenha, setMostrarSenha] = useState(false)
@@ -37,7 +55,8 @@ export default function AlterarSenhaPage() {
     const supabase = createClient()
     let vivo = true
 
-    async function carregarDono(userId: string) {
+    async function carregarDono(userId: string, accessToken: string) {
+      setPedeSenhaAtual(!sessaoDeRecuperacao(accessToken))
       const { data } = await supabase
         .from('usuarios')
         .select('nome, primeiro_acesso')
@@ -51,10 +70,10 @@ export default function AlterarSenhaPage() {
 
     supabase.auth.getSession().then(({ data }) => {
       if (!vivo) return
-      if (data.session) { carregarDono(data.session.user.id); return }
+      if (data.session) { carregarDono(data.session.user.id, data.session.access_token); return }
       // Sem sessão ainda: pode ser o link do e-mail sendo processado.
       const { data: sub } = supabase.auth.onAuthStateChange((_evt, sessao) => {
-        if (sessao && vivo) carregarDono(sessao.user.id)
+        if (sessao && vivo) carregarDono(sessao.user.id, sessao.access_token)
       })
       const timer = setTimeout(() => { if (vivo) setEstado((e) => e === 'verificando' ? 'sem-sessao' : e) }, 4000)
       return () => { sub.subscription.unsubscribe(); clearTimeout(timer) }
@@ -67,6 +86,10 @@ export default function AlterarSenhaPage() {
     e.preventDefault()
     setErro('')
 
+    if (pedeSenhaAtual && !senhaAtual) {
+      setErro(primeiroAcesso ? 'Informe a senha temporária que você recebeu.' : 'Informe a sua senha atual.')
+      return
+    }
     if (novaSenha.length < 8) {
       setErro('A senha deve ter no mínimo 8 caracteres.')
       return
@@ -81,13 +104,22 @@ export default function AlterarSenhaPage() {
       const supabase = createClient()
 
       // 1. Grava a senha nova
-      const { error: authError } = await supabase.auth.updateUser({ password: novaSenha })
+      const { error: authError } = await supabase.auth.updateUser(
+        pedeSenhaAtual ? { password: novaSenha, current_password: senhaAtual } : { password: novaSenha },
+      )
       if (authError) {
         const msg = authError.message.toLowerCase()
-        if (msg.includes('session') || msg.includes('jwt')) {
-          setErro('Sua sessão expirou. Volte ao login e peça um novo link.')
-        } else if (msg.includes('different from the old') || msg.includes('should be different')) {
+        const codigo = (authError as { code?: string }).code ?? ''
+        if (codigo === 'current_password_mismatch' || codigo === 'current_password_required') {
+          setErro(primeiroAcesso
+            ? 'A senha temporária não confere. Digite exatamente a que você recebeu, ou use "Esqueci minha senha" no login.'
+            : 'A senha atual não confere. Se não lembrar, use "Esqueci minha senha" no login.')
+        } else if (codigo === 'weak_password' || msg.includes('weak') || msg.includes('easy to guess')) {
+          setErro('Essa senha é muito comum ou já apareceu em vazamentos na internet. Escolha outra, menos previsível.')
+        } else if (codigo === 'same_password' || msg.includes('different from the old') || msg.includes('should be different')) {
           setErro('A nova senha precisa ser diferente da anterior.')
+        } else if (msg.includes('session') || msg.includes('jwt')) {
+          setErro('Sua sessão expirou. Volte ao login e peça um novo link.')
         } else {
           setErro('Não foi possível definir a senha. Tente novamente.')
         }
@@ -180,6 +212,20 @@ export default function AlterarSenhaPage() {
               {erro && <div className="alert-error" style={{ marginBottom: 16 }}>{erro}</div>}
 
               <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {pedeSenhaAtual && (
+                  <div className="form-field">
+                    <label className="form-label">{primeiroAcesso ? 'Senha temporária (a que você recebeu)' : 'Senha atual'}</label>
+                    <input
+                      type={mostrarSenha ? 'text' : 'password'}
+                      className="fam-input"
+                      value={senhaAtual}
+                      onChange={(e) => setSenhaAtual(e.target.value)}
+                      required autoFocus
+                      autoComplete="current-password"
+                    />
+                  </div>
+                )}
+
                 <div className="form-field">
                   <label className="form-label">Nova senha</label>
                   <input
@@ -188,7 +234,7 @@ export default function AlterarSenhaPage() {
                     placeholder="Mínimo 8 caracteres"
                     value={novaSenha}
                     onChange={(e) => setNovaSenha(e.target.value)}
-                    required minLength={8} autoFocus
+                    required minLength={8} autoFocus={!pedeSenhaAtual}
                     autoComplete="new-password"
                   />
                   {senhaCurta && (
