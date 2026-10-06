@@ -47,6 +47,7 @@ import { FaixaDaArea, Instrumentos, Instrumento } from '@/components/painel/Faix
 import { type PedidoSerasa, SERASA_ABERTO, situacaoSerasa } from '@/lib/serasa/pedido'
 import { lerArrastoDoOutlook, FORMATO_ARRASTO } from '@/lib/email/arrasto-outlook'
 import ChegouParaOCaso from '@/components/triagem/ChegouParaOCaso'
+import RetornoDaAnalise from '@/components/analise/RetornoDaAnalise'
 import Lembretes from '@/components/lembretes/Lembretes'
 
 /* Por onde o documento avulso chegou. É o que deixa histórico quando não há
@@ -1081,6 +1082,17 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
               </div>
             </div>
             <ChegouParaOCaso casoId={id} versao={versaoChegadas} />
+          </div>
+
+          {/* ══ A RESPOSTA · o fim da linha que começa no e-mail de entrada (06/10/2026) ══ */}
+          <div className="bt-bloco">
+            <div className="bt-passo" style={{ marginBottom: 10 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <h4>Retorno da Análise</h4>
+                <p>A resposta ao e-mail de entrada: o que foi analisado, os documentos e a conclusão. Copie e responda pelo Outlook; o sistema não envia e-mail.</p>
+              </div>
+            </div>
+            <RetornoDaAnalise casoId={id} />
           </div>
         </div>
 

@@ -47,14 +47,10 @@ export async function GET() {
   const quem = await quemE(supabase)
   if (!quem) return NextResponse.json({ erro: 'Sessão expirada. Entre de novo.' }, { status: 401 })
 
-  // A varredura roda na abertura da tela: é barata e deixa a lista em dia sem
-  // depender do Carteiro estar de pé.
-  let varredura = null
-  try {
-    varredura = await varrerAvisos(servico())
-  } catch (e) {
-    varredura = { criados: 0, ja_existiam: 0, sem_destinatario: 0, automaticos: 0, erros: [String((e as Error).message)] }
-  }
+  /* A varredura rodava na abertura da tela. Desligada em 06/10/2026 (o sistema
+     só lê e-mail): nenhum aviso nasce, para nada ficar represado esperando o
+     dia de religar. Religar é voltar a chamar `varrerAvisos(servico())` aqui. */
+  const varredura = { criados: 0, ja_existiam: 0, sem_destinatario: 0, automaticos: 0, erros: [] as string[] }
 
   const [{ data: regua }, { data: avisos }] = await Promise.all([
     supabase.from('aviso_regras').select('*').order('ordem'),
@@ -75,6 +71,13 @@ export async function POST(req: NextRequest) {
   const corpo = await req.json().catch(() => ({})) as Record<string, unknown>
   const acao = String(corpo.acao ?? '')
   const agora = new Date().toISOString()
+
+  /* 06/10/2026: o sistema só lê e-mail, por ordem do Marco. Nenhum aviso é
+     criado nem autorizado, e nenhum nó volta a ser ligado ou automático, até
+     segunda ordem dele. */
+  if (acao === 'autorizar' || acao === 'varrer' || (acao === 'regua' && (corpo.ligado === true || corpo.modo === 'automatico'))) {
+    return NextResponse.json({ erro: 'Desligado em 06/10/2026: o sistema só lê e-mail. A resposta da análise sai pelo Retorno da Análise, copiado para o Outlook.' }, { status: 403 })
+  }
 
   if (acao === 'varrer') {
     const r = await varrerAvisos(servico())

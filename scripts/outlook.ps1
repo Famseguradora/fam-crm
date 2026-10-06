@@ -31,10 +31,7 @@ param(
   [int]$Max = 60,
   [string]$EntryId = '',
   [string]$MessageId = '',
-  [string]$Destino = '',
-  [string]$Assunto = '',
-  [string]$Corpo = '',
-  [string]$Modo = 'rascunho'
+  [string]$Destino = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -529,46 +526,51 @@ switch ($Acao) {
   }
 
   # ---------------------------------------------------------------------------
-  # RESPONDER quem pediu a analise (29/08/2026)
+  # NADA ESCREVE NO OUTLOOK (06/10/2026)
   # ---------------------------------------------------------------------------
-  # Pedido dele: "quando eu clicar em Trazer, uma mensagem e enviada para quem me enviou o
-  # e-mail, com linha de tempo operacional e uma mensagem que a analise de credito iniciou".
-  #
-  # E o UNICO lugar deste sistema que ESCREVE no Outlook, e por isso ele e o mais cuidadoso:
-  #
-  #  - `Reply()`, e nao `ReplyAll()`. Ele disse "para quem me enviou", e responder a todos num
-  #    e-mail encaminhado joga a resposta em cima de corretor, subscritor e quem mais estava em
-  #    copia, gente que nao pediu nada.
-  #  - O corpo NOVO entra ANTES do original, que o proprio Reply ja trouxe citado. A conversa
-  #    continua no mesmo fio, e quem recebe ve o que perguntou logo abaixo.
-  #  - `rascunho` e o padrao: grava em Rascunhos e NAO envia. Ele mesmo disse "ainda temos que
-  #    pensar na mensagem", e mensagem automatica para corretora, escrita errada, vai para o
-  #    cliente antes de qualquer um perceber. `enviar` existe e e uma palavra na configuracao,
-  #    decisao dele, quando o texto estiver aprovado.
-  'responder' {
-    if (-not $EntryId -and -not $MessageId) { Falhar 'Falta o EntryId do e-mail a responder.' }
+  # Ordem do Marco: o sistema SO LE e-mail. Responder, criar rascunho ou enviar de dentro do
+  # sistema esta PROIBIDO ate segunda ordem dele. As acoes 'responder' (29/08) e 'novo' (17/09)
+  # foram retiradas, e nao desligadas: o que nao existe nao e chamado por engano.
+  # A resposta da analise mora no CRM (Retorno da Analise); ele copia e responde no Outlook.
+  # ---------------------------------------------------------------------------
+  # JA FOI RESPONDIDO? (06/10/2026)  ·  SO LE
+  # ---------------------------------------------------------------------------
+  # O Retorno da Analise fica no CRM; ele copia e responde pelo Outlook. Esta acao
+  # so OLHA os Itens Enviados da mesma caixa e diz se existe mensagem da MESMA
+  # conversa (ConversationID) enviada depois de -Desde. Nao abre, nao marca, nao
+  # move nada. Sem Restrict por data: o filtro de data do Outlook e ambiguo
+  # (09/10 virava outubro), entao percorre do mais novo para o mais velho e para
+  # ao passar de -Desde, com teto de 400 itens.
+  'respondido' {
+    if (-not $EntryId -and -not $MessageId) { Falhar 'Falta o e-mail de entrada.' }
     $ns = Conectar
-    $it = PegarItem $ns 'Nao achei este e-mail no Outlook para responder. Ele pode ter sido apagado.'
-
-    $resp = $it.Reply()
-    if ($Assunto) { $resp.Subject = $Assunto }
-
-    # HTMLBody preserva o fio citado que o Reply montou. Trocar por .Body apagaria o historico
-    # da conversa, e quem recebe perderia o proprio pedido de vista.
-    $novo = ($Corpo -replace "`r`n", '<br>') -replace "`n", '<br>'
-    $resp.HTMLBody = '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:10.5pt">' + $novo + '</div>' + $resp.HTMLBody
-
-    $paraQuem = @()
-    try { foreach ($r in $resp.Recipients) { $paraQuem += "$($r.Address)" } } catch { }
-
-    if ($Modo -eq 'enviar') {
-      $resp.Send()
-      Responder @{ ok = $true; modo = 'enviado'; para = $paraQuem; assunto = "$($resp.Subject)" }
+    $it = PegarItem $ns
+    $conv = "$($it.ConversationID)"
+    if (-not $conv) { Responder @{ ok = $true; respondido = $false; motivo = 'sem ConversationID' } }
+    $limite = (Get-Date).AddDays(-30)
+    if ($Desde) { try { $limite = [datetime]::Parse($Desde, [Globalization.CultureInfo]::InvariantCulture).ToLocalTime() } catch { } }
+    $enviados = $null
+    try { $enviados = $it.Parent.Store.GetDefaultFolder(5) } catch { $enviados = $null }
+    if (-not $enviados) { $enviados = $ns.GetDefaultFolder(5) }
+    $itens = $enviados.Items
+    $itens.Sort('[SentOn]', $true)
+    $n = 0
+    foreach ($m in $itens) {
+      $n++
+      if ($n -gt 400) { break }
+      $s = $null
+      try { $s = $m.SentOn } catch { continue }
+      if (-not $s) { continue }
+      if ($s -lt $limite) { break }
+      if ("$($m.ConversationID)" -eq $conv) {
+        Responder @{ ok = $true; respondido = $true; enviado_em = $s.ToUniversalTime().ToString('o'); assunto = "$($m.Subject)" }
+      }
     }
-    $resp.Save()
-    Responder @{ ok = $true; modo = 'rascunho'; para = $paraQuem; assunto = "$($resp.Subject)";
-      aviso = 'Gravei em Rascunhos, no seu Outlook. Nada foi enviado.' }
+    Responder @{ ok = $true; respondido = $false }
   }
+
+  'responder' { Falhar 'Proibido: o sistema so le e-mail (ordem de 06/10/2026). Copie o texto no CRM e responda pelo Outlook.' }
+  'novo' { Falhar 'Proibido: o sistema so le e-mail (ordem de 06/10/2026).' }
 
   # ---------------------------------------------------------------------------
   # O CORPO EM TEXTO, de UM e-mail, sob demanda (07/09/2026)
@@ -591,43 +593,6 @@ switch ($Acao) {
     try { $t = "$($it.Body)" } catch { $t = '' }
     if ($t.Length -gt 200000) { $t = $t.Substring(0, 200000) + "`r`n`r`n[...] Texto cortado. O e-mail inteiro esta no Outlook." }
     Responder @{ ok = $true; entry_id = "$($it.EntryID)"; pasta = "$(try { $it.Parent.FolderPath } catch { '' })"; texto = $t }
-  }
-
-  # ---------------------------------------------------------------------------
-  # UM E-MAIL NOVO (17/09/2026)  ·  os avisos da linha do tempo do pedido
-  # ---------------------------------------------------------------------------
-  # Pedido dele: avisar a cada no do pedido (recebemos, triagem, analise, subscricao).
-  # E e-mail NOVO, e nao resposta no fio, por um motivo pratico: o remetente do pedido
-  # e quase sempre alguem de dentro da FAM encaminhando, e responder aquele fio
-  # mandaria o aviso para a pessoa errada. O destinatario vem escrito do CRM.
-  #
-  # 'rascunho' continua sendo o padrao, pela mesma razao da acao 'responder': texto
-  # automatico em nome da FAM so sai quando ele disser que o texto esta bom. Quem
-  # escolhe e a regua dos avisos, no CRM.
-  #
-  # O texto vai ESCAPADO para HTML. O corpo e montado no CRM e pode citar razao social
-  # com '&' ou '<': sem escapar, isso quebraria a mensagem ou injetaria marcacao.
-  'novo' {
-    if (-not $Destino) { Falhar 'Falta para quem mandar (-Destino).' }
-    if (-not $Assunto) { Falhar 'Falta o assunto (-Assunto).' }
-    $ns = Conectar
-    $app = $ns.Application
-    $msg = $app.CreateItem(0)
-    $msg.To = $Destino
-    $msg.Subject = $Assunto
-    # Escapado a mao, e nao por System.Web: aquela classe nem sempre esta carregada
-    # no PowerShell 5.1, e um erro aqui derrubaria o aviso inteiro por causa de um '&'.
-    $limpo = $Corpo -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
-    $novoHtml = ($limpo -replace "`r`n", '<br>') -replace "`n", '<br>'
-    $msg.HTMLBody = '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:10.5pt">' + $novoHtml + '</div>'
-
-    if ($Modo -eq 'enviar') {
-      $msg.Send()
-      Responder @{ ok = $true; modo = 'enviado'; para = "$Destino"; assunto = "$Assunto" }
-    }
-    $msg.Save()
-    Responder @{ ok = $true; modo = 'rascunho'; para = "$Destino"; assunto = "$Assunto";
-      aviso = 'Gravei em Rascunhos, no seu Outlook. Nada foi enviado.' }
   }
 
   default { Falhar "Acao desconhecida: $Acao" }

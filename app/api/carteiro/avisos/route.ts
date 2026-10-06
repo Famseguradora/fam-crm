@@ -33,9 +33,16 @@ function abrir(req: NextRequest) {
   return { sb: createClient(url, chave, { auth: { persistSession: false } }) }
 }
 
+/* NADA SAI (06/10/2026). Ordem do Marco: o sistema só lê e-mail; responder,
+   rascunhar ou enviar de dentro do sistema está proibido até segunda ordem.
+   A ponte fica de pé só para um Carteiro antigo não quebrar: a lista vem sempre
+   vazia e `pegar` nunca pega. */
+const EMAIL_SO_LEITURA = true
+
 export async function GET(req: NextRequest) {
   const { sb, erro } = abrir(req)
   if (!sb) return erro
+  if (EMAIL_SO_LEITURA) return NextResponse.json({ ok: true, avisos: [] })
 
   const limite = new Date(Date.now() - ENVIANDO_MORRE_MIN * 60000).toISOString()
   await sb.from('avisos_pedido')
@@ -80,6 +87,7 @@ export async function POST(req: NextRequest) {
   const acao = String(corpo.acao ?? '')
 
   if (acao === 'pegar') {
+    if (EMAIL_SO_LEITURA) return NextResponse.json({ ok: true, pegou: false })
     const { data } = await sb.from('avisos_pedido')
       .update({ estado: 'enviando', maquina })
       .eq('id', id).eq('estado', 'autorizado')

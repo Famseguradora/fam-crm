@@ -20,6 +20,7 @@
 import { createClient } from '@/lib/supabase/client'
 import { soDigitos } from './local'
 import { semEntidadesHtml } from '@/lib/utils'
+import { limiteDaAnalise } from './limite-da-analise'
 
 /* O MARCADOR DO TEMPLATE NÃO É DADO  ·  09/09/2026
    ---------------------------------------------------------------------------
@@ -374,12 +375,6 @@ function leScoreMemoria(v: unknown): ScoreMemoria | null {
   }
 }
 
-const AVISO_TIPO: Record<string, string> = {
-  teorico: 'teórico',
-  teto: 'teto da FAM',
-  sem_limite: 'sem limite, por decisão',
-  vazio: 'sem número',
-}
 
 const COLUNAS = `
   id, chave_local, cnpj, tomador_id, corretora, pasta,
@@ -467,18 +462,7 @@ const num = (v: number | string | null): number | null => {
   return Number.isFinite(n) ? n : null
 }
 
-const curto = (s: string, n = 150) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s)
 
-/** A frase da análise já diz o que este tipo de limite é? Serve para não
- *  escrever "R$ 80.000.000,00 (Teto FAM) (teto da FAM)", que foi o que
- *  apareceu na tela da Engie: a análise já tinha dito, e o rótulo repetiu. */
-function jaDizOTipo(txt: string, tipo: string): boolean {
-  const t = txt.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-  if (tipo === 'teto') return t.includes('teto')
-  if (tipo === 'teorico') return t.includes('teorico')
-  if (tipo === 'sem_limite') return t.includes('sem limite')
-  return false
-}
 
 /**
  * A análise vigente deste tomador, inteira. `null` quando não há nenhuma.
@@ -551,29 +535,9 @@ async function montarFicha(
   linha: LinhaCrua,
 ): Promise<FichaAnalise | null> {
   try {
-    // ── O LIMITE. A trava de `banco.ts`, repetida de propósito ──────────
-    // O motivo manda: quando ele existe, a carga ANULOU o número, e o campo
-    // sai como aviso escrito, jamais como valor confirmado. Um tipo novo que
-    // este arquivo não conheça também cai no aviso: errar para o lado de
-    // desconfiar custa um susto, errar para o outro custa dinheiro.
-    const anulado = !!linha.limite_recomendado_motivo
-    const limiteNum = anulado ? null : num(linha.limite_recomendado_num)
-    const tipo = linha.limite_recomendado_tipo ?? 'vazio'
-
-    let limiteAviso = ''
-    if (limiteNum === null) {
-      if (anulado) {
-        limiteAviso = `Sem número confiável. ${linha.limite_recomendado_motivo}`
-          + (linha.limite_recomendado_txt
-            ? ` A análise escreveu: “${curto(linha.limite_recomendado_txt)}”` : '')
-      } else if (linha.limite_recomendado_txt) {
-        const frase = curto(semEntidadesHtml(linha.limite_recomendado_txt))
-        limiteAviso = frase
-          + (AVISO_TIPO[tipo] && !jaDizOTipo(frase, tipo) ? ` (${AVISO_TIPO[tipo]})` : '')
-      } else {
-        limiteAviso = 'A análise não registrou limite.'
-      }
-    }
+    // ── O LIMITE. A trava de `banco.ts`, em `limite-da-analise.ts` desde
+    // 06/10/2026, para o Retorno da Análise dizer o mesmo número que a Mesa.
+    const { limiteNum, limiteAviso } = limiteDaAnalise(linha)
 
     // Os filhos vão juntos: duas idas ao banco em paralelo, não em fila.
     const [{ data: exs }, { data: docs }] = await Promise.all([

@@ -38,6 +38,7 @@ import { createClient } from '@supabase/supabase-js'
 import { SITUACOES, nomeDaEtapa, travaMorta } from '@/lib/analise/esteira'
 import { aplicarCadastroDoAgente } from '@/lib/cadastro/agente-cadastro'
 import { avisarPedidosNaRede } from '@/lib/analise/na-rede'
+import { gerarRetornosPendentes } from '@/lib/analise/retorno-servidor'
 
 export const runtime = 'nodejs'
 
@@ -600,6 +601,11 @@ export async function POST(req: NextRequest) {
        pasta sai: pega os que saíram antes desta regra existir (GGP, 11/09). É
        barata: sem candidato novo, são duas consultas e nenhuma escrita. */
     await avisarPedidosNaRede(sb).catch(() => 0)
+
+    /* O RETORNO DA ANÁLISE (06/10/2026): análise concluída e publicada ganha o
+       texto de resposta no caso, e o sino avisa os colegas. Poucas por vez, e
+       nunca derruba a sincronização. Nada é enviado por e-mail. */
+    await gerarRetornosPendentes(sb).catch(() => 0)
 
     return NextResponse.json({ ok: true, criadas, atualizadas, total: entrada.length, recusadas, publicar_pendentes })
   }

@@ -9,6 +9,7 @@
 //     3. manda os CABEÇALHOS para o CRM   (POST sincronizar)
 //     4. sobe o .msg do que alguém pediu  (POST /api/carteiro/trazer)
 //     5. busca o texto de quem alguém abriu na tela
+//     6. olha os Itens Enviados para anotar o Retorno da Análise respondido
 //
 //  Ele NÃO decide nada. Não sabe o que é análise, não classifica documento, não
 //  cria caso, não responde e-mail. A régua está no banco do CRM e é aplicada no
@@ -395,44 +396,25 @@ async function buscarTextos(c, pendentes) {
 }
 
 // ── a rodada ────────────────────────────────────────────────────────────────
-/* ── OS AVISOS DA LINHA DO TEMPO DO PEDIDO  ·  17/09/2026 ───────────────────
-   Pedido dele: avisar a cada nó do pedido (recebemos, triagem, análise,
-   subscrição), com a ordem dele por padrão e a chave de automático por nó.
+/* NADA SAI POR ESTA MAQUINA (06/10/2026). Ordem do Marco: o sistema so le e-mail;
+   responder, rascunhar ou enviar de dentro do sistema esta proibido ate segunda ordem.
+   A entrega dos avisos do pedido (17/09) foi retirada daqui e do outlook.ps1. */
 
-   O CRM decide O QUE seria dito, para quem, e se já está autorizado. Esta
-   máquina só entrega, porque é aqui que o Outlook está. A forma vem junto:
-   'rascunho' grava em Rascunhos (nada sai), 'enviar' manda de verdade.
-
-   Três travas, porque aqui sai e-mail em nome da FAM:
-     · só chega aqui o que o CRM já marcou como autorizado;
-     · `pegar` é uma corrida no banco: duas máquinas com o Carteiro de pé nunca
-       entregam o mesmo aviso duas vezes;
-     · falhou é gravado com o motivo, e o aviso fica visível na tela como erro,
-       nunca some calado. */
-async function entregarAvisos(c) {
-  const r = await crm(c, '/api/carteiro/avisos')
-  if (!r.ok || !r.avisos?.length) return
-  for (const a of r.avisos) {
-    const pego = await crm(c, '/api/carteiro/avisos', { acao: 'pegar', id: a.id, maquina: os.hostname() })
-    if (!pego.ok || !pego.pegou) continue
-    console.log(`  Aviso "${a.titulo}" de ${a.empresa ?? 'sem empresa'} para ${a.destino} (${a.modo}).`)
-    const saida = await ps([
-      '-Acao', 'novo',
-      '-Destino', String(a.destino),
-      '-Assunto', String(a.assunto),
-      '-Corpo', String(a.corpo),
-      '-Modo', a.modo === 'enviar' ? 'enviar' : 'rascunho',
-    ])
-    if (saida.ok) {
-      await crm(c, '/api/carteiro/avisos', {
-        acao: 'entregue', id: a.id, maquina: os.hostname(),
-        entregue_como: saida.modo === 'enviado' ? 'enviado' : 'rascunho',
-      })
-      console.log(`    ${saida.modo === 'enviado' ? 'Enviado.' : 'Gravado em Rascunhos, no seu Outlook.'}`)
-    } else {
-      await crm(c, '/api/carteiro/avisos', { acao: 'falhou', id: a.id, maquina: os.hostname(), erro: saida.erro ?? 'falhou' })
-      console.error('    Não deu:', saida.erro)
+/* JÁ FOI RESPONDIDO? (06/10/2026) O Retorno da Análise fica no CRM, e ele
+   responde pelo Outlook. Aqui só se OLHA os Itens Enviados: saiu mensagem na
+   mesma conversa do e-mail de entrada depois que o retorno nasceu? Nada é
+   escrito, marcado ou movido. */
+async function verRespostas(c, lista) {
+  for (const p of lista) {
+    const r = await ps(alcancar(p, ['-Acao', 'respondido', '-Desde', String(p.desde)]), { timeout: 120_000 })
+    // E-mail que não se acha mais (apagado, movido para conta fechada) também
+    // conta como conferido: senão ele ocuparia a fila de toda rodada.
+    if (!r.ok) {
+      await crm(c, '/api/carteiro', { acao: 'resposta', id: p.id, respondido: false })
+      continue
     }
+    await crm(c, '/api/carteiro', { acao: 'resposta', id: p.id, respondido: !!r.respondido, enviado_em: r.enviado_em || '' })
+    if (r.respondido) console.log('  Um Retorno da Análise foi respondido pelo Outlook. Anotado no CRM.')
   }
 }
 
@@ -453,9 +435,9 @@ async function rodada(c, { forcarVarredura = false } = {}) {
   // Trazer e buscar texto vêm PRIMEIRO: alguém está olhando a tela esperando.
   if (ordem.a_trazer?.length) await trazer(c, ordem.a_trazer)
   if (ordem.precisa_corpo?.length) await buscarTextos(c, ordem.precisa_corpo)
-
-  // Os avisos do pedido: o CRM já autorizou, esta máquina entrega.
-  try { await entregarAvisos(c) } catch (e) { console.error('  avisos:', e.message) }
+  if (ordem.ver_resposta?.length) {
+    try { await verRespostas(c, ordem.ver_resposta) } catch (e) { console.error('  respostas:', e.message) }
+  }
 
   const naHoraDaFunda = Date.now() - ultimaVarredura >= c.varredura_seg * 1000
   const naHoraDaOlhada = Date.now() - ultimaOlhada >= c.olhada_seg * 1000

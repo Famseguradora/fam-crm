@@ -7,7 +7,7 @@
 import { useRouter } from 'next/navigation'
 import AvisosDoPedido from '@/components/comercial/AvisosDoPedido'
 import { IcoVoltar } from '@/components/tomador/icones'
-import { cor, texto } from '@/lib/ui/painel'
+import { cor, raio, texto } from '@/lib/ui/painel'
 
 export default function AvisosDoPedidoPage() {
   const router = useRouter()
@@ -23,6 +23,11 @@ export default function AvisosDoPedidoPage() {
         Cada vez que um pedido anda de etapa (chegou, triagem e cadastro, análise de crédito,
         subscrição), nasce aqui um aviso pronto para sair. Por padrão ele espera a sua ordem;
         na régua, cada nó pode passar a sair sozinho.
+      </p>
+      <p style={{ ...texto.corpo, maxWidth: '80ch', marginBottom: 16, padding: '10px 12px', border: `1px solid ${cor.alertaBorda}`, borderRadius: raio.controle, background: cor.alertaFundo }}>
+        <strong>Desligado em 06/10/2026.</strong> O sistema só lê e-mail: nada é respondido,
+        rascunhado ou enviado daqui até segunda ordem. A resposta da análise fica no caso,
+        no Retorno da Análise, pronta para copiar e responder pelo Outlook.
       </p>
       <AvisosDoPedido />
     </div>

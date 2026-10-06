@@ -59,6 +59,7 @@ import Complementos from '@/components/analise/Complementos'
 import { nomeArea, etapaDoCard } from '@/lib/card/secoes'
 import RetratoDoFluxo from '@/components/tomador/RetratoDoFluxo'
 import Lembretes from '@/components/lembretes/Lembretes'
+import RetornoDaAnalise from '@/components/analise/RetornoDaAnalise'
 /** O formulário por área (SecoesDoCard) saiu da tela em 29/09/2026; `true` o traz de volta. */
 const FLUXO_ANTIGO = false
 
@@ -764,6 +765,10 @@ export default function MesaDoTomadorPage({ params }: { params: Promise<{ id: st
               } : null}
             />
             <SecaoTresCs ficha={ficha} />
+            {/* O Retorno da Análise (06/10/2026): a resposta ao e-mail de
+                entrada, pronta para copiar. Só da análise do PRÓPRIO tomador:
+                a da holding responde ao caso dela, não a este. */}
+            {ficha && !fichaDaHolding && <RetornoDaAnalise analiseId={ficha.id} />}
             {/* A porta para a análise inteira, dentro do CRM. A Mesa mostra o
                 que interessa ao TOMADOR; o relatório mostra a análise como ela
                 foi publicada, com Serasa, organograma e demonstrações juntos. */}

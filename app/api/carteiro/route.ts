@@ -177,12 +177,56 @@ export async function GET(req: NextRequest) {
     .order('corpo_pedido_em', { ascending: true })
     .limit(10)
 
+  /* JÁ FOI RESPONDIDO? (06/10/2026) O Retorno da Análise fica no CRM e ele
+     responde pelo Outlook. A máquina só OLHA os Itens Enviados desta caixa
+     para ver se saiu mensagem na mesma conversa do e-mail de entrada. Nada é
+     escrito no Outlook. Cada retorno é olhado no máximo a cada 20 minutos,
+     por 30 dias. */
+  const desde30 = new Date(Date.now() - 30 * 86400000).toISOString()
+  const antes20 = new Date(Date.now() - 20 * 60000).toISOString()
+  /* Já filtrado pela caixa DESTA máquina no banco (achado da revisão): filtrar
+     depois do limite deixaria os retornos de outra caixa ocupando as vagas. */
+  type Matriz = { entry_id: string | null; message_id: string | null; pasta: string | null }
+  const { data: semResposta } = await sb
+    .from('analise_retornos')
+    .select('id, email_caixa_id, gerado_em, analise_fila_id, emails_caixa!inner(entry_id, message_id, pasta, conta_id)')
+    .is('respondido_em', null)
+    .eq('nao_conferir', false)
+    .eq('emails_caixa.conta_id', conta.id)
+    .gte('gerado_em', desde30)
+    .or(`resposta_conferida_em.is.null,resposta_conferida_em.lt.${antes20}`)
+    .order('resposta_conferida_em', { ascending: true, nullsFirst: true })
+    .limit(5)
+  let verResposta: { id: string; entry_id: string | null; message_id: string | null; pasta: string | null; desde: string }[] = []
+  if (semResposta?.length) {
+    const porId = new Map(semResposta.map(r => {
+      const m = r.emails_caixa as unknown as Matriz | Matriz[]
+      return [r.email_caixa_id as string, Array.isArray(m) ? m[0] : m]
+    }))
+    /* A partir de QUANDO conta como resposta: da conclusão da análise. Antes
+       disso, o que sai na conversa é "recebemos, estamos analisando", e não a
+       resposta. Sem a data da esteira, vale a hora em que o retorno nasceu. */
+    const filas = semResposta.map(r => r.analise_fila_id as string | null).filter((x): x is string => !!x)
+    const { data: concl } = filas.length
+      ? await sb.from('analise_fila').select('id, concluido_em').in('id', filas)
+      : { data: [] as { id: string; concluido_em: string | null }[] }
+    const conclusao = new Map((concl ?? []).map(f => [f.id as string, f.concluido_em as string | null]))
+    verResposta = semResposta
+      .filter(r => porId.get(r.email_caixa_id as string))
+      .map(r => {
+        const m = porId.get(r.email_caixa_id as string)!
+        const desde = (r.analise_fila_id && conclusao.get(r.analise_fila_id as string)) || (r.gerado_em as string)
+        return { id: r.id as string, entry_id: m.entry_id, message_id: m.message_id, pasta: m.pasta, desde }
+      })
+  }
+
   return NextResponse.json({
     ok: true,
     conta: { id: conta.id, conta: conta.conta, apelido: conta.apelido, dono: conta.dono_nome, ligado: conta.ligado },
     regras: reguaDa(conta),
     a_trazer: aTrazer ?? [],
     precisa_corpo: precisaCorpo ?? [],
+    ver_resposta: verResposta,
   })
 }
 
@@ -609,6 +653,22 @@ export async function POST(req: NextRequest) {
     const { data, error } = await sb.from('emails_caixa').update(mudanca).eq('id', id).select('id')
     if (error) return NextResponse.json({ erro: error.message }, { status: 500 })
     if (!data?.length) return NextResponse.json({ erro: 'E-mail não está na caixa.' }, { status: 404 })
+    return NextResponse.json({ ok: true })
+  }
+
+  // ── resposta: o que a máquina viu nos Itens Enviados (06/10/2026) ──────────
+  // Só anota. "Respondido" à mão vale mais: a máquina nunca desfaz nem troca.
+  if (acao === 'resposta') {
+    const id = String(corpo.id ?? '')
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ erro: 'Falta dizer qual retorno.' }, { status: 422 })
+    const agora = new Date().toISOString()
+    await sb.from('analise_retornos').update({ resposta_conferida_em: agora }).eq('id', id)
+    if (corpo.respondido === true) {
+      const quando = dataOuNulo(typeof corpo.enviado_em === 'string' ? corpo.enviado_em : undefined) ?? agora
+      await sb.from('analise_retornos')
+        .update({ respondido_em: quando, respondido_como: 'detectado', respondido_por: 'Outlook' })
+        .eq('id', id).is('respondido_em', null).eq('nao_conferir', false)
+    }
     return NextResponse.json({ ok: true })
   }
 
