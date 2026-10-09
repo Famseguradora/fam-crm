@@ -139,38 +139,92 @@ export async function consultarCNPJ(cnpj: string): Promise<CartaoCNPJ> {
   const d = cnpj.replace(/\D/g, '')
   if (d.length !== 14 || !validarCNPJ(d)) throw new Error('CNPJ inválido: confira os dígitos.')
 
-  /* TRÊS TENTATIVAS, com espera crescente. 429 é o limite por minuto da API
-     pública, e ele passa: desistir na primeira transforma um segundo de espera
-     num cadastro nascido sem endereço. 404 NÃO é tentado de novo: já é
-     definitivo, e insistir só gasta a cota de quem vier depois. */
-  let ultimoErro = 'Sem resposta da Receita agora.'
+  /* ─── A SEGUNDA FONTE (08/10/2026) ───────────────────────────────────────
+     O botão "Receita" do Cadastro Básico deu "Não consegui consultar a Receita
+     agora" com o CNPJ 09.944.104/0001-29. A BrasilAPI respondia 500 depois de
+     5 segundos PARA ESSE CNPJ (o fornecedor dela por trás caiu), e para outros
+     respondia 200 na hora. As três tentativas com espera somavam uns 20
+     segundos, a função do servidor estourava o tempo, e a tela recebia uma
+     página de erro em vez da mensagem.
+     Agora: cada chamada tem teto de 7 segundos; 429/403 (fila) tenta a
+     BrasilAPI mais uma vez; erro de servidor ou silêncio vai direto para a
+     CNPJ.ws (pública, outra base), que respondeu o mesmo CNPJ em meio segundo.
+     404 continua definitivo: não existe na Receita. */
+  let ultimoErro = 'Sem resposta da Receita agora. Preencha à mão ou tente de novo.'
 
-  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+  for (let tentativa = 1; tentativa <= 2; tentativa++) {
     let res: Response
     try {
       res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${d}`, {
         cache: 'no-store',
         headers: { 'User-Agent': IDENTIDADE, Accept: 'application/json' },
+        signal: AbortSignal.timeout(7000),
       })
     } catch {
-      ultimoErro = 'Sem resposta da Receita agora. Preencha à mão ou tente de novo.'
-      if (tentativa < 3) await new Promise((r) => setTimeout(r, tentativa * 1200))
-      continue
+      break // sem resposta: a segunda fonte, sem gastar mais tempo aqui
     }
 
     if (res.ok) return cartaoDoJson(await res.json())
 
     if (res.status === 404) throw new Error('CNPJ não encontrado na Receita.')
 
-    if (res.status === 429 || res.status === 403) {
+    if ((res.status === 429 || res.status === 403) && tentativa < 2) {
       ultimoErro = 'A consulta à Receita está com muitas chamadas agora. Tente de novo em alguns segundos.'
-    } else {
-      ultimoErro = `A consulta falhou (${res.status}). Preencha à mão ou tente de novo.`
+      await new Promise((r) => setTimeout(r, 1200))
+      continue
     }
-    if (tentativa < 3) await new Promise((r) => setTimeout(r, tentativa * 1200))
+    break
   }
 
-  throw new Error(ultimoErro)
+  try {
+    return await consultarCnpjWs(d)
+  } catch (e: unknown) {
+    if (e instanceof Error && /não encontrado/i.test(e.message)) throw e
+    throw new Error(ultimoErro)
+  }
+}
+
+/** A CNPJ.ws, a fonte de reserva. Ela também é pública e sem chave (3 consultas
+ *  por minuto), e devolve o cartão num formato diferente: aqui ele vira o
+ *  mesmo `CartaoCNPJ`, com os campos escritos como a BrasilAPI escreve. */
+async function consultarCnpjWs(d: string): Promise<CartaoCNPJ> {
+  const res = await fetch(`https://publica.cnpj.ws/cnpj/${d}`, {
+    cache: 'no-store',
+    headers: { 'User-Agent': IDENTIDADE, Accept: 'application/json' },
+    signal: AbortSignal.timeout(7000),
+  })
+  if (res.status === 404) throw new Error('CNPJ não encontrado na Receita.')
+  if (!res.ok) throw new Error(`CNPJ.ws ${res.status}`)
+  const j = await res.json()
+  const e = (j.estabelecimento ?? {}) as Record<string, unknown>
+  const obj = (v: unknown) => (v && typeof v === 'object' ? v as Record<string, unknown> : {})
+  const ddd = limpo(e.ddd1), fone = limpo(e.telefone1)
+  const capital = Number(j.capital_social)
+  const socios = Array.isArray(j.socios) ? j.socios : []
+
+  return {
+    razao_social: tituloReceita(String(j.razao_social ?? '')),
+    nome_fantasia: limpo(e.nome_fantasia) ? tituloReceita(String(e.nome_fantasia)) : null,
+    cep: limpo(e.cep)?.replace(/\D/g, '') ?? null,
+    endereco: limpo(e.logradouro) ? tituloReceita([e.tipo_logradouro, e.logradouro].filter(Boolean).join(' ')) : null,
+    numero: limpo(e.numero),
+    complemento: limpo(e.complemento) ? tituloReceita(String(e.complemento)) : null,
+    bairro: limpo(e.bairro) ? tituloReceita(String(e.bairro)) : null,
+    cidade: limpo(obj(e.cidade).nome) ? tituloReceita(String(obj(e.cidade).nome)) : null,
+    estado: limpo(obj(e.estado).sigla),
+    telefone: ddd && fone ? (ddd + fone).replace(/\D/g, '') : null,
+    email: limpo(e.email)?.toLowerCase() ?? null,
+    situacao: limpo(e.situacao_cadastral)?.toUpperCase() ?? null,
+    abertura: limpo(e.data_inicio_atividade),
+    capital_social: Number.isFinite(capital) ? capital : null,
+    cnae: limpo(obj(e.atividade_principal).descricao),
+    socios: socios.map((s: Record<string, unknown>) => ({
+      nome: tituloReceita(String(s.nome ?? '')),
+      qualificacao: limpo(obj(s.qualificacao_socio).descricao),
+      documento: limpo(s.cpf_cnpj_socio),
+      entrada: limpo(s.data_entrada),
+    })).filter((s: { nome: string }) => s.nome),
+  }
 }
 
 /**
