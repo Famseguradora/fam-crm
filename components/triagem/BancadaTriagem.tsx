@@ -72,6 +72,15 @@ const SITUACOES: { valor: string; rotulo: string; badge: string }[] = [
   { valor: 'faltando', rotulo: 'Faltando', badge: 'badge-red' },
 ]
 
+/* A exigência do catálogo e a classe com que o arquivo entra pela rota de
+   documentos. Os dois demonstrativos são "contabil": a rota marca os dois. */
+const CLASSE_DO_ITEM: Record<string, string> = {
+  contrato_social: 'contrato_social',
+  serasa_pj: 'serasa_pj',
+  demonstracoes_2_exercicios: 'contabil',
+  demonstracao_ano_corrente: 'contabil',
+}
+
 interface Caso {
   id: string; numero: number; assunto: string
   remetente_nome: string | null; remetente_email: string | null
@@ -207,6 +216,9 @@ select.bt-in { padding-right: 6px; }
 .bt-exig:last-of-type { border-bottom: none; }
 .bt-exig-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .bt-exig-cab b { font-size: 12.5px; color: ${cor.tinta}; }
+.bt-exig-nome { display: inline-flex; align-items: baseline; gap: 6px; background: none; border: none; padding: 0; font: inherit; font-size: 12.5px; font-weight: 700; color: ${cor.tinta}; cursor: pointer; text-align: left; }
+.bt-exig-nome:hover { color: ${cor.acao}; text-decoration: underline; text-underline-offset: 3px; }
+.bt-exig-mais { font-size: 11px; font-weight: 500; color: ${cor.acao}; text-decoration: none; }
 .bt-exig .falta { font-size: 11.5px; color: ${cor.alerta}; flex-basis: 100%; }
 .bt-exig .pessoa { font-size: 11px; color: ${cor.textoFraco}; margin-left: auto; }
 .bt-seg { display: inline-flex; flex-wrap: wrap; border: 1px solid ${cor.borda}; border-radius: ${raio.controle}px; overflow: hidden; margin-top: 6px; }
@@ -321,10 +333,18 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
   const [produto, setProduto] = useState('')
 
   // passo 2: anexar à mão
-  const [classeNova, setClasseNova] = useState('serasa_pj')
+  /* Sem padrão (09/10/2026): com 'serasa_pj' pré-escolhido, um balanço da
+     Gabbai entrou como Serasa e marcou o item Serasa como recebido. Arquivo
+     avulso só sobe depois de alguém dizer o que ele é. */
+  const [classeNova, setClasseNova] = useState('')
   const [subindo, setSubindo] = useState(false)
   const [arrastando, setArrastando] = useState(false)
   const seletor = useRef<HTMLInputElement>(null)
+  // O nome clicado no passo 3: a janela de arquivos do Windows abre para ele.
+  const seletorItem = useRef<HTMLInputElement>(null)
+  const [itemEnviando, setItemEnviando] = useState<string | null>(null)
+  // O recado do último envio feito pelo nome, repetido embaixo da lista.
+  const [doItem, setDoItem] = useState(false)
   // Por onde o documento avulso chegou: sem e-mail, é isto que deixa histórico.
   const [meio, setMeio] = useState('')
   // Sobe a cada entrada nova, para a linha do tempo recarregar.
@@ -543,10 +563,13 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
     return { recados, erros, naoEram }
   }, [id])
 
-  const anexar = useCallback(async (arquivos: FileList | File[], bilhete?: string) => {
+  /* `classe` vem do nome clicado na lista de exigências do passo 3 (09/10/2026):
+     quem clica em "Contrato social" escolhe o arquivo e ele já entra com a
+     classe certa, sem passar pelo seletor da área de soltar. */
+  const anexar = useCallback(async (arquivos: FileList | File[], bilhete?: string, classe?: string) => {
     const lista = Array.from(arquivos)
     if (!lista.length && !bilhete) return
-    setSubindo(true); setErro(''); setRecado('')
+    setSubindo(true); setErro(''); setRecado(''); setDoItem(!!classe)
     const emails = lista.filter(pareceEmail)
     const avulsos = lista.filter((f) => !pareceEmail(f))
     const recados: string[] = []
@@ -558,9 +581,14 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
       avulsos.push(...r.naoEram)
     }
 
+    if (avulsos.length && !(classe ?? classeNova)) {
+      erros.push(`Escolha em "O que você vai anexar" o que é ${avulsos.length > 1 ? 'cada arquivo' : 'o arquivo'} (${avulsos.map((a) => a.name).join(', ')}) e envie de novo. Nada foi anexado.`)
+      avulsos.length = 0
+    }
+
     if (avulsos.length) {
       const corpo = new FormData()
-      corpo.append('classe', classeNova)
+      corpo.append('classe', classe ?? classeNova)
       if (meio) corpo.append('meio', meio)
       for (const a of avulsos) corpo.append('arquivo', a)
       try {
@@ -568,6 +596,7 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
         const j = await r.json()
         if (!r.ok) erros.push(j.erro ?? 'Não consegui anexar.')
         else {
+          if (!classe) setClasseNova('')
           recados.push(
             `${j.entraram} documento(s) anexado(s)` +
             (j.itens_marcados?.length ? ', e a exigência correspondente foi marcada como recebida.' : '.') +
@@ -1017,6 +1046,7 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
                 <label className="bt-campo" onClick={(e) => e.stopPropagation()} style={{ flex: '0 1 200px' }}>
                   <span style={{ fontSize: 11.5, color: cor.textoFraco }}>O que você vai anexar</span>
                   <select className="bt-in mini" value={classeNova} onChange={(e) => setClasseNova(e.target.value)}>
+                    <option value="" disabled>Escolha antes de soltar</option>
                     {CLASSES.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo}</option>)}
                   </select>
                 </label>
@@ -1116,12 +1146,35 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
             </Passo>
 
             <div style={{ marginBottom: 12 }}>
+              {/* CLICAR NO NOME INCLUI O DOCUMENTO (09/10/2026). Pedido dele: o
+                  Contrato social faltando, e não havia como levar o arquivo para
+                  dentro. Mesma rota da área de soltar do passo 2: o arquivo entra
+                  no caso (ou na ficha do tomador, depois da triagem), a exigência
+                  vira Recebido e a esteira baixa na pasta do notebook. */}
+              <input ref={seletorItem} type="file" multiple hidden
+                onChange={(e) => {
+                  const arqs = e.target.files ? Array.from(e.target.files) : []
+                  const item = itemEnviando
+                  e.target.value = ''
+                  if (!arqs.length || !item) { setItemEnviando(null); return }
+                  anexar(arqs, undefined, CLASSE_DO_ITEM[item] ?? 'outro').finally(() => setItemEnviando(null))
+                }} />
               {itens.map((i) => {
                 const s = SITUACOES.find((x) => x.valor === i.situacao) ?? SITUACOES[4]
+                const podeIncluir = !somenteLeitura && !excluido && !subindo
                 return (
                   <div key={i.id} className="bt-exig">
                     <div className="bt-exig-cab">
-                      <b>{i.caso_item_catalogo.nome}</b>
+                      {podeIncluir ? (
+                        <button type="button" className="bt-exig-nome"
+                          title={`Incluir ${i.caso_item_catalogo.nome}: escolher o arquivo no computador`}
+                          onClick={() => { setItemEnviando(i.item); seletorItem.current?.click() }}>
+                          {i.caso_item_catalogo.nome}
+                          <span className="bt-exig-mais">{itemEnviando === i.item && subindo ? 'enviando…' : '+ incluir'}</span>
+                        </button>
+                      ) : (
+                        <b>{i.caso_item_catalogo.nome}{itemEnviando === i.item && subindo ? ' · enviando…' : ''}</b>
+                      )}
                       <span className={`badge ${s.badge}`}>{s.rotulo}</span>
                       {i.por === 'humano' && <span className="pessoa">decidido por pessoa</span>}
                       {i.caso_item_catalogo.exigencia === 'bloqueia' && !['ok', 'dispensado'].includes(i.situacao) && (
@@ -1141,6 +1194,8 @@ export default function BancadaTriagem({ id, embutida = false, aoMudar }: {
                   </div>
                 )
               })}
+              {doItem && !subindo && erro && <div className="bt-aviso erro" style={{ margin: '8px 0 0' }}>{erro}</div>}
+              {doItem && !subindo && recado && <div className="alert-success" style={{ marginTop: 8, fontSize: 12.5 }}>{recado}</div>}
             </div>
 
             {!naAnalise ? (
